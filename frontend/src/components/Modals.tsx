@@ -244,6 +244,20 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       return
     }
 
+    if (form.avatar) {
+      const trimmed = form.avatar.trim()
+      const isLocalPath = /^[a-zA-Z]:\\/i.test(trimmed) || 
+                          trimmed.startsWith('/') || 
+                          trimmed.includes('Desktop') || 
+                          trimmed.includes('Users') ||
+                          (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(trimmed) && !/^https?:\/\//i.test(trimmed))
+      if (isLocalPath) {
+        setErrorMsg('暂不支持使用本地磁盘路径作为头像，请使用以 http:// 或 https:// 开头的网络图片链接，或留空使用默认图标。')
+        setBusy(false)
+        return
+      }
+    }
+
     const payload = {
       name: form.name,
       avatar: form.avatar || null,

@@ -1,15 +1,74 @@
 import { useEffect, useState } from 'react'
-import { WandSparkles, ArrowRight, Bot, Cpu, Users, CheckCircle2 } from 'lucide-react'
+import { WandSparkles, ArrowRight, Bot, Cpu, Users, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface LandingPageProps {
   onEnterWorkbench: () => void
 }
 
-/** Roleplex 平台官方产品介绍主页（搭载多 Agent 协同与工具调用动态生产线）。 */
-export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
-  // 7 阶段循环生产线状态机，每 1.5 秒推进一个协作工序，完整循环 10.5 秒
-  const [activeStep, setActiveStep] = useState(0)
+interface ScenarioMessage {
+  sender: string
+  role: string
+  text: string
+  code?: string
+  table?: { date: string; item: string; sales: string }[]
+}
 
+interface Scenario {
+  task: string
+  category: string
+  agents: string[]
+  messages: ScenarioMessage[]
+}
+
+/** 真实的群聊实战案例数据，包含真实对话流、代码块与数据表 */
+const SCENARIOS: Scenario[] = [
+  {
+    task: "写一个带深色模式切换的 React 计数器，并进行单元测试",
+    category: "Web 软件敏捷研发",
+    agents: ["Orchestrator (主调度)", "代码专家", "审计专家"],
+    messages: [
+      { sender: "User", role: "Owner", text: "写一个带深色模式切换的 React 计数器，并进行单元测试。" },
+      { sender: "Orchestrator", role: "协调者", text: "已收到。规划工作流：\n1. 代码专家编写 React 组件；\n2. 审计专家编写单元测试并执行验证。" },
+      { sender: "代码专家", role: "Agent", text: "已完成 React 计数器组件，包含深色模式切换状态，代码实现如下：", code: `import React, { useState } from 'react';\n\nexport function Counter() {\n  const [count, setCount] = useState(0);\n  const [darkMode, setDarkMode] = useState(false);\n\n  return (\n    <div className={darkMode ? 'dark bg-slate-900 text-slate-100 p-6' : 'bg-white text-slate-900 p-6'}>\n      <p className="text-xl font-bold">Count: {count}</p>\n      <div className="flex gap-2 mt-4">\n        <button onClick={() => setCount(count + 1)} className="px-4 py-2 bg-indigo-600 text-white rounded">Increment</button>\n        <button onClick={() => setDarkMode(!darkMode)} className="px-4 py-2 bg-slate-500 text-white rounded">Toggle Theme</button>\n      </div>\n    </div>\n  );\n}` },
+      { sender: "审计专家", role: "Agent", text: "已在单元测试沙箱中执行验证。测试结果：\n- 状态更新测试: PASS\n- 样式切换测试: PASS\n- 测试覆盖率: 100% (PASS)" }
+    ]
+  },
+  {
+    task: "抓取 sales_data.csv 过滤出销售额超过 10,000 的记录，并排版 Markdown 报告",
+    category: "数据自动过滤与规整",
+    agents: ["Orchestrator (主调度)", "数据提取", "文档顾问"],
+    messages: [
+      { sender: "User", role: "Owner", text: "提取销售额大于 10,000 的记录，并制作成报告。" },
+      { sender: "Orchestrator", role: "协调者", text: "规划工作流：\n1. 数据提取 Agent 筛选销售额大于 10,000 的行；\n2. 文档顾问排版 Markdown 格式报表。" },
+      { sender: "数据提取", role: "Agent", text: "已完成过滤，符合要求的销售记录如下：", table: [
+        { date: "2026-08-12", item: "GPU 服务器", sales: "$12,500" },
+        { date: "2026-08-13", item: "数据库托管", sales: "$10,800" }
+      ] },
+      { sender: "文档顾问", role: "Agent", text: "已根据过滤数据，排版生成 Markdown 格式的报告：\n\n### 销售额达标报告\n* **筛选标准**：单笔交易额 > $10,000\n* **总计交易笔数**：2 笔\n* **环比增长率**：+14.5%\n报告已同步写入暂存工作盘中。" }
+    ]
+  },
+  {
+    task: "翻译“保存并退出工作台，所有进度已保存”并进行软件语境校验",
+    category: "多国语言本地化与语境审计",
+    agents: ["Orchestrator (主调度)", "翻译专家", "审计专家"],
+    messages: [
+      { sender: "User", role: "Owner", text: "翻译“保存并退出工作台，所有进度已保存”成英文和日文，并进行语境校验。" },
+      { sender: "Orchestrator", role: "协调者", text: "工作流规划：\n1. 翻译专家进行多语种直译与意译；\n2. 审计专家进行术语及软件语境一致性校验。" },
+      { sender: "翻译专家", role: "Agent", text: "直译与意译结果如下：\n\n- **英文 (EN)**:\n  * Option 1: Save and exit workspace. All progress has been saved.\n  * Option 2: Save changes and quit workbench; all progress has been preserved.\n- **日文 (JA)**:\n  * 保存してワークスペースを終了します。すべての進捗が保存されました。" },
+      { sender: "审计专家", role: "Agent", text: "语境校验意见：\n1. 英文 Option 2 中的 'workbench' (工作台) 与软件底层专有名词高度吻合，推荐在生产线使用。\n2. 日文译文的 '進捗' (进度) 语义地道，无突兀感。\n校验结果：APPROVED (通过)。" }
+    ]
+  }
+]
+
+/** Roleplex 平台官方产品介绍主页（搭载动态生产线与真实对话滑动展示区）。 */
+export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
+  // 右侧 SVG 拓扑发光管线状态机
+  const [activeStep, setActiveStep] = useState(0)
+  // 下方真实对话滑动展示区
+  const [currentSlide, setCurrentSlide] = useState(0)
+  const [isHovered, setIsHovered] = useState(false)
+
+  // 拓扑图状态推进
   useEffect(() => {
     const interval = setInterval(() => {
       setActiveStep((prev) => (prev + 1) % 7)
@@ -17,10 +76,27 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
     return () => clearInterval(interval)
   }, [])
 
+  // 滑动展示区自动轮播（当鼠标 Hover 在卡片上时暂停以供细读代码）
+  useEffect(() => {
+    if (isHovered) return
+    const interval = setInterval(() => {
+      setCurrentSlide((prev) => (prev + 1) % SCENARIOS.length)
+    }, 5500)
+    return () => clearInterval(interval)
+  }, [isHovered])
+
+  const nextSlide = () => {
+    setCurrentSlide((prev) => (prev + 1) % SCENARIOS.length)
+  }
+
+  const prevSlide = () => {
+    setCurrentSlide((prev) => (prev - 1 + SCENARIOS.length) % SCENARIOS.length)
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans select-none overflow-x-hidden relative flex flex-col justify-between">
       
-      {/* 自包含的 GPU 加速生产线动画 CSS 样式 */}
+      {/* GPU 加速管线与滑屏动画 CSS 样式 */}
       <style>{`
         @keyframes strokeFlowDown {
           from { stroke-dashoffset: 30; }
@@ -45,7 +121,6 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
           stroke-dasharray: 4 4;
           stroke-linecap: round;
         }
-        /* 数据流动线样式 */
         .flow-line-active-down {
           stroke: url(#cyanPurpleGrad);
           stroke-width: 2.5;
@@ -67,7 +142,6 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
           stroke-dasharray: 6 12;
           animation: strokeFlowRight 0.8s linear infinite;
         }
-        /* 绿色工具流动线样式 */
         .flow-line-tool-active-down {
           stroke: #10b981;
           stroke-width: 2.0;
@@ -107,7 +181,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
       </header>
 
       {/* 主体区 */}
-      <main className="flex-1 flex flex-col items-center px-6 py-12 md:py-20 max-w-6xl w-full mx-auto relative z-10 space-y-16 md:space-y-24">
+      <main className="flex-1 flex flex-col items-center px-6 py-12 md:py-20 max-w-6xl w-full mx-auto relative z-10 space-y-20 md:space-y-28">
         
         {/* Hero Section */}
         <section className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 w-full items-center">
@@ -142,7 +216,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
           {/* 右侧：多智能体协作与工具调用跑马灯运行图 */}
           <div className="md:col-span-6 w-full">
             <div className="bg-slate-900/60 border border-slate-850 p-6 rounded-3xl backdrop-blur-md shadow-2xl relative overflow-hidden">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-850">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-855">
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">协作与工具网络拓扑 (Agentic Workflow & Tool Network)</span>
                 <span className="text-[10px] bg-indigo-950 border border-indigo-900/60 rounded px-1.5 py-0.5 text-indigo-400 font-mono flex items-center gap-1">
                   <span className="w-1 h-1 rounded-full bg-cyan-400 animate-ping"></span>
@@ -320,6 +394,196 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
           </div>
         </section>
 
+        {/* Sliding Case Showcase Section (真实对话滑动展示区) */}
+        <section className="w-full space-y-8">
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-cyan-950/30 px-3 py-1 text-[11px] text-cyan-400 font-bold uppercase tracking-wider">
+              <span>Interactive Simulator</span>
+            </div>
+            <h3 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">群聊协作实战演练</h3>
+            <p className="text-slate-500 text-xs md:text-sm max-w-xl mx-auto leading-relaxed">
+              以滑动幻灯片形式还原真实的群聊对话场景，看不同职责的 Agent 与外部工具如何在统一中控流下交接流转与共同解题。
+            </p>
+          </div>
+
+          {/* 轮播框架 */}
+          <div 
+            className="w-full max-w-4xl mx-auto relative group"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+          >
+            {/* 上一张 / 下一张按钮 (绝对定位在两侧，大屏悬浮，小屏隐藏) */}
+            <button 
+              type="button" 
+              onClick={prevSlide}
+              className="absolute left-[-24px] md:left-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              aria-label="Previous Slide"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <button 
+              type="button" 
+              onClick={nextSlide}
+              className="absolute right-[-24px] md:right-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              aria-label="Next Slide"
+            >
+              <ChevronRight size={20} />
+            </button>
+
+            {/* 卡片容器：包含滑动视口 */}
+            <div className="w-full overflow-hidden rounded-3xl border border-slate-850 bg-slate-900/40 backdrop-blur-xl shadow-2xl relative min-h-[460px] flex flex-col">
+              
+              {/* 卡片顶端状态条 */}
+              <div className="border-b border-slate-850 px-6 py-4 flex flex-wrap items-center justify-between gap-3 bg-slate-950/20 shrink-0">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-mono">CASE 0{currentSlide + 1} / 03</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 font-semibold border border-indigo-900/60">
+                    {SCENARIOS[currentSlide].category}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500">协同角色:</span>
+                  <div className="flex items-center gap-1.5">
+                    {SCENARIOS[currentSlide].agents.map((agent, i) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-slate-950 border border-slate-850 text-slate-300 font-semibold">
+                        {agent}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 卡片核心区：任务及对话流展示 */}
+              <div className="p-6 md:p-8 flex-1 flex flex-col justify-between space-y-6">
+                
+                {/* 顶部现实任务要求 */}
+                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-4 flex items-start gap-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div className="rounded-lg bg-indigo-600/10 border border-indigo-500/20 p-2 text-indigo-400 shrink-0 text-xs font-mono font-bold">
+                    TASK
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold font-mono">任务目标 (Active Requirement)</p>
+                    <p className="text-xs md:text-sm font-semibold text-slate-200">
+                      “{SCENARIOS[currentSlide].task}”
+                    </p>
+                  </div>
+                </div>
+
+                {/* 模拟群聊对话流 */}
+                <div className="space-y-4 flex-1">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold font-mono mb-2">协作会话流程 (Agent chat stream)</p>
+                  <div className="space-y-3.5 max-h-[320px] overflow-y-auto pr-1">
+                    {SCENARIOS[currentSlide].messages.map((msg, index) => {
+                      const isUser = msg.role === 'Owner'
+                      const isOrch = msg.role === '协调者'
+                      
+                      return (
+                        <div key={index} className="flex flex-col space-y-1 text-xs">
+                          {/* 发送人昵称与角色标签 */}
+                          <div className="flex items-center gap-1.5 px-1">
+                            <span className="font-bold text-slate-300">{msg.sender}</span>
+                            <span className={`text-[8px] px-1 rounded-sm uppercase tracking-wide font-bold scale-90 ${
+                              isUser ? 'bg-indigo-950 text-indigo-400 border border-indigo-900/60' :
+                              isOrch ? 'bg-cyan-950 text-cyan-400 border border-cyan-900/60' :
+                              'bg-slate-950 text-slate-500 border border-slate-850'
+                            }`}>
+                              {msg.role}
+                            </span>
+                          </div>
+
+                          {/* 对话气泡 */}
+                          <div className={`rounded-xl p-3 max-w-[96%] leading-relaxed ${
+                            isUser ? 'bg-slate-950 border border-slate-850 text-slate-200' :
+                            isOrch ? 'bg-cyan-950/20 border border-cyan-900/30 text-cyan-200/90' :
+                            'bg-slate-900/80 border border-slate-850/80 text-slate-300'
+                          }`}>
+                            <p className="whitespace-pre-line text-[11px] md:text-xs">{msg.text}</p>
+                            
+                            {/* 如果消息中包含代码段，则高能渲染出来 */}
+                            {msg.code && (
+                              <pre className="mt-3 rounded-lg bg-slate-950 border border-slate-850 p-3 font-mono text-[9px] md:text-[10px] text-indigo-300 overflow-x-auto max-w-full whitespace-pre leading-relaxed select-text">
+                                <code>{msg.code}</code>
+                              </pre>
+                            )}
+
+                            {/* 如果消息中包含表格（数据提取案例） */}
+                            {msg.table && (
+                              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-850 select-text">
+                                <table className="w-full text-[10px] text-left border-collapse bg-slate-950">
+                                  <thead>
+                                    <tr className="border-b border-slate-850 text-slate-400 font-semibold">
+                                      <th className="px-3 py-1.5">日期</th>
+                                      <th className="px-3 py-1.5">商品</th>
+                                      <th className="px-3 py-1.5 text-right">销售额</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-900 text-slate-300">
+                                    {msg.table.map((row, rid) => (
+                                      <tr key={rid}>
+                                        <td className="px-3 py-1.5 font-mono">{row.date}</td>
+                                        <td className="px-3 py-1.5">{row.item}</td>
+                                        <td className="px-3 py-1.5 text-right font-mono text-emerald-400">{row.sales}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 轮播底端导航点与操作区 */}
+              <div className="border-t border-slate-850 px-6 py-4 flex items-center justify-between bg-slate-950/20 shrink-0">
+                <span className="text-[9px] text-slate-500 font-mono">
+                  {isHovered ? '已暂停自动轮播（鼠标悬停）' : '自动轮播中（每 5.5 秒切换）'}
+                </span>
+                
+                {/* 圆点指示器 */}
+                <div className="flex items-center gap-2">
+                  {SCENARIOS.map((_, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setCurrentSlide(i)}
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        currentSlide === i ? 'w-6 bg-indigo-500' : 'w-2 bg-slate-800 hover:bg-slate-700'
+                      }`}
+                      aria-label={`Go to slide ${i + 1}`}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button 
+                    type="button"
+                    onClick={prevSlide}
+                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                    aria-label="Prev Case"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={nextSlide}
+                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                    aria-label="Next Case"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
         {/* Features Column Section */}
         <section className="w-full space-y-8">
           <div className="text-center space-y-2">
@@ -379,7 +643,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                 </div>
                 <h4 className="font-bold text-slate-200">03 / 多角色群发调度</h4>
                 <p className="text-slate-500 text-xs leading-relaxed">
-                  拉起多角色群聊。开启 **Orchestrator 发言调度器**，由指定的调度角色智能决定对话的顺次 and 发言权，规避 AI 角色刷屏与抢麦。
+                  拉起多角色群聊。开启 **Orchestrator 发言调度器**，由指定的调度角色智能决定对话的顺次与发言权，规避 AI 角色刷屏与抢麦。
                 </p>
               </div>
               <ul className="mt-6 space-y-2 text-[11px] text-slate-400">

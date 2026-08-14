@@ -18,6 +18,7 @@ interface SidebarProps {
 export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal }: SidebarProps) {
   const { conversations, activeConversationId, setActiveConversation, roles, user, logout } = useAppStore()
   const [searchTerm, setSearchTerm] = useState('')
+  const [failedAvatars, setFailedAvatars] = useState<number[]>([])
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
@@ -188,8 +189,13 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
             >
               <div className="flex items-center gap-2 min-w-0">
                 <div className="rounded-full bg-indigo-900/40 p-1.5 text-indigo-400 border border-indigo-500/20">
-                  {role.avatar ? (
-                    <img src={role.avatar} alt={role.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                  {role.avatar && !failedAvatars.includes(role.id) ? (
+                    <img 
+                      src={role.avatar} 
+                      alt={role.name} 
+                      onError={() => setFailedAvatars(prev => [...prev, role.id])}
+                      className="w-3.5 h-3.5 rounded-full object-cover" 
+                    />
                   ) : (
                     <Bot size={14} />
                   )}
