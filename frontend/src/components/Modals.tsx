@@ -1,0 +1,748 @@
+import { type FormEvent, useEffect, useState } from 'react'
+import { 
+  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users 
+} from 'lucide-react'
+import { useAppStore } from '../store/app'
+import { type Role } from '../api/client'
+
+interface ModalProps {
+  onClose: () => void
+}
+
+/** 模型厂商密钥配置管理弹窗 (SettingsModal)。 */
+export function SettingsModal({ onClose }: ModalProps) {
+  const { modelConfigs, createModelConfig, deleteModelConfig } = useAppStore()
+  const [form, setForm] = useState({ name: '', provider_type: 'openai_compatible' as const, base_url: '', api_key: '' })
+  const [busy, setBusy] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setErrorMsg(null)
+    try {
+      await createModelConfig({
+        name: form.name,
+        provider_type: form.provider_type,
+        base_url: form.base_url || null,
+        api_key: form.api_key
+      })
+      setForm({ name: '', provider_type: 'openai_compatible', base_url: '', api_key: '' })
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '密钥配置添加失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('确定要删除大模型密钥配置吗？如果有关联角色使用此配置，将会删除失败。')) return
+    setErrorMsg(null)
+    try {
+      await deleteModelConfig(id)
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '删除失败，配置可能正在被其他角色引用')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] shadow-2xl">
+        {/* 标题栏 */}
+        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+          <div className="flex items-center gap-2 text-indigo-400">
+            <Settings2 size={18} />
+            <h3 className="font-bold text-white text-base">打开设置 · 大模型密钥管理</h3>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* 主体区 */}
+        <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* 左侧：密钥配置列表 */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+              <Shield size={14} />
+              <span>当前已配置密钥 ({modelConfigs.length})</span>
+            </h4>
+            
+            <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
+              {modelConfigs.map((config) => (
+                <div key={config.id} className="bg-slate-950/60 border border-slate-850 rounded-xl p-3.5 flex items-start justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <Cpu size={13} className="text-indigo-400" />
+                      <span className="text-xs font-bold text-slate-200 truncate">{config.name}</span>
+                    </div>
+                    <p className="text-[10px] text-indigo-400 mt-1">{config.provider_type === 'anthropic' ? 'Anthropic' : 'OpenAI 兼容'}</p>
+                    <p className="text-[10px] text-slate-500 truncate mt-1">API Endpoint: {config.base_url || '默认端点'}</p>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      API Key: <code className="bg-slate-900 px-1 py-0.5 rounded border border-slate-800">{config.api_key_hint}</code>
+                    </p>
+                  </div>
+                  
+                  <button 
+                    onClick={() => void handleDelete(config.id)}
+                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/40 rounded transition shrink-0 ml-2"
+                    title="删除配置"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              
+              {modelConfigs.length === 0 && (
+                <div className="text-center py-8 border border-dashed border-slate-800 rounded-2xl text-xs text-slate-600 bg-slate-950/10">
+                  暂无已保存密钥，请使用右侧表单添加。
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 右侧：添加密钥表单 */}
+          <div className="border-t md:border-t-0 md:border-l border-slate-800 pt-6 md:pt-0 md:pl-6">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+              <Plus size={14} />
+              <span>添加大模型厂商密钥</span>
+            </h4>
+            
+            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              <label className="block">
+                <span className="text-slate-400 font-medium">配置别名 (用于标识)</span>
+                <input 
+                  required 
+                  value={form.name} 
+                  onChange={e => setForm({...form, name: e.target.value})}
+                  placeholder="例如: DeepSeek / Claude-API" 
+                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-slate-400 font-medium">厂商类型</span>
+                <select 
+                  value={form.provider_type}
+                  onChange={e => setForm({...form, provider_type: e.target.value as any})}
+                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
+                >
+                  <option value="openai_compatible">OpenAI 兼容接口 (Deepseek, Qwen 等)</option>
+                  <option value="anthropic">Anthropic Claude</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-slate-400 font-medium">API 代理端点 Base URL (可选)</span>
+                <input 
+                  value={form.base_url} 
+                  onChange={e => setForm({...form, base_url: e.target.value})}
+                  placeholder="例如: https://api.deepseek.com/v1" 
+                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-slate-400 font-medium">API 密钥 (API Key)</span>
+                <input 
+                  required
+                  type="password"
+                  value={form.api_key} 
+                  onChange={e => setForm({...form, api_key: e.target.value})}
+                  placeholder="sk-••••••••••••••••••••••••" 
+                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                />
+              </label>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] flex items-start gap-1.5">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <button 
+                type="submit" 
+                disabled={busy}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                <Check size={14} />
+                {busy ? '正在校验并保存...' : '添加配置并加密存储'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface RoleModalProps {
+  role?: Role | null
+  onClose: () => void
+  onOpenSettings?: () => void
+}
+
+/** 创建/编辑 Agent 角色对话框 (RoleModal)。 */
+export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
+  const { modelConfigs, createRole, updateRole, deleteRole } = useAppStore()
+  
+  const [form, setForm] = useState({
+    name: '',
+    avatar: '',
+    description: '',
+    tags: '',
+    system_prompt: '',
+    model_config_id: 0,
+    model_name: '',
+    params: '{}',
+    builtin_tools: [] as string[]
+  })
+  
+  const [busy, setBusy] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (role) {
+      setForm({
+        name: role.name,
+        avatar: role.avatar || '',
+        description: role.description || '',
+        tags: role.tags.join(', '),
+        system_prompt: role.system_prompt,
+        model_config_id: role.model_config_id,
+        model_name: role.model_name,
+        params: JSON.stringify(role.params || {}, null, 2),
+        builtin_tools: role.builtin_tools || []
+      })
+    } else if (modelConfigs.length > 0) {
+      setForm(f => ({ ...f, model_config_id: modelConfigs[0].id }))
+    }
+  }, [role, modelConfigs])
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setErrorMsg(null)
+
+    const parsedTags = form.tags
+      ? form.tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)
+      : []
+
+    let parsedParams = {}
+    try {
+      parsedParams = JSON.parse(form.params || '{}')
+    } catch {
+      setErrorMsg('运行参数配置格式无效，必须为合法的 JSON 对象')
+      setBusy(false)
+      return
+    }
+
+    if (!form.model_config_id) {
+      setErrorMsg('请先选择一个关联的模型密钥配置。如果没有，请先去设置页面新建')
+      setBusy(false)
+      return
+    }
+
+    const payload = {
+      name: form.name,
+      avatar: form.avatar || null,
+      description: form.description || null,
+      tags: parsedTags,
+      system_prompt: form.system_prompt,
+      model_config_id: form.model_config_id,
+      model_name: form.model_name || 'gpt-4o',
+      params: parsedParams,
+      skills: [],
+      builtin_tools: form.builtin_tools,
+      mcp_servers: []
+    }
+
+    try {
+      if (role) {
+        await updateRole(role.id, payload)
+      } else {
+        await createRole(payload)
+      }
+      onClose()
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '角色存储失败，请检查参数')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!role) return
+    if (!confirm(`确定要彻底删除角色 Agent "${role.name}" 吗？此操作无法撤销。`)) return
+    setBusy(true)
+    setErrorMsg(null)
+    try {
+      await deleteRole(role.id)
+      onClose()
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '删除角色失败')
+      setBusy(false)
+    }
+  }
+
+  const toggleTool = (tool: string) => {
+    setForm(f => {
+      const isExist = f.builtin_tools.includes(tool)
+      const nextTools = isExist ? f.builtin_tools.filter(t => t !== tool) : [...f.builtin_tools, tool]
+      return { ...f, builtin_tools: nextTools }
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] shadow-2xl relative z-10">
+        
+        {/* 头部 */}
+        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+          <div className="flex items-center gap-2 text-indigo-400">
+            <Bot size={18} />
+            <h3 className="font-bold text-white text-base">
+              {role ? `定制 Agent 属性 · ${role.name}` : '创建并定制 Agent 角色'}
+            </h3>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* 表单体 */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+          
+          {modelConfigs.length === 0 && (
+            <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-2xl flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle size={16} />
+                <span className="font-semibold">⚠️ 缺少可用的大模型密钥配置</span>
+              </div>
+              <p className="text-[11px] text-red-400/80 leading-relaxed">
+                创建 Agent 必须绑定一个模型配置以获取大模型访问权。请先在工作台主页或打开设置添加您的 API Key 之后再来定制角色。
+                {onOpenSettings && (
+                  <button 
+                    type="button" 
+                    onClick={() => { onClose(); onOpenSettings() }} 
+                    className="text-indigo-400 font-bold ml-1 hover:underline"
+                  >
+                    去添加配置 &raquo;
+                  </button>
+                )}
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-slate-400 font-medium">Agent 角色名称 (必填)</span>
+              <input 
+                required 
+                value={form.name} 
+                onChange={e => setForm({...form, name: e.target.value})}
+                placeholder="例如: CodeHelper / 翻译翻译" 
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-slate-400 font-medium">头像图片 URL (可选)</span>
+              <input 
+                value={form.avatar} 
+                onChange={e => setForm({...form, avatar: e.target.value})}
+                placeholder="https://example.com/avatar.png" 
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-slate-400 font-medium">职责简述 / 一句话描述</span>
+            <input 
+              value={form.description} 
+              onChange={e => setForm({...form, description: e.target.value})}
+              placeholder="简要说明此角色的定位与分工 (100字内)" 
+              className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+            />
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <label className="block">
+              <span className="text-slate-400 font-medium">选择关联密钥 (必填)</span>
+              <select 
+                value={form.model_config_id}
+                onChange={e => setForm({...form, model_config_id: Number(e.target.value)})}
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
+              >
+                <option value={0} disabled>-- 请选择密钥配置 --</option>
+                {modelConfigs.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.provider_type === 'anthropic' ? 'Anthropic' : 'OpenAI'})</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-slate-400 font-medium">绑定模型标识 Model ID (必填)</span>
+              <input 
+                required 
+                value={form.model_name} 
+                onChange={e => setForm({...form, model_name: e.target.value})}
+                placeholder="如: claude-3-5-sonnet-latest / gpt-4o" 
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-slate-400 font-medium">角色 Tags (逗号分隔)</span>
+              <input 
+                value={form.tags} 
+                onChange={e => setForm({...form, tags: e.target.value})}
+                placeholder="例如: 代码开发, 翻译, 规划" 
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-slate-400 font-medium">核心系统指令 System Prompt (必填)</span>
+            <textarea 
+              required
+              rows={5}
+              value={form.system_prompt} 
+              onChange={e => setForm({...form, system_prompt: e.target.value})}
+              placeholder="输入大模型的最核心提示词指令，定义其逻辑、口吻和角色细节..." 
+              className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono text-[11px] leading-relaxed" 
+            />
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="block">
+              <span className="text-slate-400 font-medium">绑定内置运行工具 (Builtin Tools)</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleTool('web_search')}
+                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
+                    form.builtin_tools.includes('web_search')
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  联网搜索 (web_search)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleTool('fetch_url')}
+                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
+                    form.builtin_tools.includes('fetch_url')
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  抓取 URL (fetch_url)
+                </button>
+              </div>
+            </div>
+
+            <label className="block">
+              <span className="text-slate-400 font-medium">模型调用参数 (Params JSON 对象)</span>
+              <textarea 
+                rows={2}
+                value={form.params} 
+                onChange={e => setForm({...form, params: e.target.value})}
+                placeholder='例如: {"temperature": 0.5}' 
+                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono" 
+              />
+            </label>
+          </div>
+
+          {errorMsg && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-start gap-1.5">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* 按钮控制 */}
+          <div className="flex items-center justify-between border-t border-slate-800 pt-4 mt-2">
+            <div>
+              {role && (
+                <button 
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={busy}
+                  className="px-4 py-2.5 bg-red-950 border border-red-900/50 hover:bg-red-900 text-red-400 hover:text-white rounded-xl font-semibold flex items-center gap-1.5 active:scale-[0.98] transition disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  <span>删除角色</span>
+                </button>
+              )}
+            </div>
+            
+            <div className="flex gap-2">
+              <button 
+                type="button" 
+                onClick={onClose}
+                className="px-4 py-2.5 border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl font-semibold active:scale-[0.98] transition"
+              >
+                取消
+              </button>
+              <button 
+                type="submit"
+                disabled={busy || modelConfigs.length === 0}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                <Check size={14} />
+                <span>{role ? '保存修改' : '定制并创建角色'}</span>
+              </button>
+            </div>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  )
+}
+
+/** 新建会话弹窗 (ConversationModal)。 */
+export function ConversationModal({ onClose }: ModalProps) {
+  const { roles, createConversation } = useAppStore()
+  
+  const [form, setForm] = useState({
+    title: '',
+    type: 'single' as 'single' | 'group',
+    selected_role_ids: [] as number[],
+    orchestrator_enabled: false,
+    orchestrator_role_id: 0
+  })
+  
+  const [busy, setBusy] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  function handleTypeChange(nextType: 'single' | 'group') {
+    setForm(f => ({ 
+      ...f, 
+      type: nextType, 
+      selected_role_ids: [], 
+      orchestrator_enabled: false, 
+      orchestrator_role_id: 0 
+    }))
+  }
+
+  function handleRoleToggle(id: number) {
+    setForm(f => {
+      let nextIds = [...f.selected_role_ids]
+      if (f.type === 'single') {
+        nextIds = [id]
+      } else {
+        const isExist = f.selected_role_ids.includes(id)
+        nextIds = isExist ? f.selected_role_ids.filter(item => item !== id) : [...f.selected_role_ids, id]
+      }
+      return { 
+        ...f, 
+        selected_role_ids: nextIds,
+        orchestrator_role_id: nextIds.includes(f.orchestrator_role_id) ? f.orchestrator_role_id : (nextIds[0] || 0)
+      }
+    })
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setErrorMsg(null)
+
+    if (form.selected_role_ids.length === 0) {
+      setErrorMsg('请至少选择一个 Agent 角色加入会话。')
+      setBusy(false)
+      return
+    }
+
+    if (form.type === 'single' && form.selected_role_ids.length !== 1) {
+      setErrorMsg('单聊会话中只能邀请且必须邀请一位 Agent。')
+      setBusy(false)
+      return
+    }
+
+    const payload = {
+      type: form.type,
+      title: form.title,
+      role_ids: form.selected_role_ids,
+      orchestrator_enabled: form.type === 'group' ? form.orchestrator_enabled : false,
+      orchestrator_role_id: (form.type === 'group' && form.orchestrator_enabled) ? form.orchestrator_role_id || null : null
+    }
+
+    try {
+      await createConversation(payload)
+      onClose()
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '创建会话失败，请核对角色是否有效。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl overflow-hidden flex flex-col max-h-[80vh] shadow-2xl relative z-10">
+        
+        {/* 头部 */}
+        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+          <div className="flex items-center gap-2 text-indigo-400">
+            <Users size={18} />
+            <h3 className="font-bold text-white text-base">新建 Agent 协作会话</h3>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* 表单 */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+          
+          {roles.length === 0 && (
+            <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-2xl flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle size={16} />
+                <span className="font-semibold">⚠️ 暂无可加入会话的角色</span>
+              </div>
+              <p className="text-[11px] text-red-400/80 leading-relaxed">
+                创建会话必须邀请至少一个 Agent 角色。请先去定制创建您的首个 Agent 之后再来发起会话。
+              </p>
+            </div>
+          )}
+
+          {/* 会话类型选择 */}
+          <div className="block">
+            <span className="text-slate-400 font-medium">会话模式</span>
+            <div className="mt-1.5 flex rounded-xl bg-slate-950 p-1 border border-slate-800/80">
+              <button 
+                type="button" 
+                onClick={() => handleTypeChange('single')} 
+                className={`flex-1 rounded-lg py-2 transition-all ${form.type === 'single' ? 'bg-indigo-600 text-white font-semibold shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                单聊 (与单个 Agent 对话)
+              </button>
+              <button 
+                type="button" 
+                onClick={() => handleTypeChange('group')} 
+                className={`flex-1 rounded-lg py-2 transition-all ${form.type === 'group' ? 'bg-indigo-600 text-white font-semibold shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                群聊 (协同多个 Agent 角色)
+              </button>
+            </div>
+          </div>
+
+          <label className="block">
+            <span className="text-slate-400 font-medium">会话名称 (必填)</span>
+            <input 
+              required 
+              value={form.title} 
+              onChange={e => setForm({...form, title: e.target.value})}
+              placeholder="例如: 极速网页重构 / 架构评审组" 
+              className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+            />
+          </label>
+
+          {/* 选择成员 Agent 列表 */}
+          <div className="block">
+            <span className="text-slate-400 font-medium">
+              {form.type === 'single' ? '邀请 Agent 角色 (单选)' : '选择群聊成员 (支持多选)'}
+            </span>
+            
+            <div className="mt-2.5 bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 max-h-48 overflow-y-auto space-y-2">
+              {roles.map((role) => {
+                const isChecked = form.selected_role_ids.includes(role.id)
+                return (
+                  <div 
+                    key={role.id}
+                    onClick={() => handleRoleToggle(role.id)}
+                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-slate-900 border cursor-pointer transition ${
+                      isChecked 
+                        ? 'border-indigo-500/30 bg-indigo-950/20 text-white' 
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border shrink-0 ${isChecked ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-700 bg-transparent'}`}>
+                      {isChecked && <Check size={10} strokeWidth={3} />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-200 truncate">{role.name}</p>
+                      <p className="text-[10px] text-slate-500 truncate mt-0.5">Model: {role.model_name}</p>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {roles.length === 0 && (
+                <div className="text-center py-6 text-xs text-slate-700">暂无可用角色数据</div>
+              )}
+            </div>
+          </div>
+
+          {/* 协调者 (Orchestrator) 仅在群聊显示 */}
+          {form.type === 'group' && form.selected_role_ids.length > 1 && (
+            <div className="bg-slate-950/40 border border-slate-855 rounded-xl p-4 space-y-3.5">
+              <label className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
+                <input 
+                  type="checkbox" 
+                  checked={form.orchestrator_enabled}
+                  onChange={e => setForm({...form, orchestrator_enabled: e.target.checked})}
+                  className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                />
+                <span className="font-medium text-xs">开启发言协调器模式 (Orchestrator Mode)</span>
+              </label>
+
+              {form.orchestrator_enabled && (
+                <label className="block">
+                  <span className="text-slate-500">指定群聊调度发言人 (调度协调器)</span>
+                  <select 
+                    value={form.orchestrator_role_id}
+                    onChange={e => setForm({...form, orchestrator_role_id: Number(e.target.value)})}
+                    className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
+                  >
+                    <option value={0} disabled>-- 请选择协调者 Agent --</option>
+                    {roles
+                      .filter(r => form.selected_role_ids.includes(r.id))
+                      .map(r => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))
+                    }
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-start gap-1.5">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* 表单按钮 */}
+          <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-4 mt-2">
+            <button 
+              type="button" 
+              onClick={onClose}
+              className="px-4 py-2.5 border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl font-semibold active:scale-[0.98] transition"
+            >
+              取消
+            </button>
+            <button 
+              type="submit"
+              disabled={busy || roles.length === 0}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              <Check size={14} />
+              <span>确认开启会话</span>
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  )
+}

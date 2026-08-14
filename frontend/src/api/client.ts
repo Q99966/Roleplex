@@ -4,6 +4,16 @@ export type Conversation = { id: number; type: 'single' | 'group'; title: string
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; [key: string]: unknown }
 export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string }
 
+export type ModelConfig = {
+  id: number
+  name: string
+  provider_type: 'anthropic' | 'openai_compatible'
+  base_url: string | null
+  api_key_hint: string
+  capability_overrides: Record<string, any>
+  created_at: string
+}
+
 type ApiError = Error & { status?: number; code?: string }
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
@@ -44,8 +54,28 @@ export const api = {
   register: (body: { username: string; password: string; nickname: string }) => request<{ access_token: string; user: User }>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   login: (body: { username: string; password: string }) => request<{ access_token: string; user: User }>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   me: () => request<User>('/api/auth/me'),
+  
+  // 角色管理 API
   roles: () => request<Role[]>('/api/roles'),
+  createRole: (body: Omit<Role, 'id' | 'created_at' | 'updated_at' | 'active'>) => request<Role>('/api/roles', { method: 'POST', body: JSON.stringify(body) }),
+  updateRole: (id: number, body: Omit<Role, 'id' | 'created_at' | 'updated_at' | 'active'>) => request<Role>(`/api/roles/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteRole: (id: number) => request<void>(`/api/roles/${id}`, { method: 'DELETE' }),
+
+  // 会话管理 API
   conversations: () => request<Conversation[]>('/api/conversations'),
+  createConversation: (body: { type: 'single' | 'group'; title: string; role_ids: number[]; orchestrator_enabled?: boolean; orchestrator_role_id?: number | null }) => request<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify(body) }),
+  deleteConversation: (id: number) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
+  updateConversationPreferences: (id: number, pinned?: boolean, archived?: boolean) => {
+    const params = new URLSearchParams()
+    if (pinned !== undefined) params.append('pinned', String(pinned))
+    if (archived !== undefined) params.append('archived', String(archived))
+    return request<Conversation>(`/api/conversations/${id}/preferences?${params.toString()}`, { method: 'PATCH' })
+  },
+
+  // 模型厂商配置 API
+  modelConfigs: () => request<ModelConfig[]>('/api/model-configs'),
+  createModelConfig: (body: { name: string; provider_type: 'anthropic' | 'openai_compatible'; base_url?: string | null; api_key: string; capability_overrides?: Record<string, any> }) => request<ModelConfig>('/api/model-configs', { method: 'POST', body: JSON.stringify(body) }),
+  deleteModelConfig: (id: number) => request<void>(`/api/model-configs/${id}`, { method: 'DELETE' }),
 }
 
 /** 返回 REST 和后续 WebSocket 客户端使用的后端地址。 */
