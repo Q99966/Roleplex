@@ -9,7 +9,8 @@ test.describe('M1 authentication and workspace', () => {
     page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()) })
     page.on('pageerror', (error) => browserErrors.push(error.message))
     await page.goto('/')
-    await expect(page.getByText('Roleplex')).toBeVisible()
+    await expect(page.getByText('Roleplex').first()).toBeVisible()
+    await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '首次注册' }).click()
     await page.getByPlaceholder('owner').fill(unique)
     await page.getByPlaceholder('我的名字').fill('浏览器测试 Owner')
@@ -31,6 +32,7 @@ test.describe('M1 authentication and workspace', () => {
       if (request.url().endsWith('/api/auth/register')) registerRequests += 1
     })
     await page.goto('/')
+    await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '首次注册' }).click()
     await page.getByPlaceholder('owner').fill(`mismatch_${Date.now()}`)
     await page.getByPlaceholder('我的名字').fill('密码校验测试')
@@ -44,6 +46,7 @@ test.describe('M1 authentication and workspace', () => {
 
   test('logs in an existing Owner and preserves the empty workspace', async ({ page }) => {
     await page.goto('/')
+    await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '登录' }).click()
     await page.getByPlaceholder('owner').fill(unique)
     await page.getByPlaceholder('至少 8 位').fill(password)
@@ -54,6 +57,7 @@ test.describe('M1 authentication and workspace', () => {
 
   test('shows an authentication error for invalid credentials', async ({ page }) => {
     await page.goto('/')
+    await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '登录' }).click()
     await page.getByPlaceholder('owner').fill('missing_user')
     await page.getByPlaceholder('至少 8 位').fill(password)

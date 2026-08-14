@@ -31,7 +31,11 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
     }`}>
       {/* 头部区 */}
       <div className="flex items-center justify-between border-b border-slate-800/80 px-5 py-5">
-        <div className="flex items-center gap-2.5">
+        <div 
+          onClick={() => { window.location.hash = '#/workspace' }}
+          className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity"
+          title="返回工作台主页"
+        >
           <div className="rounded-lg bg-indigo-600 p-2 text-white shadow-md shadow-indigo-600/30">
             <WandSparkles size={18} />
           </div>

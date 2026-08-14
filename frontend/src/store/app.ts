@@ -94,8 +94,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       
       // 如果 activeConversationId 不存在或在会话列表中找不到，则尝试默认选中第一个
       const currentActiveId = get().activeConversationId
-      if (currentActiveId === null || !conversations.some(c => c.id === currentActiveId)) {
-        set({ activeConversationId: conversations[0]?.id ?? null })
+      if (currentActiveId !== null && !conversations.some(c => c.id === currentActiveId)) {
+        set({ activeConversationId: null })
       }
     } catch (err) {
       console.error('Failed to load workspace data:', err)
