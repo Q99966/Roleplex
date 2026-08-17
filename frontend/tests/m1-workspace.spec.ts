@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { OWNER } from './owner'
 
-const unique = `owner_${Date.now()}`
-const password = 'password123'
+// Owner 是实例级单例：本轮数据库中的首个注册者必须是共享 Owner 账号，
+// 否则后续测试文件登录时只能拿到 Guest 身份并在配置类接口上被拒。
+const password = OWNER.password
 
 test.describe('M1 authentication and workspace', () => {
   test('registers the first Owner and renders the workspace', async ({ page }) => {
@@ -12,14 +14,14 @@ test.describe('M1 authentication and workspace', () => {
     await expect(page.getByText('Roleplex').first()).toBeVisible()
     await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '首次注册' }).click()
-    await page.getByPlaceholder('owner').fill(unique)
-    await page.getByPlaceholder('我的名字').fill('浏览器测试 Owner')
+    await page.getByPlaceholder('owner').fill(OWNER.username)
+    await page.getByPlaceholder('我的名字').fill(OWNER.nickname)
     await page.getByPlaceholder('至少 8 位').fill(password)
     await page.getByPlaceholder('再次输入密码').fill(password)
     await page.getByRole('button', { name: '创建 Owner 账号' }).click()
 
     await expect(page.getByText('欢迎来到 Roleplex')).toBeVisible()
-    await expect(page.getByText('浏览器测试 Owner')).toBeVisible()
+    await expect(page.getByText(OWNER.nickname)).toBeVisible()
     await expect(page.getByText('还没有创建角色')).toBeVisible()
     await expect(page).toHaveTitle('Roleplex')
     await page.screenshot({ path: 'test-results/m1-empty-workspace.png', fullPage: true })
@@ -48,11 +50,11 @@ test.describe('M1 authentication and workspace', () => {
     await page.goto('/')
     await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '登录' }).click()
-    await page.getByPlaceholder('owner').fill(unique)
+    await page.getByPlaceholder('owner').fill(OWNER.username)
     await page.getByPlaceholder('至少 8 位').fill(password)
     await page.getByRole('button', { name: '进入工作台' }).click()
     await expect(page.getByText('欢迎来到 Roleplex')).toBeVisible()
-    await expect(page.getByText('浏览器测试 Owner')).toBeVisible()
+    await expect(page.getByText(OWNER.nickname)).toBeVisible()
   })
 
   test('shows an authentication error for invalid credentials', async ({ page }) => {

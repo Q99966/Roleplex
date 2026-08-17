@@ -4,6 +4,7 @@ import {
   Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
+import { navigateToConversation } from '../router'
 import { type Role } from '../api/client'
 
 interface SidebarProps {
@@ -16,7 +17,7 @@ interface SidebarProps {
 
 /** 侧边栏组件。 */
 export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal }: SidebarProps) {
-  const { conversations, activeConversationId, setActiveConversation, roles, user, logout } = useAppStore()
+  const { conversations, activeConversationId, roles, user, logout } = useAppStore()
   const [searchTerm, setSearchTerm] = useState('')
   const [failedAvatars, setFailedAvatars] = useState<number[]>([])
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
@@ -101,7 +102,7 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
                     ? 'bg-indigo-600/15 border border-indigo-500/20 text-white' 
                     : 'hover:bg-slate-800/50 border border-transparent hover:border-slate-800'
                 }`}
-                onClick={() => setActiveConversation(conversation.id)}
+                onClick={() => navigateToConversation(conversation.id)}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className={`rounded-lg p-2 shrink-0 ${isActive ? 'bg-indigo-600 text-white' : 'bg-slate-950 border border-slate-800'}`}>

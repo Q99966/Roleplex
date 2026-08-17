@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections import defaultdict, deque
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
 
 
 @dataclass(frozen=True)
 class DomainEvent:
-    """发送给客户端并为短时间断线重连保留的不可变事件。"""
+    """提交后广播给客户端的不可变会话事件。
+
+    事件序号由数据库事务分配，本类只负责在进程内传递已经持久化的事实。
+    """
+
     stream_epoch: str
     event_seq: int
     conversation_id: int
     type: str
-    payload: dict[str, Any]
+    payload: dict[str, Any] = field(default_factory=dict)
+    revision: int = 0
+    delta_seq: int | None = None
+    generation_id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """序列化事件信封，不暴露服务端内部状态。"""
@@ -23,63 +30,47 @@ class DomainEvent:
             "event_seq": self.event_seq,
             "conversation_id": self.conversation_id,
             "type": self.type,
+            "revision": self.revision,
+            "delta_seq": self.delta_seq,
+            "generation_id": self.generation_id,
             "payload": self.payload,
         }
 
 
 class EventHub:
-    """管理会话级事件序号和内存中的断线重连事件环。"""
+    """进程内实时广播器。
 
-    def __init__(self, buffer_size: int = 512) -> None:
-        """为当前进程生命周期创建事件中心。
+    事件的可靠恢复来源是数据库事件日志；本类只在事务提交后把事件推给在线订阅者，
+    因此不分配序号，也不承诺断线期间的补齐能力。
+    """
 
-        Args:
-            buffer_size：每个会话保留的最大事件 backlog，超过后必须使用完整快照。
-        """
+    def __init__(self) -> None:
+        """为当前进程生命周期创建广播器并生成新的 stream epoch。"""
         self.stream_epoch = secrets.token_urlsafe(16)
-        self._buffer_size = buffer_size
-        self._seq: dict[int, int] = defaultdict(int)
-        self._events: dict[int, deque[DomainEvent]] = defaultdict(lambda: deque(maxlen=self._buffer_size))
         self._subscribers: dict[int, set[asyncio.Queue[DomainEvent]]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
-    async def publish(self, conversation_id: int, event_type: str, payload: dict[str, Any]) -> DomainEvent:
-        """追加并广播一个带序号的事件，不因慢客户端阻塞写入方。"""
+    async def publish(self, event: DomainEvent) -> None:
+        """把已持久化的事件推送给该会话的在线订阅者。
+
+        Args:
+            event：已经写入事件日志并提交的领域事件。
+        """
         async with self._lock:
-            self._seq[conversation_id] += 1
-            event = DomainEvent(self.stream_epoch, self._seq[conversation_id], conversation_id, event_type, payload)
-            self._events[conversation_id].append(event)
-            subscribers = list(self._subscribers[conversation_id])
+            subscribers = list(self._subscribers[event.conversation_id])
         for queue in subscribers:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # 慢客户端应通过快照恢复，而不是阻塞事件写入方。
+                # 慢客户端由自身通过事件日志或快照恢复，不能阻塞写入方。
                 pass
-        return event
 
-    async def subscribe(self, conversation_id: int, after_epoch: str | None, after_seq: int = 0) -> tuple[list[DomainEvent] | None, asyncio.Queue[DomainEvent]]:
-        """原子完成订阅并返回 backlog；需要快照时返回 None。
-
-        Args:
-            conversation_id：要加入的会话事件流。
-            after_epoch：客户端上次记录的进程 epoch，可为空。
-            after_seq：客户端已经应用的最后一个事件序号。
-        """
-        queue: asyncio.Queue[DomainEvent] = asyncio.Queue(maxsize=256)
+    async def subscribe(self, conversation_id: int) -> asyncio.Queue[DomainEvent]:
+        """注册一个实时事件队列；历史事件由调用方从事件日志读取。"""
+        queue: asyncio.Queue[DomainEvent] = asyncio.Queue(maxsize=512)
         async with self._lock:
-            events = self._events[conversation_id]
-            latest = self._seq[conversation_id]
-            needs_snapshot = after_epoch not in (None, self.stream_epoch)
-            if not needs_snapshot and after_seq < latest:
-                if events and after_seq < events[0].event_seq - 1:
-                    needs_snapshot = True
-                else:
-                    backlog = [event for event in events if event.event_seq > after_seq]
-            else:
-                backlog = []
             self._subscribers[conversation_id].add(queue)
-        return (None if needs_snapshot else backlog), queue
+        return queue
 
     async def unsubscribe(self, conversation_id: int, queue: asyncio.Queue[DomainEvent]) -> None:
         """从会话中移除一个订阅队列，不影响其他订阅者。"""
@@ -88,3 +79,8 @@ class EventHub:
 
 
 hub: EventHub | None = None
+
+
+def current_epoch() -> str:
+    """返回当前进程的 stream epoch；未初始化时返回启动占位值。"""
+    return hub.stream_epoch if hub else "starting"

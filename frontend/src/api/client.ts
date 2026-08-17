@@ -1,8 +1,23 @@
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }
 export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number; model_name: string; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; created_at: string; updated_at: string }
-export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; last_message_at: string | null; pinned: boolean; archived: boolean }
+export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; role_ids: number[]; last_message_at: string | null; pinned: boolean; archived: boolean }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; [key: string]: unknown }
 export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string }
+export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
+export type MessageHistory = { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null }
+export type SendMessageResult = { message: Message; generation_id: number | null; duplicate: boolean }
+
+/** 服务端事件信封；未知事件类型必须被客户端安全忽略。 */
+export type StreamEvent = {
+  stream_epoch: string
+  event_seq: number
+  conversation_id: number
+  type: string
+  revision: number
+  delta_seq: number | null
+  generation_id: number | null
+  payload: Record<string, any>
+}
 
 export type ModelConfig = {
   id: number
@@ -16,7 +31,14 @@ export type ModelConfig = {
 
 type ApiError = Error & { status?: number; code?: string }
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+/**
+ * 后端地址：优先使用构建时配置，否则回退到当前页面主机的 8000 端口。
+ *
+ * 使用页面主机而不是写死 localhost，可避免 Windows 上 localhost 解析到 IPv6
+ * 而后端只监听 IPv4 的连接失败，同时让局域网访问自动指向同一台主机。
+ */
+const API_URL = import.meta.env.VITE_API_URL
+  ?? (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000')
 let token = localStorage.getItem('roleplex_token')
 
 /** 保存或清除浏览器会话 Token，不将其暴露给业务状态。 */
@@ -76,6 +98,11 @@ export const api = {
   modelConfigs: () => request<ModelConfig[]>('/api/model-configs'),
   createModelConfig: (body: { name: string; provider_type: 'anthropic' | 'openai_compatible'; base_url?: string | null; api_key: string; capability_overrides?: Record<string, any> }) => request<ModelConfig>('/api/model-configs', { method: 'POST', body: JSON.stringify(body) }),
   deleteModelConfig: (id: number) => request<void>(`/api/model-configs/${id}`, { method: 'DELETE' }),
+
+  // 消息与生成 API
+  messages: (conversationId: number) => request<MessageHistory>(`/api/conversations/${conversationId}/messages`),
+  sendMessage: (conversationId: number, body: MessageCreate) => request<SendMessageResult>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  stopGeneration: (conversationId: number) => request<{ stopped: boolean; generation_id: number | null }>(`/api/conversations/${conversationId}/stop`, { method: 'POST' }),
 }
 
 /** 返回 REST 和后续 WebSocket 客户端使用的后端地址。 */

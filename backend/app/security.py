@@ -53,7 +53,7 @@ def decrypt_api_key(value: str) -> str:
     try:
         return _fernet().decrypt(value.encode()).decode()
     except InvalidToken as exc:
-        raise ValueError("API key cannot be decrypted") from exc
+        raise ValueError("无法解密模型厂商 API Key") from exc
 
 
 def create_access_token(user: User) -> str:

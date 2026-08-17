@@ -111,13 +111,14 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationResponse(BaseModel):
-    """合并共享会话状态和请求用户个人偏好的响应。"""
+    """合并共享会话状态、角色成员和请求用户个人偏好的响应。"""
 
     id: int
     type: str
     title: str
     orchestrator_enabled: bool
     orchestrator_role_id: int | None
+    role_ids: list[int] = Field(default_factory=list)
     last_message_at: datetime | None
     pinned: bool
     archived: bool
@@ -127,6 +128,7 @@ class Part(BaseModel):
     """可扩展的消息 part 信封，保留未知字段以支持向前兼容。"""
 
     type: str
+    text: str | None = None
     model_config = ConfigDict(extra="allow")
 
 

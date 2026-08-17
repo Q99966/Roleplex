@@ -96,6 +96,8 @@ class Conversation(Base):
     orchestrator_role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    event_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -135,7 +137,7 @@ class Invite(Base):
 
 
 class Message(Base):
-    """带有序号、revision 和生成状态的会话消息。"""
+    """带有序号、版本和生成状态的会话消息。"""
 
     __tablename__ = "messages"
 
@@ -144,6 +146,7 @@ class Message(Base):
     sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
     sender_id: Mapped[int | None] = mapped_column(Integer)
     reply_to_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    client_message_id: Mapped[str | None] = mapped_column(String(128))
     mentions_json: Mapped[list[Any]] = mapped_column(JSON, default=json_list, nullable=False)
     parts_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=json_list, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="done")
@@ -156,7 +159,68 @@ class Message(Base):
     __table_args__ = (
         Index("ix_messages_conversation_id_id", "conversation_id", "id"),
         Index("ix_messages_conversation_pinned", "conversation_id", "pinned"),
+        UniqueConstraint("conversation_id", "sender_id", "client_message_id", name="uq_message_client_key"),
     )
+
+
+class Generation(Base):
+    """一次 Agent 生成的状态和 epoch；用于停止、恢复和链路关联。"""
+
+    __tablename__ = "generations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    assistant_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    stream_epoch: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    run_id: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stop_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_generations_conversation_status", "conversation_id", "status"),)
+
+
+class EventLog(Base):
+    """持久化会话事件；实时 EventHub 只负责提交后的进程内广播。"""
+
+    __tablename__ = "event_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    event_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    stream_epoch: Mapped[str | None] = mapped_column(String(128))
+    generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id", ondelete="SET NULL"))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    delta_seq: Mapped[int | None] = mapped_column(Integer)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=json_dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "event_seq", name="uq_event_conversation_seq"),
+        Index("ix_event_conversation_seq", "conversation_id", "event_seq"),
+    )
+
+
+class QueueJob(Base):
+    """单进程会话队列的持久化任务状态。"""
+
+    __tablename__ = "queue_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    generation_id: Mapped[int | None] = mapped_column(ForeignKey("generations.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=json_dict, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_jobs_conversation_status", "conversation_id", "status"),)
 
 
 class Artifact(Base):

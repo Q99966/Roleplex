@@ -13,15 +13,16 @@ from .db import close_db, init_db
 from .events import EventHub
 from . import events
 from .errors import http_error_handler, validation_error_handler
-from .routers import auth, conversations, model_configs, roles
+from .routers import auth, conversations, messages, model_configs, roles
+from .ws import router as ws_router
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s %(message)s")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Initialize process-local event state and database resources for the app lifetime."""
-    events.hub = EventHub(settings.event_buffer_size)
+    """在应用生命周期内初始化进程事件广播器和数据库资源。"""
+    events.hub = EventHub()
     await init_db()
     yield
     events.hub = None
@@ -42,9 +43,11 @@ app.include_router(auth.router)
 app.include_router(model_configs.router)
 app.include_router(roles.router)
 app.include_router(conversations.router)
+app.include_router(messages.router)
+app.include_router(ws_router)
 
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    """Report process readiness and the current in-memory event epoch."""
-    return {"status": "ok", "stream_epoch": events.hub.stream_epoch if events.hub else "starting"}
+    """报告进程可用性和当前事件 epoch。"""
+    return {"status": "ok", "stream_epoch": events.current_epoch()}

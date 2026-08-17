@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -73,13 +74,38 @@ async def with_locked_retry(operation, attempts: int = 4):
 
 
 async def init_db() -> None:
-    """创建本地数据表、初始化单例状态，并恢复中断的工作。"""
+    """执行数据库迁移、初始化单例状态，并恢复中断的工作。"""
     from . import models  # noqa: F401
 
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+    await run_migrations()
     await ensure_instance_settings()
     await recover_interrupted_messages()
+
+
+def _alembic_config():
+    """构造只指向本项目迁移目录的 Alembic 配置。
+
+    不加载 alembic.ini：该文件的日志配置会覆盖应用自身的日志设置，
+    且其中的数据库地址只适用于命令行使用；运行时地址由 alembic/env.py
+    从应用配置读取。
+    """
+    from alembic.config import Config
+
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    return config
+
+
+async def run_migrations() -> None:
+    """把数据库升级到最新迁移版本。
+
+    schema 只由迁移创建，不再在启动时按 ORM metadata 建表：否则新库不会记录
+    迁移版本，已有库也拿不到新增字段，schema 会在开发过程中静默漂移。
+    迁移在工作线程中执行，因为 alembic 的在线迁移会自行启动事件循环。
+    """
+    from alembic import command
+
+    await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
 
 
 async def ensure_instance_settings() -> None:

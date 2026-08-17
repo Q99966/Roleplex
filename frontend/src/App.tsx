@@ -78,22 +78,6 @@ export function App() {
     }
   }, [currentHash, user, loading, activeConversationId, setActiveConversation])
 
-  // 监听内部状态变化同步更新 URL Hash
-  useEffect(() => {
-    if (loading || !user) return
-
-    if (activeConversationId !== null) {
-      const expectedHash = `#/workspace/conversation/${activeConversationId}`
-      if (window.location.hash !== expectedHash) {
-        window.location.hash = expectedHash
-      }
-    } else {
-      if (window.location.hash !== '#/workspace') {
-        window.location.hash = '#/workspace'
-      }
-    }
-  }, [activeConversationId, user, loading])
-
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white font-medium text-lg">

@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
-import { WandSparkles, ArrowRight, Bot, Cpu, Users, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { 
+  WandSparkles, ArrowRight, Bot, Cpu, Users, CheckCircle2, 
+  ChevronLeft, ChevronRight, Copy, Check, Terminal, Shield, 
+  RefreshCw, Play, Pause, Layers
+} from 'lucide-react'
 
 interface LandingPageProps {
   onEnterWorkbench: () => void
@@ -60,28 +64,109 @@ const SCENARIOS: Scenario[] = [
   }
 ]
 
+/** 拓扑节点可交互详情数据字典 */
+interface NodeDetail {
+  id: string
+  name: string
+  type: 'orchestrator' | 'agent' | 'tool' | 'user'
+  typeLabel: string
+  roleDescription: string
+  boundModelOrProtocol: string
+  toolsOrPermissions: string[]
+}
+
+const NODE_DETAILS: Record<string, NodeDetail> = {
+  user: {
+    id: 'user',
+    name: '用户指令 (User Input)',
+    type: 'user',
+    typeLabel: '指令输入端',
+    roleDescription: '开发者通过自然语言下达研发目标，作为流水线的初始事件触发源。',
+    boundModelOrProtocol: '本地客户端 WebSocket 会话通道',
+    toolsOrPermissions: ['发起任务', '指定群聊成员', '强行插话中断']
+  },
+  orchestrator: {
+    id: 'orchestrator',
+    name: '协调者 Agent (Orchestrator)',
+    type: 'orchestrator',
+    typeLabel: '调度中枢',
+    roleDescription: '分析指令意图，基于 DAG 有向无环图进行多阶段任务拆解与子 Agent 发言权仲裁。',
+    boundModelOrProtocol: 'GPT-4o / Claude 3.5 Sonnet / DeepSeek-V3',
+    toolsOrPermissions: ['工作流编排', '发言权调度', '全局输出汇聚', '规避抢麦冲突']
+  },
+  coder: {
+    id: 'coder',
+    name: '代码专家 (Code Expert)',
+    type: 'agent',
+    typeLabel: '执行智能体',
+    roleDescription: '执行前端组件编写、后端服务实现及算法逻辑构建，调用底层工具写入代码。',
+    boundModelOrProtocol: 'DeepSeek-Coder / Claude 3.5 Sonnet',
+    toolsOrPermissions: ['文件系统 I/O', '语法分析', '横向协作派发']
+  },
+  auditor: {
+    id: 'auditor',
+    name: '审计专家 (QA Auditor)',
+    type: 'agent',
+    typeLabel: '执行智能体',
+    roleDescription: '针对代码质量、安全漏洞、语境术语一致性进行自动化审查，并驱动沙箱测试。',
+    boundModelOrProtocol: 'Claude 3.5 Sonnet / GPT-4o',
+    toolsOrPermissions: ['测试沙箱 Runner', '搜索引擎检索', '合规性判定']
+  },
+  file_tool: {
+    id: 'file_tool',
+    name: '文件系统 (File System)',
+    type: 'tool',
+    typeLabel: 'MCP 工具',
+    roleDescription: '在受控工作区沙盒中提供原子级文件读写、目录创建与 Diff 比对能力。',
+    boundModelOrProtocol: 'Model Context Protocol (MCP) · Local File IO',
+    toolsOrPermissions: ['受限沙盒路径', '原子覆写', '版本备份']
+  },
+  search_tool: {
+    id: 'search_tool',
+    name: '搜索引擎 (Search Engine)',
+    type: 'tool',
+    typeLabel: 'MCP 工具',
+    roleDescription: '联网获取最新开源库 API 规范、最新技术文档与多语种本地化术语库。',
+    boundModelOrProtocol: 'Model Context Protocol (MCP) · Web Search',
+    toolsOrPermissions: ['实时检索', '网页正文提取', '权威源过滤']
+  },
+  sandbox_tool: {
+    id: 'sandbox_tool',
+    name: '测试沙箱 (Test Sandbox)',
+    type: 'tool',
+    typeLabel: 'MCP 工具',
+    roleDescription: '在轻量级隔离容器中自动执行 Vitest / Playwright / Pytest 单元与集成测试。',
+    boundModelOrProtocol: 'Model Context Protocol (MCP) · Isolated Exec',
+    toolsOrPermissions: ['无污染运行', '测试报告解析', '超时与资源熔断']
+  }
+}
+
 /** Roleplex 平台官方产品介绍主页（搭载动态生产线与真实对话滑动展示区）。 */
 export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
   // 右侧 SVG 拓扑发光管线状态机
   const [activeStep, setActiveStep] = useState(0)
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  
   // 下方真实对话滑动展示区
   const [currentSlide, setCurrentSlide] = useState(0)
   const [isHovered, setIsHovered] = useState(false)
+  const [copiedCode, setCopiedCode] = useState(false)
 
-  // 拓扑图状态推进
+  // 拓扑图状态自动推进（当选中节点时暂停自动播放以供检查）
   useEffect(() => {
+    if (selectedNodeId !== null) return
     const interval = setInterval(() => {
       setActiveStep((prev) => (prev + 1) % 7)
-    }, 1500)
+    }, 1600)
     return () => clearInterval(interval)
-  }, [])
+  }, [selectedNodeId])
 
   // 滑动展示区自动轮播（当鼠标 Hover 在卡片上时暂停以供细读代码）
   useEffect(() => {
     if (isHovered) return
     const interval = setInterval(() => {
       setCurrentSlide((prev) => (prev + 1) % SCENARIOS.length)
-    }, 5500)
+    }, 6000)
     return () => clearInterval(interval)
   }, [isHovered])
 
@@ -91,6 +176,19 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
 
   const prevSlide = () => {
     setCurrentSlide((prev) => (prev - 1 + SCENARIOS.length) % SCENARIOS.length)
+  }
+
+  const handleCopy = (codeText: string) => {
+    navigator.clipboard.writeText(codeText)
+    setCopiedCode(true)
+    setTimeout(() => setCopiedCode(false), 2000)
+  }
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' })
+    }
   }
 
   return (
@@ -163,28 +261,64 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
       <div className="absolute bottom-10 right-1/4 w-[500px] h-[500px] rounded-full bg-cyan-500/5 blur-[150px] pointer-events-none z-0"></div>
 
       {/* 头部导航栏 */}
-      <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md h-16 shrink-0 px-6 md:px-12 flex items-center justify-between relative z-10">
-        <div className="flex items-center gap-2.5">
-          <div className="rounded-lg bg-indigo-600 p-2 text-white shadow-md shadow-indigo-600/30">
-            <WandSparkles size={18} />
+      <header className="sticky top-0 z-50 border-b border-slate-900 bg-slate-950/85 backdrop-blur-xl h-16 shrink-0 px-6 md:px-12 flex items-center justify-between transition-all">
+        {/* 左侧 Logo 与版本隔离标签 */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <div className="rounded-lg bg-indigo-600 p-2 text-white shadow-md shadow-indigo-600/30">
+              <WandSparkles size={18} />
+            </div>
+            <span className="font-bold text-white text-lg tracking-wide bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">Roleplex</span>
           </div>
-          <span className="font-bold text-white text-lg tracking-wide bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">Roleplex</span>
+          
+          <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-950/30 px-2.5 py-0.5 text-[10px] text-emerald-400 font-mono">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            <span>v0.1.0 · 本地安全隔离</span>
+          </div>
         </div>
+
+        {/* 中间平滑导航锚点 */}
+        <nav className="hidden md:flex items-center gap-8 text-xs font-medium text-slate-400">
+          <button 
+            type="button" 
+            onClick={() => scrollToSection('topology')}
+            className="hover:text-indigo-400 transition-colors cursor-pointer"
+          >
+            架构拓扑
+          </button>
+          <button 
+            type="button" 
+            onClick={() => scrollToSection('simulator')}
+            className="hover:text-indigo-400 transition-colors cursor-pointer"
+          >
+            实战演练
+          </button>
+          <button 
+            type="button" 
+            onClick={() => scrollToSection('features')}
+            className="hover:text-indigo-400 transition-colors cursor-pointer"
+          >
+            核心支柱
+          </button>
+        </nav>
         
-        <button
-          type="button"
-          onClick={onEnterWorkbench}
-          className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition shadow-lg shadow-indigo-600/20 active:scale-[0.98]"
-        >
-          进入工作台
-        </button>
+        {/* 右侧进入工作台按钮 */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onEnterWorkbench}
+            className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition shadow-lg shadow-indigo-600/20 active:scale-[0.98] cursor-pointer"
+          >
+            进入工作台
+          </button>
+        </div>
       </header>
 
       {/* 主体区 */}
-      <main className="flex-1 flex flex-col items-center px-6 py-12 md:py-20 max-w-6xl w-full mx-auto relative z-10 space-y-20 md:space-y-28">
+      <main className="flex-1 flex flex-col items-center px-6 py-12 md:py-20 max-w-6xl w-full mx-auto relative z-10 space-y-24 md:space-y-32">
         
-        {/* Hero Section */}
-        <section className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 w-full items-center">
+        {/* Hero Section & 拓扑沙箱 */}
+        <section id="topology" className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 w-full items-center">
           {/* 左侧：介绍 */}
           <div className="md:col-span-6 space-y-6 text-left">
             <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-950/30 px-3 py-1 text-xs text-indigo-400 font-semibold tracking-wide">
@@ -192,40 +326,66 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
               <span>Milestone M1 · 已就绪</span>
             </div>
             
-            <h2 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
+            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
               多智能体协同，<br />
               <span className="bg-gradient-to-r from-indigo-400 via-indigo-200 to-cyan-400 bg-clip-text text-transparent">重新定义群聊。</span>
-            </h2>
+            </h1>
             
             <p className="text-slate-400 text-sm md:text-base leading-relaxed max-w-lg">
-              Roleplex 是一款个人多 Agent 协同群聊工作台。在这里，您可以托管自己的大模型 API 密钥，定制不同职责的 Agent 实例，并拉起群聊让它们协同运作。
+              Roleplex 是一款个人多 Agent 协同群聊工作台。在这里，您可以托管自己的大模型 API 密钥，定制不同职责的 Agent 实例，并通过中枢调度器让它们在群聊中协同运作。
             </p>
 
-            <div className="pt-4">
+            <div className="pt-2 flex flex-wrap gap-4 items-center">
               <button 
                 type="button" 
                 onClick={onEnterWorkbench}
-                className="inline-flex items-center gap-2.5 rounded-xl bg-indigo-600 px-7 py-3.5 font-semibold text-white hover:bg-indigo-500 transition shadow-xl shadow-indigo-600/30 active:scale-[0.98]"
+                className="inline-flex items-center gap-2.5 rounded-xl bg-indigo-600 px-7 py-3.5 font-semibold text-white hover:bg-indigo-500 transition shadow-xl shadow-indigo-600/30 active:scale-[0.98] cursor-pointer"
               >
                 <span>立即进入工作台</span>
                 <ArrowRight size={16} />
               </button>
+
+              <button
+                type="button"
+                onClick={() => scrollToSection('simulator')}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-5 py-3.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-850 transition cursor-pointer"
+              >
+                <Layers size={15} />
+                <span>查看实战案例</span>
+              </button>
             </div>
           </div>
 
-          {/* 右侧：多智能体协作与工具调用跑马灯运行图 */}
+          {/* 右侧：多智能体协作与工具调用跑马灯运行图（支持节点点击互动探索） */}
           <div className="md:col-span-6 w-full">
-            <div className="bg-slate-900/60 border border-slate-850 p-6 rounded-3xl backdrop-blur-md shadow-2xl relative overflow-hidden">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-855">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">协作与工具网络拓扑 (Agentic Workflow & Tool Network)</span>
-                <span className="text-[10px] bg-indigo-950 border border-indigo-900/60 rounded px-1.5 py-0.5 text-indigo-400 font-mono flex items-center gap-1">
-                  <span className="w-1 h-1 rounded-full bg-cyan-400 animate-ping"></span>
-                  <span>ACTIVE_WORKFLOW</span>
-                </span>
+            <div className="bg-slate-900/60 border border-slate-850 p-6 rounded-3xl backdrop-blur-md shadow-2xl relative overflow-hidden transition-all">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-850">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">协作与工具网络拓扑</span>
+                  <span className="text-[10px] text-slate-600 hidden sm:inline">(点击节点可探查)</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedNodeId ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNodeId(null)}
+                      className="text-[10px] bg-slate-950 border border-slate-800 hover:border-slate-700 rounded px-2 py-0.5 text-indigo-400 font-mono flex items-center gap-1 transition"
+                    >
+                      <RefreshCw size={10} />
+                      <span>恢复自动流转</span>
+                    </button>
+                  ) : (
+                    <span className="text-[10px] bg-indigo-950 border border-indigo-900/60 rounded px-1.5 py-0.5 text-indigo-400 font-mono flex items-center gap-1">
+                      <span className="w-1 h-1 rounded-full bg-cyan-400 animate-ping"></span>
+                      <span>ACTIVE_PIPELINE</span>
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* 节点容器（高度 350px） */}
-              <div className="h-[350px] relative text-xs mt-4">
+              <div className="h-[340px] relative text-xs mt-2">
                 
                 {/* 拓扑管线图绘制 */}
                 <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
@@ -238,63 +398,66 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
 
                   {/* 1. 用户 -> 调度中枢 */}
                   <line x1="50%" y1="36" x2="50%" y2="66" className="flow-line-static" />
-                  {activeStep === 1 && (
+                  {activeStep === 1 && !selectedNodeId && (
                     <line x1="50%" y1="36" x2="50%" y2="66" className="flow-line-active-down" />
                   )}
-                  {activeStep === 6 && (
+                  {activeStep === 6 && !selectedNodeId && (
                     <line x1="50%" y1="36" x2="50%" y2="66" className="flow-line-active-up" />
                   )}
 
                   {/* 2. 调度中枢 -> 代码专家 */}
                   <line x1="50%" y1="106" x2="25%" y2="156" className="flow-line-static" />
-                  {activeStep === 2 && (
+                  {activeStep === 2 && !selectedNodeId && (
                     <line x1="50%" y1="106" x2="25%" y2="156" className="flow-line-active-down" />
                   )}
-                  {activeStep === 6 && (
+                  {activeStep === 6 && !selectedNodeId && (
                     <line x1="50%" y1="106" x2="25%" y2="156" className="flow-line-active-up" />
                   )}
 
                   {/* 3. 调度中枢 -> 审计专家 */}
                   <line x1="50%" y1="106" x2="75%" y2="156" className="flow-line-static" />
-                  {activeStep === 6 && (
+                  {activeStep === 6 && !selectedNodeId && (
                     <line x1="50%" y1="106" x2="75%" y2="156" className="flow-line-active-up" />
                   )}
 
                   {/* 4. 代码专家 <-> 审计专家（横向协同） */}
                   <line x1="25%" y1="176" x2="75%" y2="176" className="flow-line-static" />
-                  {activeStep === 4 && (
+                  {activeStep === 4 && !selectedNodeId && (
                     <line x1="25%" y1="176" x2="75%" y2="176" className="flow-line-active-right" />
                   )}
 
                   {/* 5. 代码专家 -> 文件系统工具 */}
                   <line x1="25%" y1="196" x2="12%" y2="266" className="flow-line-tool-static" />
-                  {activeStep === 2 && (
+                  {activeStep === 2 && !selectedNodeId && (
                     <line x1="25%" y1="196" x2="12%" y2="266" className="flow-line-tool-active-down" />
                   )}
-                  {activeStep === 3 && (
+                  {activeStep === 3 && !selectedNodeId && (
                     <line x1="25%" y1="196" x2="12%" y2="266" className="flow-line-tool-active-up" />
                   )}
 
                   {/* 6. 代码专家/审计专家 -> 搜索引擎工具 */}
                   <line x1="25%" y1="196" x2="50%" y2="266" className="flow-line-tool-static" />
                   <line x1="75%" y1="196" x2="50%" y2="266" className="flow-line-tool-static" />
-                  {activeStep === 4 && (
+                  {activeStep === 4 && !selectedNodeId && (
                     <line x1="75%" y1="196" x2="50%" y2="266" className="flow-line-tool-active-down" />
                   )}
 
                   {/* 7. 审计专家 -> 测试沙箱工具 */}
                   <line x1="75%" y1="196" x2="88%" y2="266" className="flow-line-tool-static" />
-                  {activeStep === 5 && (
+                  {activeStep === 5 && !selectedNodeId && (
                     <line x1="75%" y1="196" x2="88%" y2="266" className="flow-line-tool-active-down" />
                   )}
                 </svg>
 
                 {/* 节点 1：用户指令 */}
                 <div 
-                  className={`absolute left-1/2 -translate-x-1/2 top-0 z-10 transition-all duration-500 rounded-xl px-4 py-2 border font-semibold shadow-md ${
-                    activeStep === 0 
-                      ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
-                      : 'bg-slate-950 border-slate-800/80 text-slate-400'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'user' ? null : 'user')}
+                  className={`absolute left-1/2 -translate-x-1/2 top-0 z-10 transition-all duration-300 rounded-xl px-4 py-2 border font-semibold shadow-md cursor-pointer ${
+                    selectedNodeId === 'user'
+                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(99,102,241,0.5)] ring-2 ring-indigo-500/30'
+                      : activeStep === 0 && !selectedNodeId
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
+                        : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:border-slate-700'
                   }`}
                 >
                   用户指令 (User Input)
@@ -302,107 +465,168 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
 
                 {/* 节点 2：协调者 (Orchestrator) */}
                 <div 
-                  className={`absolute left-1/2 -translate-x-1/2 top-[66px] z-10 transition-all duration-500 rounded-xl px-4 py-2 border font-bold shadow-lg flex flex-col items-center justify-center min-w-[210px] ${
-                    activeStep === 1 || activeStep === 6
-                      ? 'bg-slate-900 border-cyan-500 text-cyan-300 scale-105 shadow-[0_0_15px_rgba(6,182,212,0.3)]' 
-                      : 'bg-slate-950 border-slate-800/80 text-slate-400'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'orchestrator' ? null : 'orchestrator')}
+                  className={`absolute left-1/2 -translate-x-1/2 top-[66px] z-10 transition-all duration-300 rounded-xl px-4 py-2 border font-bold shadow-lg flex flex-col items-center justify-center min-w-[210px] cursor-pointer ${
+                    selectedNodeId === 'orchestrator'
+                      ? 'bg-slate-900 border-cyan-400 text-cyan-200 scale-105 shadow-[0_0_20px_rgba(6,182,212,0.5)] ring-2 ring-cyan-500/30'
+                      : (activeStep === 1 || activeStep === 6) && !selectedNodeId
+                        ? 'bg-slate-900 border-cyan-500 text-cyan-300 scale-105 shadow-[0_0_15px_rgba(6,182,212,0.3)]' 
+                        : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full bg-cyan-400 ${activeStep === 1 ? 'animate-ping' : ''}`}></span>
+                    <span className={`w-1.5 h-1.5 rounded-full bg-cyan-400 ${activeStep === 1 && !selectedNodeId ? 'animate-ping' : ''}`}></span>
                     <span>协调者 Agent (Orchestrator)</span>
                   </div>
                   <span className="text-[9px] text-slate-500 font-mono mt-0.5">
-                    {activeStep === 1 ? '[PLANNING_WORKFLOW]' : activeStep === 6 ? '[COMPILING_RESPONSE]' : '[IDLE_STANDBY]'}
+                    {selectedNodeId === 'orchestrator' ? '[INSPECTING_NODE]' : activeStep === 1 ? '[PLANNING_WORKFLOW]' : activeStep === 6 ? '[COMPILING_RESPONSE]' : '[IDLE_STANDBY]'}
                   </span>
                 </div>
 
                 {/* 节点 3：代码专家 (Sub-Agent Left) */}
                 <div 
-                  className={`absolute left-[5%] top-[148px] w-[40%] z-10 transition-all duration-500 rounded-xl p-3 border font-semibold shadow-md ${
-                    activeStep === 2 || activeStep === 3
-                      ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.25)]' 
-                      : activeStep === 4
-                        ? 'bg-slate-950 border-indigo-900/60 text-indigo-400/80'
-                        : 'bg-slate-950 border-slate-800/80 text-slate-500'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'coder' ? null : 'coder')}
+                  className={`absolute left-[5%] top-[148px] w-[40%] z-10 transition-all duration-300 rounded-xl p-3 border font-semibold shadow-md cursor-pointer ${
+                    selectedNodeId === 'coder'
+                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(99,102,241,0.4)] ring-2 ring-indigo-500/30'
+                      : (activeStep === 2 || activeStep === 3) && !selectedNodeId
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.25)]' 
+                        : activeStep === 4 && !selectedNodeId
+                          ? 'bg-slate-950 border-indigo-900/60 text-indigo-400/80'
+                          : 'bg-slate-950 border-slate-800/80 text-slate-500 hover:border-slate-700'
                   }`}
                 >
                   <p className="font-bold text-center">代码专家</p>
                   <span className="text-[9px] text-slate-500 block text-center mt-1 font-mono">
-                    {activeStep === 2 ? '[CALLING_TOOL_FILE]' : activeStep === 3 ? '[COMPILING_CODE]' : activeStep === 4 ? '[COLLABORATING]' : '[STANDBY]'}
+                    {selectedNodeId === 'coder' ? '[INSPECTING_NODE]' : activeStep === 2 ? '[CALLING_TOOL_FILE]' : activeStep === 3 ? '[COMPILING_CODE]' : activeStep === 4 ? '[COLLABORATING]' : '[STANDBY]'}
                   </span>
                 </div>
 
                 {/* 节点 4：审计专家 (Sub-Agent Right) */}
                 <div 
-                  className={`absolute right-[5%] top-[148px] w-[40%] z-10 transition-all duration-500 rounded-xl p-3 border font-semibold shadow-md ${
-                    activeStep === 4 || activeStep === 5
-                      ? 'bg-slate-900 border-purple-500 text-purple-300 scale-105 shadow-[0_0_15px_rgba(168,85,247,0.25)]' 
-                      : 'bg-slate-950 border-slate-800/80 text-slate-500'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'auditor' ? null : 'auditor')}
+                  className={`absolute right-[5%] top-[148px] w-[40%] z-10 transition-all duration-300 rounded-xl p-3 border font-semibold shadow-md cursor-pointer ${
+                    selectedNodeId === 'auditor'
+                      ? 'bg-slate-900 border-purple-400 text-purple-200 scale-105 shadow-[0_0_20px_rgba(168,85,247,0.4)] ring-2 ring-purple-500/30'
+                      : (activeStep === 4 || activeStep === 5) && !selectedNodeId
+                        ? 'bg-slate-900 border-purple-500 text-purple-300 scale-105 shadow-[0_0_15px_rgba(168,85,247,0.25)]' 
+                        : 'bg-slate-950 border-slate-800/80 text-slate-500 hover:border-slate-700'
                   }`}
                 >
                   <p className="font-bold text-center">审计专家</p>
                   <span className="text-[9px] text-slate-500 block text-center mt-1 font-mono">
-                    {activeStep === 4 ? '[SEARCHING_REGULATIONS]' : activeStep === 5 ? '[RUNNING_TESTS]' : '[STANDBY]'}
+                    {selectedNodeId === 'auditor' ? '[INSPECTING_NODE]' : activeStep === 4 ? '[SEARCHING_REGULATIONS]' : activeStep === 5 ? '[RUNNING_TESTS]' : '[STANDBY]'}
                   </span>
                 </div>
 
                 {/* 节点 5：文件系统工具 (Left Tool) */}
                 <div 
-                  className={`absolute left-[2%] top-[266px] w-[29%] z-10 transition-all duration-500 rounded-xl p-2.5 border border-dashed text-center ${
-                    activeStep === 2 || activeStep === 3
-                      ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                      : 'bg-slate-950/40 border-slate-900 text-slate-650'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'file_tool' ? null : 'file_tool')}
+                  className={`absolute left-[2%] top-[266px] w-[29%] z-10 transition-all duration-300 rounded-xl p-2.5 border border-dashed text-center cursor-pointer ${
+                    selectedNodeId === 'file_tool'
+                      ? 'bg-emerald-950/30 border-emerald-400 text-emerald-300 scale-105 shadow-[0_0_18px_rgba(16,185,129,0.3)] ring-2 ring-emerald-500/30'
+                      : (activeStep === 2 || activeStep === 3) && !selectedNodeId
+                        ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-600 hover:border-slate-800'
                   }`}
                 >
                   <p className="font-semibold text-[10px]">文件系统</p>
                   <span className="text-[8px] block font-mono text-slate-500 mt-0.5">
-                    {activeStep === 2 ? '写入源码' : '就绪'}
+                    {activeStep === 2 && !selectedNodeId ? '写入源码' : '就绪'}
                   </span>
                 </div>
 
                 {/* 节点 6：搜索引擎工具 (Center Tool) */}
                 <div 
-                  className={`absolute left-1/2 -translate-x-1/2 top-[266px] w-[29%] z-10 transition-all duration-500 rounded-xl p-2.5 border border-dashed text-center ${
-                    activeStep === 4
-                      ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                      : 'bg-slate-950/40 border-slate-900 text-slate-650'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'search_tool' ? null : 'search_tool')}
+                  className={`absolute left-1/2 -translate-x-1/2 top-[266px] w-[29%] z-10 transition-all duration-300 rounded-xl p-2.5 border border-dashed text-center cursor-pointer ${
+                    selectedNodeId === 'search_tool'
+                      ? 'bg-emerald-950/30 border-emerald-400 text-emerald-300 scale-105 shadow-[0_0_18px_rgba(16,185,129,0.3)] ring-2 ring-emerald-500/30'
+                      : activeStep === 4 && !selectedNodeId
+                        ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-600 hover:border-slate-800'
                   }`}
                 >
                   <p className="font-semibold text-[10px]">搜索引擎</p>
                   <span className="text-[8px] block font-mono text-slate-500 mt-0.5">
-                    {activeStep === 4 ? '检索规范' : '就绪'}
+                    {activeStep === 4 && !selectedNodeId ? '检索规范' : '就绪'}
                   </span>
                 </div>
 
                 {/* 节点 7：测试沙箱工具 (Right Tool) */}
                 <div 
-                  className={`absolute right-[2%] top-[266px] w-[29%] z-10 transition-all duration-500 rounded-xl p-2.5 border border-dashed text-center ${
-                    activeStep === 5
-                      ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                      : 'bg-slate-950/40 border-slate-900 text-slate-650'
+                  onClick={() => setSelectedNodeId(selectedNodeId === 'sandbox_tool' ? null : 'sandbox_tool')}
+                  className={`absolute right-[2%] top-[266px] w-[29%] z-10 transition-all duration-300 rounded-xl p-2.5 border border-dashed text-center cursor-pointer ${
+                    selectedNodeId === 'sandbox_tool'
+                      ? 'bg-emerald-950/30 border-emerald-400 text-emerald-300 scale-105 shadow-[0_0_18px_rgba(16,185,129,0.3)] ring-2 ring-emerald-500/30'
+                      : activeStep === 5 && !selectedNodeId
+                        ? 'bg-emerald-950/20 border-emerald-500 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-slate-950/40 border-slate-900 text-slate-600 hover:border-slate-800'
                   }`}
                 >
                   <p className="font-semibold text-[10px]">测试沙箱</p>
                   <span className="text-[8px] block font-mono text-slate-500 mt-0.5">
-                    {activeStep === 5 ? '单元测试' : '就绪'}
+                    {activeStep === 5 && !selectedNodeId ? '单元测试' : '就绪'}
                   </span>
                 </div>
 
               </div>
+
+              {/* 交互探查抽屉面板（当用户点击任一节点时展开展示其内部架构） */}
+              {selectedNodeId && NODE_DETAILS[selectedNodeId] && (
+                <div className="mt-4 pt-3 border-t border-slate-800/80 bg-slate-950/80 rounded-2xl p-3.5 space-y-2 text-left animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-xs">{NODE_DETAILS[selectedNodeId].name}</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950 border border-indigo-900/60 text-indigo-400 font-mono">
+                        {NODE_DETAILS[selectedNodeId].typeLabel}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNodeId(null)}
+                      className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                    >
+                      关闭探查 ✕
+                    </button>
+                  </div>
+                  
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    {NODE_DETAILS[selectedNodeId].roleDescription}
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[10px]">
+                    <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-850">
+                      <span className="text-slate-500 block font-mono">模型 / 通信协议:</span>
+                      <span className="text-slate-300 font-semibold">{NODE_DETAILS[selectedNodeId].boundModelOrProtocol}</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-850">
+                      <span className="text-slate-500 block font-mono">能力与权限:</span>
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {NODE_DETAILS[selectedNodeId].toolsOrPermissions.map((perm, idx) => (
+                          <span key={idx} className="text-[9px] bg-slate-950 px-1.5 py-0.2 rounded border border-slate-800 text-slate-300">
+                            {perm}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </section>
 
         {/* Sliding Case Showcase Section (真实对话滑动展示区) */}
-        <section className="w-full space-y-8">
+        <section id="simulator" className="w-full space-y-8">
           <div className="text-center space-y-2">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-cyan-950/30 px-3 py-1 text-[11px] text-cyan-400 font-bold uppercase tracking-wider">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-cyan-950/30 px-3 py-1 text-[11px] text-cyan-400 font-bold uppercase tracking-wider font-mono">
               <span>Interactive Simulator</span>
             </div>
-            <h3 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">群聊协作实战演练</h3>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">群聊协作实战演练</h2>
             <p className="text-slate-500 text-xs md:text-sm max-w-xl mx-auto leading-relaxed">
-              以滑动幻灯片形式还原真实的群聊对话场景，看不同职责的 Agent 与外部工具如何在统一中控流下交接流转与共同解题。
+              以滑动卡片形式还原真实的群聊对话场景，看不同职责的 Agent 与外部工具如何在统一中控流下交接流转与共同解题。
             </p>
           </div>
 
@@ -412,11 +636,11 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
           >
-            {/* 上一张 / 下一张按钮 (绝对定位在两侧，大屏悬浮，小屏隐藏) */}
+            {/* 上一张 / 下一张按钮 */}
             <button 
               type="button" 
               onClick={prevSlide}
-              className="absolute left-[-24px] md:left-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              className="absolute left-[-24px] md:left-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 cursor-pointer"
               aria-label="Previous Slide"
             >
               <ChevronLeft size={20} />
@@ -424,32 +648,42 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
             <button 
               type="button" 
               onClick={nextSlide}
-              className="absolute right-[-24px] md:right-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              className="absolute right-[-24px] md:right-[-54px] top-1/2 -translate-y-1/2 z-20 rounded-xl p-3 bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 shadow-2xl backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 cursor-pointer"
               aria-label="Next Slide"
             >
               <ChevronRight size={20} />
             </button>
 
-            {/* 卡片容器：包含滑动视口 */}
+            {/* 卡片容器 */}
             <div className="w-full overflow-hidden rounded-3xl border border-slate-850 bg-slate-900/40 backdrop-blur-xl shadow-2xl relative min-h-[460px] flex flex-col">
               
               {/* 卡片顶端状态条 */}
               <div className="border-b border-slate-850 px-6 py-4 flex flex-wrap items-center justify-between gap-3 bg-slate-950/20 shrink-0">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-mono">CASE 0{currentSlide + 1} / 03</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 font-semibold border border-indigo-900/60">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 font-semibold border border-indigo-900/60 font-mono">
                     {SCENARIOS[currentSlide].category}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-500">协同角色:</span>
-                  <div className="flex items-center gap-1.5">
+
+                <div className="flex items-center gap-3">
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="text-[10px] text-slate-500">协同角色:</span>
                     {SCENARIOS[currentSlide].agents.map((agent, i) => (
                       <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-slate-950 border border-slate-850 text-slate-300 font-semibold">
                         {agent}
                       </span>
                     ))}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={onEnterWorkbench}
+                    className="text-[10px] px-2.5 py-1 rounded-lg bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-600 hover:text-white transition flex items-center gap-1 font-semibold cursor-pointer"
+                  >
+                    <span>以此模版启动工作台</span>
+                    <ArrowRight size={11} />
+                  </button>
                 </div>
               </div>
 
@@ -483,10 +717,10 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                           {/* 发送人昵称与角色标签 */}
                           <div className="flex items-center gap-1.5 px-1">
                             <span className="font-bold text-slate-300">{msg.sender}</span>
-                            <span className={`text-[8px] px-1 rounded-sm uppercase tracking-wide font-bold scale-90 ${
+                            <span className={`text-[8px] px-1.5 py-0.2 rounded-sm uppercase tracking-wide font-bold scale-90 ${
                               isUser ? 'bg-indigo-950 text-indigo-400 border border-indigo-900/60' :
                               isOrch ? 'bg-cyan-950 text-cyan-400 border border-cyan-900/60' :
-                              'bg-slate-950 text-slate-500 border border-slate-850'
+                              'bg-slate-950 text-slate-400 border border-slate-850'
                             }`}>
                               {msg.role}
                             </span>
@@ -500,14 +734,27 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                           }`}>
                             <p className="whitespace-pre-line text-[11px] md:text-xs">{msg.text}</p>
                             
-                            {/* 如果消息中包含代码段，则高能渲染出来 */}
+                            {/* 如果消息中包含代码段 */}
                             {msg.code && (
-                              <pre className="mt-3 rounded-lg bg-slate-950 border border-slate-850 p-3 font-mono text-[9px] md:text-[10px] text-indigo-300 overflow-x-auto max-w-full whitespace-pre leading-relaxed select-text">
-                                <code>{msg.code}</code>
-                              </pre>
+                              <div className="mt-3 relative">
+                                <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border border-b-0 border-slate-800 rounded-t-lg text-[9px] font-mono text-slate-400">
+                                  <span>React Component (TSX)</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopy(msg.code || '')}
+                                    className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition cursor-pointer"
+                                  >
+                                    {copiedCode ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                                    <span>{copiedCode ? '已复制' : '复制代码'}</span>
+                                  </button>
+                                </div>
+                                <pre className="rounded-b-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[9px] md:text-[10px] text-indigo-300 overflow-x-auto max-w-full whitespace-pre leading-relaxed select-text">
+                                  <code>{msg.code}</code>
+                                </pre>
+                              </div>
                             )}
 
-                            {/* 如果消息中包含表格（数据提取案例） */}
+                            {/* 如果消息中包含表格 */}
                             {msg.table && (
                               <div className="mt-3 overflow-x-auto rounded-lg border border-slate-850 select-text">
                                 <table className="w-full text-[10px] text-left border-collapse bg-slate-950">
@@ -542,7 +789,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
               {/* 轮播底端导航点与操作区 */}
               <div className="border-t border-slate-850 px-6 py-4 flex items-center justify-between bg-slate-950/20 shrink-0">
                 <span className="text-[9px] text-slate-500 font-mono">
-                  {isHovered ? '已暂停自动轮播（鼠标悬停）' : '自动轮播中（每 5.5 秒切换）'}
+                  {isHovered ? '已暂停自动轮播（鼠标悬停）' : '自动轮播中（每 6 秒切换）'}
                 </span>
                 
                 {/* 圆点指示器 */}
@@ -552,7 +799,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                       key={i}
                       type="button"
                       onClick={() => setCurrentSlide(i)}
-                      className={`h-2 rounded-full transition-all duration-300 ${
+                      className={`h-2 rounded-full transition-all duration-300 cursor-pointer ${
                         currentSlide === i ? 'w-6 bg-indigo-500' : 'w-2 bg-slate-800 hover:bg-slate-700'
                       }`}
                       aria-label={`Go to slide ${i + 1}`}
@@ -564,7 +811,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                   <button 
                     type="button"
                     onClick={prevSlide}
-                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                     aria-label="Prev Case"
                   >
                     <ChevronLeft size={14} />
@@ -572,7 +819,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                   <button 
                     type="button"
                     onClick={nextSlide}
-                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                    className="p-1 rounded bg-slate-950 border border-slate-850 text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                     aria-label="Next Case"
                   >
                     <ChevronRight size={14} />
@@ -585,19 +832,19 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
         </section>
 
         {/* Features Column Section */}
-        <section className="w-full space-y-8">
+        <section id="features" className="w-full space-y-8">
           <div className="text-center space-y-2">
-            <h3 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">Roleplex 核心三大支柱</h3>
+            <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">Roleplex 核心三大支柱</h2>
             <p className="text-slate-500 text-xs">通过三个极简步骤，拉起您的多 Agent 协作工作群</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
-            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between">
+            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between hover:border-slate-800 transition">
               <div className="space-y-4">
                 <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-center text-indigo-400">
                   <Cpu size={20} />
                 </div>
-                <h4 className="font-bold text-slate-200">01 / 密钥隔离托管</h4>
+                <h3 className="font-bold text-slate-200">01 / 密钥隔离托管</h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
                   本地安全托管各大模型厂商（如 OpenAI、Anthropic、DeepSeek 等）的 API Key。数据加密并仅保存在本机构建的 SQLite 数据库，保护您的隐私。
                 </p>
@@ -614,12 +861,12 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
               </ul>
             </div>
 
-            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between">
+            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between hover:border-slate-800 transition">
               <div className="space-y-4">
                 <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-center text-indigo-400">
                   <Bot size={20} />
                 </div>
-                <h4 className="font-bold text-slate-200">02 / 自由定制 Agent 角色</h4>
+                <h3 className="font-bold text-slate-200">02 / 自由定制 Agent 角色</h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
                   通过自定义 System Prompt 提示词、温度参数及专属职责标签，创造定位不同的 AI 智能体，并为其指派专用的大模型密钥。
                 </p>
@@ -636,12 +883,12 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
               </ul>
             </div>
 
-            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between">
+            <div className="bg-slate-900/40 border border-slate-900 p-6 rounded-2xl flex flex-col justify-between hover:border-slate-800 transition">
               <div className="space-y-4">
                 <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-center text-indigo-400">
                   <Users size={20} />
                 </div>
-                <h4 className="font-bold text-slate-200">03 / 多角色群发调度</h4>
+                <h3 className="font-bold text-slate-200">03 / 多角色群发调度</h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
                   拉起多角色群聊。开启 **Orchestrator 发言调度器**，由指定的调度角色智能决定对话的顺次与发言权，规避 AI 角色刷屏与抢麦。
                 </p>

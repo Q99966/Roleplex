@@ -27,12 +27,17 @@ async def require_member(session: AsyncSession, conversation_id: int, user_id: i
     return member
 
 
-def response(conversation: Conversation, member: ConversationMember) -> ConversationResponse:
-    """将共享会话状态与请求用户的个人偏好合并返回。"""
+async def response(session: AsyncSession, conversation: Conversation, member: ConversationMember) -> ConversationResponse:
+    """将共享会话状态、角色成员和请求用户的个人偏好合并返回。"""
+    role_members = (await session.scalars(select(ConversationMember.member_id).where(
+        ConversationMember.conversation_id == conversation.id,
+        ConversationMember.member_type == "role",
+    ))).all()
     return ConversationResponse(
         id=conversation.id, type=conversation.type, title=conversation.title,
         orchestrator_enabled=conversation.orchestrator_enabled,
         orchestrator_role_id=conversation.orchestrator_role_id,
+        role_ids=list(role_members),
         last_message_at=conversation.last_message_at,
         pinned=member.pinned, archived=member.archived,
     )
@@ -47,7 +52,7 @@ async def list_conversations(user: Annotated[User, Depends(get_current_user)], s
         .where(ConversationMember.member_type == "user", ConversationMember.member_id == user.id)
         .order_by(ConversationMember.pinned.desc(), Conversation.last_message_at.desc(), Conversation.created_at.desc())
     )).all()
-    return [response(conversation, member) for conversation, member in rows]
+    return [await response(session, conversation, member) for conversation, member in rows]
 
 
 @router.post("", response_model=ConversationResponse, status_code=201)
@@ -76,7 +81,7 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
     await session.commit()
     await session.refresh(conversation)
     member = await require_member(session, conversation.id, user.id)
-    return response(conversation, member)
+    return await response(session, conversation, member)
 
 
 @router.patch("/{conversation_id}/preferences", response_model=ConversationResponse)
@@ -95,7 +100,7 @@ async def update_preferences(
         member.archived = archived
     conversation = await session.get(Conversation, conversation_id)
     await session.commit()
-    return response(conversation, member)
+    return await response(session, conversation, member)
 
 
 @router.delete("/{conversation_id}", status_code=204)

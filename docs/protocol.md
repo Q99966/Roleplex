@@ -2,7 +2,7 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-当前 M0 阶段尚未建立领域子文档，因此本文件临时保留协议版本 `1` 的主链路契约。后续拆分时，字段与状态迁移到领域权威文档，本文件只保留摘要、状态和链接。
+消息与 WebSocket 已经拆分到领域文档；本文件对这两个领域只保留摘要、状态和链接。尚未实现的邀请、Artifact 和分页协议暂留在本文件，实现时按同样方式拆出。
 
 > 只有已经存在对应后端处理和前端行为的内容，才能视为当前可用；其余内容属于原型或后续里程碑预留。
 
@@ -15,7 +15,7 @@
 - **预留**：只有 schema、计划或协议设计，当前不可调用。
 - **废弃**：不再建议使用，并提供替代方案或迁移说明。
 
-后续协议目录按领域组织，例如：
+协议目录按领域组织：
 
 ```text
 docs/protocol/
@@ -31,11 +31,12 @@ docs/protocol/
 | 领域 | 当前状态 | 权威位置 |
 |---|---|---|
 | REST 认证与基础错误 | 已实现 | 本文档（待拆分） |
-| 消息发送与幂等 | 预留 | 本文档（待实现时拆分） |
-| WebSocket 连接与恢复 | 原型/预留 | 本文档；事件中心原型见后端代码 |
+| 消息发送、历史与停止生成 | 已实现（单聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
+| WebSocket 连接、订阅与恢复 | 已实现（单聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 版本更新 | 预留 | 本文档（待实现时拆分） |
 | 分页与兼容性 | 预留/总则 | 本文档 |
+| 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 
 ## 认证
 
@@ -55,9 +56,9 @@ WebSocket 必须通过首帧完成认证，不得把令牌放在查询参数中�
 {"type":"auth","token":"<访问令牌>"}
 ```
 
-服务端认证成功时返回 `auth_ok`；认证失败时返回策略违规并关闭连接。令牌有效期为七天；用户的 Token 版本发生变化后，旧令牌立即失效。
+服务端认证成功时返回 `auth_ok`；认证失败时以关闭码 `1008` 关闭连接。令牌有效期为七天；用户的 Token 版本发生变化后，旧令牌立即失效。
 
-当前状态：REST 认证已实现；WebSocket 认证帧属于协议预留，当前尚未提供对应 WebSocket 路由。
+当前状态：REST 认证与 WebSocket 首帧认证均已实现，细节见 [WebSocket 会话事件流](protocol/public/websocket/conversation-stream.md)。
 
 ## 错误信封
 
@@ -78,65 +79,17 @@ WebSocket 必须通过首帧完成认证，不得把令牌放在查询参数中�
 
 当前状态：REST 认证和基础资源接口已使用错误信封；尚未实现的接口必须继续复用该格式。
 
-## 发送消息（预留）
+## 消息
 
-```http
-POST /api/conversations/{conversation_id}/messages
-```
+会话历史读取、用户消息发送（含 `client_message_id` 幂等键）和停止生成已实现，权威文档见 [public/messaging/messages.md](protocol/public/messaging/messages.md)。流式增量和终态不通过 REST 返回，客户端必须订阅 WebSocket 事件流。
 
-请求示例：
+群聊 `@` 调度、Orchestrator 分派、附件和 Artifact part 仍属后续里程碑。
 
-```json
-{
-  "client_message_id":"client-generated-uuid",
-  "parts":[{"type":"text","text":"你好"}],
-  "mentions":[12],
-  "reply_to_id":null
-}
-```
+## WebSocket 订阅恢复
 
-`client_message_id` 是限定在“当前用户+当前会话”范围内的幂等键。客户端重试时，服务端应返回原有消息，而不是创建重复消息。响应应包含已持久化消息、`revision: 0` 和 `chain_id`。
+首帧认证、按 `after_event_seq` 的 backlog 回放、epoch 变化或超出回放上限时回落完整快照均已实现，权威文档见 [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md)。
 
-当前状态：消息模型和请求 schema 已预留；消息发送路由、幂等处理和前端聊天行为尚未实现。
-
-## WebSocket 订阅恢复（预留）
-
-认证后，客户端使用以下消息订阅会话：
-
-```json
-{"type":"subscribe","conversation_id":42,"stream_epoch":"上次会话的 epoch","after_event_seq":17}
-```
-
-服务端应原子完成订阅，并返回以下两种结果之一：
-
-- `subscribed`，随后发送所有 `event_seq > after_event_seq` 的 backlog 事件；
-- `snapshot_required`，当 epoch 发生变化或事件环已经不包含请求序号时，随后发送完整会话快照。
-
-事件示例：
-
-```json
-{
-  "stream_epoch":"...",
-  "event_seq":18,
-  "conversation_id":42,
-  "type":"message_delta",
-  "payload":{"message_id":99,"revision":3,"delta_seq":7,"text":"世界"}
-}
-```
-
-客户端必须幂等应用事件：
-
-- 当 `event_seq` 不大于本地游标时丢弃事件；
-- 当 `(message_id, revision, delta_seq)` 已经应用时丢弃重复事件；
-- 未知事件类型不得导致页面崩溃，应降级为可忽略事件或占位提示。
-
-所有状态变化都应进入事件流，包括：
-
-`message_created`、`message_delta`、`message_part_update`、`message_done`、`message_regenerated`、`member_updated`、`conversation_updated`、`conversation_state` 和 `error`。
-
-事件环只保存在内存中。`stream_epoch` 发生变化时，客户端必须请求完整快照；这是后端进程重启后的约定恢复行为。
-
-当前状态：`backend/app/events.py` 已实现进程内事件中心原型；WebSocket 路由、订阅处理和快照接口尚未实现。
+事件的可靠恢复来源是持久化事件日志：事件先落库再广播，内存广播只服务在线订阅者。客户端必须按 `event_seq` 与 `(message_id, revision, delta_seq)` 幂等应用事件，并对未知事件类型提供降级行为。
 
 ## 邀请兑换（预留）
 

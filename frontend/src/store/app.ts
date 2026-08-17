@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api, Conversation, Role, setToken, User, ModelConfig } from '../api/client'
+import { navigateToConversation } from '../router'
 
 type AppState = {
   user: User | null
@@ -92,10 +93,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       ])
       set({ roles, conversations, modelConfigs })
       
-      // 如果 activeConversationId 不存在或在会话列表中找不到，则尝试默认选中第一个
+      // 如果 activeConversationId 不存在或在会话列表中找不到，则回到工作台空态
       const currentActiveId = get().activeConversationId
       if (currentActiveId !== null && !conversations.some(c => c.id === currentActiveId)) {
         set({ activeConversationId: null })
+        navigateToConversation(null)
       }
     } catch (err) {
       console.error('Failed to load workspace data:', err)
@@ -129,13 +131,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   // 会话操作实现
   createConversation: async (body) => {
     const conv = await api.createConversation(body)
-    set({ activeConversationId: conv.id })
     await get().loadWorkspace()
+    navigateToConversation(conv.id)
   },
   deleteConversation: async (id) => {
     await api.deleteConversation(id)
     if (get().activeConversationId === id) {
       set({ activeConversationId: null })
+      navigateToConversation(null)
     }
     await get().loadWorkspace()
   },
