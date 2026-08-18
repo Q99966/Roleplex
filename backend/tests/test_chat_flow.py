@@ -5,16 +5,12 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from accounts import OWNER_NICKNAME, OWNER_PASSWORD, OWNER_USERNAME
+from accounts import TEST_PASSWORD, ensure_owner_async, guest_username
 
 
 async def _bootstrap(client: AsyncClient) -> dict:
-    """注册 Owner、创建模型配置、角色和单聊会话，返回测试所需上下文。"""
-    register = await client.post("/api/auth/register", json={
-        "username": OWNER_USERNAME, "password": OWNER_PASSWORD, "nickname": OWNER_NICKNAME,
-    })
-    assert register.status_code == 201, register.text
-    token = register.json()["access_token"]
+    """确保 Owner 存在，并创建模型配置、角色和单聊会话，返回测试所需上下文。"""
+    token = (await ensure_owner_async(client))["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     config = await client.post("/api/model-configs", headers=headers, json={
@@ -106,7 +102,7 @@ async def test_unauthorized_and_foreign_conversation_are_hidden():
             assert anonymous.json()["error"]["code"] == "AUTH_REQUIRED"
 
             guest = await client.post("/api/auth/register", json={
-                "username": "guest_chat", "password": "password123", "nickname": "Guest",
+                "username": guest_username("chat"), "password": TEST_PASSWORD, "nickname": "Guest",
             })
             assert guest.status_code == 201
             assert guest.json()["user"]["is_owner"] is False

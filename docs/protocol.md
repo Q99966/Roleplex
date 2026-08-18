@@ -34,9 +34,11 @@ docs/protocol/
 | 消息发送、历史与停止生成 | 已实现（单聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（单聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
-| Artifact 版本更新 | 预留 | 本文档（待实现时拆分） |
+| Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |
+| Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |
 | 分页与兼容性 | 预留/总则 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
+| Agent 运行时（领域事件、工具安全、MCP） | 内部/原型 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
 
 ## 认证
 
@@ -127,7 +129,8 @@ POST /api/conversations/{conversation_id}/artifacts
 
 因此后续版本创建后，历史消息中的旧版本不会漂移。
 
-当前状态：Artifact 数据模型已预留；创建、更新、原始内容读取和前端预览尚未实现。
+当前状态：Artifact 数据模型已预留；创建、更新和前端预览尚未实现。原始内容读取端点与
+iframe 隔离已作为风险验证实现，见 [产物原始内容读取](protocol/public/resources/artifact-raw.md)。
 
 ## 分页（预留）
 

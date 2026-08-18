@@ -118,7 +118,11 @@ async def send_message(
     await session.refresh(generation)
     await event_store.publish_events(created_event)
 
-    chat.start_generation(generation.id, conversation_id, text)
+    chat.start_generation(
+        generation.id, conversation_id, text,
+        # Owner 是本机可信主体，Guest 触发的链路在工具执行层拒绝 dangerous 调用。
+        triggered_by_user_id=user.id, allow_dangerous=user.is_owner,
+    )
     logger.info(
         "message.queued",
         extra={"conversation_id": conversation_id, "generation_id": generation.id, "chain_id": run_id},

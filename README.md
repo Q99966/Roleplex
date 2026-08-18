@@ -15,7 +15,58 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
 
-真实模型厂商接入、富媒体产物、群聊调度、Orchestrator、MCP 连接宿主任务将在后续里程碑接入。
+M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph 防腐层与统一领域事件、工具危险
+分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
+产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
+
+真实模型厂商接入、富媒体产物、群聊调度、Orchestrator、MCP 产品接入将在后续里程碑完成。
+
+### 模型 provider 开关与契约测试
+
+自动化测试固定使用确定性 fake provider：pytest 与 Playwright 都会显式设置
+`AGENT_USE_FAKE_PROVIDER=true`，即使本地 `.env` 配了真实厂商也不会联网或产生费用。
+
+手动跑真实厂商时，先把凭据写进 `backend/.env`（已被 Git 忽略），再生成一份可用的模型配置与角色：
+
+```powershell
+cd backend
+python scripts/seed_dev_provider.py
+$env:AGENT_USE_FAKE_PROVIDER = "false"
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+脚本会把凭据按产品同一条路径加密落库，并创建/更新开发用的模型配置与角色；不打印任何 Key。
+界面里选中该角色即可与真实模型对话。
+
+真实厂商的流式、工具调用、取消和错误格式验证放在独立的契约测试层，默认从普通回归中排除，
+需要时显式运行：
+
+```powershell
+cd backend
+pytest tests/contract -m contract -q
+```
+
+凭据从环境变量读取，也可以写进 `backend/.env`：`ROLEPLEX_CONTRACT_OPENAI_KEY`、
+`ROLEPLEX_CONTRACT_OPENAI_MODEL`、`ROLEPLEX_CONTRACT_OPENAI_BASE_URL`（OpenAI 兼容厂商），
+以及 `ROLEPLEX_CONTRACT_ANTHROPIC_KEY`、`ROLEPLEX_CONTRACT_ANTHROPIC_MODEL`。
+
+### 测试数据库与测试账号
+
+每轮测试使用带时间戳的独立数据库，跑完保留最近 5 轮，更早的在下一轮开始时自动清理：
+
+- 后端：`data/roleplex-test-<时间戳>.db`（pytest 结束时会打印本轮路径）
+- 端到端：`data/roleplex-e2e-<时间戳>.db`
+
+测试账号与本轮数据库同名可追溯：Owner 为 `test<时间戳>`，Guest 为 `test<时间戳>_<用途>`，
+密码统一是 `12345678`。想查看某轮测试产生的数据，把后端指向那个库启动即可登录查看：
+
+```powershell
+cd backend
+$env:DATABASE_URL = "sqlite+aiosqlite:///../data/roleplex-test-<时间戳>.db"
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+这些库只用于本地排查，密码是无实际价值的固定占位值，不要把该口令用于任何真实环境。
 
 ## Windows 开发
 

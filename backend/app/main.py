@@ -13,7 +13,7 @@ from .db import close_db, init_db
 from .events import EventHub
 from . import events
 from .errors import http_error_handler, validation_error_handler
-from .routers import auth, conversations, messages, model_configs, roles
+from .routers import artifacts, auth, conversations, messages, model_configs, roles
 from .ws import router as ws_router
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s %(message)s")
@@ -44,6 +44,7 @@ app.include_router(model_configs.router)
 app.include_router(roles.router)
 app.include_router(conversations.router)
 app.include_router(messages.router)
+app.include_router(artifacts.router)
 app.include_router(ws_router)
 
 

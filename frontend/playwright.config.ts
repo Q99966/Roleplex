@@ -1,18 +1,30 @@
 import { defineConfig } from '@playwright/test'
 
-// 每轮端到端测试使用独立数据库文件：Owner 是实例级单例，
+// 每轮端到端测试使用带时间戳的独立数据库：Owner 是实例级单例，
 // 复用开发数据库会让后注册账号变成 Guest 并在配置类接口上被拒绝。
 //
-// 清理只放在 globalTeardown：本轮结束时后端仍持有 SQLite 的 -wal/-shm 句柄，
-// 删除会抛 EBUSY，残留文件由下一轮 teardown 收走，因此最多遗留一轮。
-// 配置文件会被主进程和每个 worker 重复导入，禁止在此处做删除等破坏性副作用。
-const E2E_DATABASE = `roleplex-e2e-${Date.now()}.db`
+// 时间戳写进环境变量并且只在缺失时生成：配置文件会被主进程和每个 worker 重复导入，
+// 每次重新取时间会让 worker 与主进程算出不同的库名和账号名。worker 由主进程派生，
+// 因此能继承这里设置的值；测试账号名也据此派生，方便按轮次对照数据库内容。
+// 使用本地时间，与后端测试库的时间戳口径保持一致。
+const pad = (value: number) => String(value).padStart(2, '0')
+const now = new Date()
+process.env.ROLEPLEX_E2E_STAMP ||= [
+  now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate()),
+  pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds()),
+].join('')
+const E2E_STAMP = process.env.ROLEPLEX_E2E_STAMP
+const E2E_DATABASE = `roleplex-e2e-${E2E_STAMP}.db`
 
-// 端到端测试使用独立前端端口，避免与开发中的 vite 服务抢占 51173；
-// 后端 CORS 允许来源必须同步为该端口，否则浏览器请求会被 CORS 拒绝而表现为 "Failed to fetch"。
+// 端到端测试使用独立的前后端端口，避免与开发中的 vite / uvicorn 抢占 51173 与 8000；
+// 后端 CORS 允许来源必须同步为该前端端口，否则浏览器请求会被 CORS 拒绝而表现为 "Failed to fetch"。
 const E2E_WEB_PORT = 51174
+const E2E_API_PORT = 8001
 const E2E_WEB_ORIGIN = `http://127.0.0.1:${E2E_WEB_PORT}`
-const E2E_API_ORIGIN = 'http://127.0.0.1:8000'
+const E2E_API_ORIGIN = `http://127.0.0.1:${E2E_API_PORT}`
+
+// 测试用例直接调后端 API 准备数据，这里把地址传给 worker，避免端口常量被复制到多处。
+process.env.ROLEPLEX_E2E_API_ORIGIN = E2E_API_ORIGIN
 
 export default defineConfig({
   testDir: './tests',
@@ -30,12 +42,15 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
+      command: `python -m uvicorn app.main:app --host 127.0.0.1 --port ${E2E_API_PORT}`,
       cwd: '../backend',
       env: {
         DATABASE_URL: `sqlite+aiosqlite:///../data/${E2E_DATABASE}`,
         ROLEPLEX_E2E_DATABASE: E2E_DATABASE,
         CORS_ORIGINS: E2E_WEB_ORIGIN,
+        // 显式锁定确定性 fake provider：环境变量优先于 backend/.env，
+        // 保证端到端测试既不联网也不消耗真实模型额度。
+        AGENT_USE_FAKE_PROVIDER: 'true',
       },
       url: `${E2E_API_ORIGIN}/api/health`,
       reuseExistingServer: false,

@@ -37,6 +37,8 @@ GET /api/conversations/{conversation_id}/messages
 
 `items` 按消息 `id` 升序返回，`id` 即稳定排序键。`active_generation_id` 非空表示该会话仍有排队中或运行中的生成，客户端应显示生成中状态。当前未实现游标分页。
 
+`event_seq` 与 `items` 之间允许存在极短的读取时差：生成过程中读取历史时，游标可能比返回的消息稍旧，因此按该游标订阅可能重复收到已经体现在消息里的事件。客户端必须按 `event_seq` 幂等去重（见 [WebSocket 协议](../websocket/conversation-stream.md)）；反方向（游标比消息新导致漏事件）不会发生。
+
 ## 发送消息
 
 ```http

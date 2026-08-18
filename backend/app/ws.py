@@ -49,6 +49,18 @@ async def _is_member(conversation_id: int, user_id: int) -> bool:
         return member is not None
 
 
+async def _close_policy_violation(websocket: WebSocket) -> None:
+    """以策略违规关闭连接；对端已经断开时静默返回。
+
+    连接断开后 ASGI 层会拒绝一切后续帧（包括关闭帧）并抛 RuntimeError。
+    客户端在认证前刷新页面或切换会话都会走到这里，属于预期竞态而不是故障。
+    """
+    try:
+        await websocket.close(code=1008)
+    except RuntimeError:
+        return
+
+
 @router.websocket("/api/ws")
 async def conversation_stream(websocket: WebSocket) -> None:
     """会话事件流：首帧认证后按事件序号恢复，再进入实时推送。
@@ -58,16 +70,20 @@ async def conversation_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         first_frame = await asyncio.wait_for(websocket.receive_json(), timeout=_AUTH_TIMEOUT_SECONDS)
-    except (asyncio.TimeoutError, ValueError, WebSocketDisconnect):
-        await websocket.close(code=1008)
+    except WebSocketDisconnect:
+        # 对端在认证前主动断开：连接已经不存在，不需要也不能再发关闭帧。
+        logger.debug("ws.closed_before_auth")
+        return
+    except (asyncio.TimeoutError, ValueError):
+        await _close_policy_violation(websocket)
         return
 
     if first_frame.get("type") != "auth" or not isinstance(first_frame.get("token"), str):
-        await websocket.close(code=1008)
+        await _close_policy_violation(websocket)
         return
     user = await _authenticate(first_frame["token"])
     if user is None:
-        await websocket.close(code=1008)
+        await _close_policy_violation(websocket)
         return
     await websocket.send_json({"type": "auth_ok", "stream_epoch": current_epoch()})
 
@@ -105,6 +121,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 break
     except WebSocketDisconnect:
         pass
+    except RuntimeError as exc:
+        # 发送过程中对端断开：ASGI 层会拒绝后续帧，与断开事件是同一件事，按预期结束。
+        logger.debug("ws.send_after_disconnect", extra={"conversation_id": conversation_id, "detail": str(exc)})
     except Exception:
         logger.exception("ws.stream_failed", extra={"conversation_id": conversation_id})
     finally:

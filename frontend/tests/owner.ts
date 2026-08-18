@@ -1,10 +1,17 @@
 import { expect, type Page } from '@playwright/test'
 
-/** 端到端测试共用的 Owner 账号；数据库每轮清空，首个注册者即为 Owner。 */
+/**
+ * 端到端测试共用的 Owner 账号。
+ *
+ * 账号名带本轮时间戳，与数据库文件名一致：数据库按轮次保留，
+ * 测试结束后可以用这个账号登录进去核对本轮产生的数据。
+ */
+const STAMP = process.env.ROLEPLEX_E2E_STAMP ?? 'local'
+
 export const OWNER = {
-  username: 'e2e_owner',
-  nickname: '端到端 Owner',
-  password: 'password123',
+  username: `test${STAMP}`,
+  nickname: `测试 Owner ${STAMP}`,
+  password: '12345678',
 }
 
 /**

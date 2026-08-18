@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { ensureOwnerSession } from './owner'
 
-const backend = 'http://127.0.0.1:8000'
+// 后端地址由 playwright.config.ts 统一下发，端口常量不在测试里重复维护。
+const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8001'
 
 /** 通过 API 准备一个可用于单聊的模型配置、角色和会话。 */
 async function seedConversation(page: Page, title: string): Promise<number> {

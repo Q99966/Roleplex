@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     access_token_days: int = 7
     cors_origins: str = "http://localhost:51173,http://127.0.0.1:51173"
     event_buffer_size: int = 512
+    # 默认使用确定性 fake provider：普通回归与端到端测试不得依赖真实模型计费或不稳定输出。
+    # 需要连真实厂商时显式关闭，真实凭据验证放在独立的契约测试层。
+    agent_use_fake_provider: bool = True
     pin_budget_ratio: float = 0.30
     max_context_tokens: int = 100_000
     max_upload_bytes: int = 10 * 1024 * 1024

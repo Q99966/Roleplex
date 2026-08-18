@@ -12,7 +12,7 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from accounts import OWNER_NICKNAME, OWNER_PASSWORD, OWNER_USERNAME
+from accounts import TEST_PASSWORD, ensure_owner_sync, guest_username
 
 # 单次读取的帧数上限，协议异常时用例应失败而不是挂死。
 _MAX_FRAMES = 400
@@ -29,17 +29,7 @@ def client():
 
 def _owner_token(client: TestClient) -> str:
     """返回 Owner 的访问 Token；账号已存在时改为登录，保证复用同一个 Owner。"""
-    register = client.post("/api/auth/register", json={
-        "username": OWNER_USERNAME, "password": OWNER_PASSWORD, "nickname": OWNER_NICKNAME,
-    })
-    if register.status_code == 201:
-        return register.json()["access_token"]
-    assert register.status_code == 409, register.text
-    login = client.post("/api/auth/login", json={
-        "username": OWNER_USERNAME, "password": OWNER_PASSWORD,
-    })
-    assert login.status_code == 200, login.text
-    return login.json()["access_token"]
+    return ensure_owner_sync(client)["access_token"]
 
 
 def _single_chat(client: TestClient, token: str, title: str) -> int:
@@ -104,6 +94,45 @@ def _wait_until_done(client: TestClient, token: str, conversation_id: int) -> in
     raise AssertionError("fake 生成没有在预期时间内完成")
 
 
+class _AbortedWebSocket:
+    """模拟真实 ASGI 服务器上"对端已断开"的连接。
+
+    连接一旦断开，`receive` 抛断开异常，之后再发送任何帧（包括关闭帧）都会被 ASGI 层
+    拒绝并抛 RuntimeError。TestClient 的传输层对重复关闭是容忍的，复现不出这个行为。
+    """
+
+    def __init__(self) -> None:
+        self.closed_attempts = 0
+
+    async def accept(self) -> None:
+        return None
+
+    async def receive_json(self) -> dict:
+        raise WebSocketDisconnect(1001, "")
+
+    async def send_json(self, _data: dict) -> None:
+        raise RuntimeError("Unexpected ASGI message 'websocket.send', after sending 'websocket.close'")
+
+    async def close(self, code: int = 1000) -> None:
+        self.closed_attempts += 1
+        raise RuntimeError("Unexpected ASGI message 'websocket.close', after sending 'websocket.close'")
+
+
+@pytest.mark.anyio
+async def test_disconnect_before_auth_is_not_an_error():
+    """客户端在发认证帧之前断开是常见竞态，服务端不得因此抛异常。
+
+    页面刷新或快速切换会话时，连接可能刚握手完就被关掉。此时服务端若仍去发送关闭帧，
+    ASGI 层会拒绝并抛错，把一次正常断开变成带堆栈的 ERROR 噪声。
+    """
+    from app.ws import conversation_stream
+
+    socket = _AbortedWebSocket()
+    await conversation_stream(socket)
+
+    assert socket.closed_attempts == 0, "对端已断开时不应再发送关闭帧"
+
+
 @pytest.mark.parametrize("first_frame", [
     {"type": "auth", "token": "not-a-real-token"},
     {"type": "subscribe", "conversation_id": 1},
@@ -123,7 +152,7 @@ def test_subscribe_requires_conversation_membership(client: TestClient):
     conversation_id = _single_chat(client, owner_token, "成员校验")
 
     guest = client.post("/api/auth/register", json={
-        "username": "ws_guest", "password": "password123", "nickname": "Guest",
+        "username": guest_username("ws"), "password": TEST_PASSWORD, "nickname": "Guest",
     })
     assert guest.status_code == 201, guest.text
     assert guest.json()["user"]["is_owner"] is False
@@ -193,6 +222,8 @@ def test_stale_epoch_falls_back_to_snapshot(client: TestClient):
     assert frame["type"] == "snapshot"
     assert frame["stream_epoch"] == epoch
     snapshot = frame["payload"]
-    assert snapshot["event_seq"] == latest
+    # 快照的游标只允许不早于此前 REST 读到的游标；游标可能略旧于消息，
+    # 这是安全方向，客户端按 event_seq 幂等去重即可。
+    assert snapshot["event_seq"] >= latest
     assert [m["sender_type"] for m in snapshot["messages"]] == ["user", "role"]
     assert snapshot["active_generation_id"] is None
