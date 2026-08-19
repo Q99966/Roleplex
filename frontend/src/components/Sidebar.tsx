@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react'
 import { 
   Bot, MessageCircle, Plus, Search, Users, WandSparkles, 
-  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose
+  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose, Sparkles
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
+import { usePetStore } from '../store/pet'
 import { navigateToConversation } from '../router'
 import { type Role } from '../api/client'
+
 
 interface SidebarProps {
   isCollapsed: boolean
@@ -228,6 +230,19 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
         <div className="flex items-center gap-1.5">
           <button 
             type="button" 
+            onClick={() => {
+              if (!usePetStore.getState().enabled) usePetStore.getState().setEnabled(true)
+              if (usePetStore.getState().isMinimized) usePetStore.getState().setMinimized(false)
+              usePetStore.getState().say('主人，我随时陪伴在你身边！✨', 3500)
+            }}
+            title="召唤/展开桌宠"
+            aria-label="召唤/展开桌宠"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-amber-300 transition"
+          >
+            <Sparkles size={16} />
+          </button>
+          <button 
+            type="button" 
             onClick={onOpenSettings}
             title="打开设置"
             aria-label="打开设置"
@@ -244,6 +259,7 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
             <LogOut size={16} />
           </button>
         </div>
+
       </div>
     </aside>
   )

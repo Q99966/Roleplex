@@ -30,3 +30,307 @@ button { cursor: pointer; }
   scrollbar-color: #1e293b transparent;
 }
 
+/* =========================================================================
+ * Web Desktop Pet (网页桌宠) 动画关键帧系统
+ * ========================================================================= */
+@keyframes pet-breathe {
+  0%, 100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.02, 0.98);
+  }
+}
+
+@keyframes pet-bounce {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+  75% {
+    transform: translateY(-2px) rotate(-2deg);
+  }
+}
+
+@keyframes pet-jump {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  30% {
+    transform: translateY(-12px) scale(0.95, 1.05);
+  }
+  60% {
+    transform: translateY(-4px) scale(1.04, 0.96);
+  }
+}
+
+@keyframes tail-wag {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-14deg);
+  }
+}
+
+@keyframes tail-fast {
+  0%, 100% {
+    transform: rotate(6deg);
+  }
+  50% {
+    transform: rotate(-18deg);
+  }
+}
+
+@keyframes paw-flail-left {
+  0%, 100% {
+    transform: translateY(0) rotate(-10deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(15deg);
+  }
+}
+
+@keyframes paw-flail-right {
+  0%, 100% {
+    transform: translateY(-4px) rotate(15deg);
+  }
+  50% {
+    transform: translateY(0) rotate(-10deg);
+  }
+}
+
+@keyframes wing-left {
+  0%, 100% {
+    transform: rotate(0deg) scaleX(1);
+  }
+  50% {
+    transform: rotate(-25deg) scaleX(0.7);
+  }
+}
+
+@keyframes wing-right {
+  0%, 100% {
+    transform: rotate(0deg) scaleX(1);
+  }
+  50% {
+    transform: rotate(25deg) scaleX(0.7);
+  }
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.8);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-pet-breathe {
+  animation: pet-breathe 2.8s ease-in-out infinite;
+}
+
+.animate-pet-bounce {
+  animation: pet-bounce 0.4s ease-in-out infinite;
+}
+
+.animate-pet-jump {
+  animation: pet-jump 0.8s ease-in-out infinite;
+}
+
+.animate-tail-wag {
+  animation: tail-wag 2.4s ease-in-out infinite;
+}
+
+.animate-tail-fast {
+  animation: tail-fast 0.6s ease-in-out infinite;
+}
+
+.animate-paw-flail-left {
+  animation: paw-flail-left 0.25s ease-in-out infinite;
+}
+
+.animate-paw-flail-right {
+  animation: paw-flail-right 0.25s ease-in-out infinite;
+}
+
+.animate-wing-left {
+  animation: wing-left 0.2s ease-in-out infinite;
+}
+
+.animate-wing-right {
+  animation: wing-right 0.2s ease-in-out infinite;
+}
+
+.animate-float-up {
+  animation: float-up 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+/* =========================================================================
+ * 8-bit 极简像素方块微动作系统 (样例 3 与 样例 4)
+ * ========================================================================= */
+@keyframes pixel-idle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes pixel-step {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-2px) rotate(1.5deg);
+  }
+  75% {
+    transform: translateY(-1px) rotate(-1.5deg);
+  }
+}
+
+@keyframes pixel-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes pixel-pop {
+  0% {
+    transform: translate(0, 0);
+  }
+  40% {
+    transform: translate(3px, -6px);
+  }
+  80% {
+    transform: translate(1px, -1px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes pixel-question-float {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.7);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.9);
+  }
+}
+
+.animate-pixel-idle {
+  animation: pixel-idle 2.4s steps(2, start) infinite;
+}
+
+.animate-pixel-step {
+  animation: pixel-step 0.35s steps(3, start) infinite;
+}
+
+.animate-pixel-bounce {
+  animation: pixel-bounce 0.45s steps(2, start) infinite;
+}
+
+.animate-pixel-pop {
+  animation: pixel-pop 0.5s ease-out forwards;
+}
+
+.animate-pixel-question-float {
+  animation: pixel-question-float 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+
+/* 拖拽提起时的极简微动像素小短腿 (幅度极小、自然微颤) */
+@keyframes pixel-leg-dangle-left {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes pixel-leg-dangle-right {
+  0%, 100% {
+    transform: translateY(-1px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+}
+
+.animate-pixel-leg-left {
+  animation: pixel-leg-dangle-left 0.35s steps(2, start) infinite;
+}
+
+.animate-pixel-leg-right {
+  animation: pixel-leg-dangle-right 0.35s steps(2, start) infinite;
+}
+
+/* 拖拽提起时左右两只小手的可爱轻微扑腾 */
+@keyframes pixel-arm-wave-left {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1.5px);
+  }
+}
+
+@keyframes pixel-arm-wave-right {
+  0%, 100% {
+    transform: translateY(-1.5px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+}
+
+.animate-pixel-arm-left {
+  animation: pixel-arm-wave-left 0.3s steps(2, start) infinite;
+}
+
+.animate-pixel-arm-right {
+  animation: pixel-arm-wave-right 0.3s steps(2, start) infinite;
+}
+
+
+
+
+

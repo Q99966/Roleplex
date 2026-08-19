@@ -8,6 +8,7 @@ import { EmptyWorkspace } from './components/EmptyWorkspace'
 import { ActiveWorkspace } from './components/ActiveWorkspace'
 import { SettingsModal, RoleModal, ConversationModal } from './components/Modals'
 import { LandingPage } from './components/LandingPage'
+import { WebPet } from './components/WebPet/WebPet'
 
 // 设置网页标题
 if (typeof document !== 'undefined') {
@@ -153,6 +154,10 @@ export function App() {
       )}
       
       {showConvModal && <ConversationModal onClose={() => setShowConvModal(false)} />}
+      
+      {/* 桌面宠物悬浮层 */}
+      <WebPet />
     </main>
   )
 }
+
