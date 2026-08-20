@@ -26,6 +26,9 @@ const E2E_API_ORIGIN = `http://127.0.0.1:${E2E_API_PORT}`
 // 测试用例直接调后端 API 准备数据，这里把地址传给 worker，避免端口常量被复制到多处。
 process.env.ROLEPLEX_E2E_API_ORIGIN = E2E_API_ORIGIN
 
+// 弱口令账号无法通过注册接口创建，用例需要直接写库播种，因此把本轮数据库路径也传给 worker。
+process.env.ROLEPLEX_E2E_DATABASE_PATH = `../data/${E2E_DATABASE}`
+
 export default defineConfig({
   testDir: './tests',
   timeout: 60_000,

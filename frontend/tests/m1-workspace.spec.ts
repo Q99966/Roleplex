@@ -5,6 +5,10 @@ import { OWNER } from './owner'
 // 否则后续测试文件登录时只能拿到 Guest 身份并在配置类接口上被拒。
 const password = OWNER.password
 
+// 端到端后端使用独立端口，地址由 playwright.config.ts 通过环境变量下发；
+// 硬编码开发端口会在没有开发服务时连不上。
+const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8001'
+
 test.describe('M1 authentication and workspace', () => {
   test('registers the first Owner and renders the workspace', async ({ page }) => {
     const browserErrors: string[] = []
@@ -16,7 +20,7 @@ test.describe('M1 authentication and workspace', () => {
     await page.getByRole('button', { name: '首次注册' }).click()
     await page.getByPlaceholder('owner').fill(OWNER.username)
     await page.getByPlaceholder('我的名字').fill(OWNER.nickname)
-    await page.getByPlaceholder('至少 8 位').fill(password)
+    await page.getByPlaceholder('密码', { exact: true }).fill(password)
     await page.getByPlaceholder('再次输入密码').fill(password)
     await page.getByRole('button', { name: '创建 Owner 账号' }).click()
 
@@ -38,7 +42,7 @@ test.describe('M1 authentication and workspace', () => {
     await page.getByRole('button', { name: '首次注册' }).click()
     await page.getByPlaceholder('owner').fill(`mismatch_${Date.now()}`)
     await page.getByPlaceholder('我的名字').fill('密码校验测试')
-    await page.getByPlaceholder('至少 8 位').fill(password)
+    await page.getByPlaceholder('密码', { exact: true }).fill(password)
     await page.getByPlaceholder('再次输入密码').fill('different123')
     await page.getByRole('button', { name: '创建 Owner 账号' }).click()
     await expect(page.getByText('两次输入的密码不一致')).toBeVisible()
@@ -51,7 +55,7 @@ test.describe('M1 authentication and workspace', () => {
     await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '登录' }).click()
     await page.getByPlaceholder('owner').fill(OWNER.username)
-    await page.getByPlaceholder('至少 8 位').fill(password)
+    await page.getByPlaceholder('密码', { exact: true }).fill(password)
     await page.getByRole('button', { name: '进入工作台' }).click()
     await expect(page.getByText('欢迎来到 Roleplex')).toBeVisible()
     await expect(page.getByText(OWNER.nickname)).toBeVisible()
@@ -62,13 +66,13 @@ test.describe('M1 authentication and workspace', () => {
     await page.getByRole('button', { name: '进入工作台' }).first().click()
     await page.getByRole('button', { name: '登录' }).click()
     await page.getByPlaceholder('owner').fill('missing_user')
-    await page.getByPlaceholder('至少 8 位').fill(password)
+    await page.getByPlaceholder('密码', { exact: true }).fill(password)
     await page.getByRole('button', { name: '进入工作台' }).click()
     await expect(page.getByText('AUTH_INVALID')).toBeVisible()
   })
 
   test('rejects protected API access without authentication', async ({ request }) => {
-    const response = await request.get('http://127.0.0.1:8000/api/model-configs')
+    const response = await request.get(`${backend}/api/model-configs`)
     expect(response.status()).toBe(401)
     expect((await response.json()).error.code).toBe('AUTH_REQUIRED')
   })

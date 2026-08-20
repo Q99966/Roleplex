@@ -3,6 +3,7 @@ import { PanelLeftOpen } from 'lucide-react'
 import { useAppStore } from './store/app'
 import { type Role } from './api/client'
 import { AuthScreen } from './components/AuthScreen'
+import { PasswordResetScreen } from './components/PasswordResetScreen'
 import { Sidebar } from './components/Sidebar'
 import { EmptyWorkspace } from './components/EmptyWorkspace'
 import { ActiveWorkspace } from './components/ActiveWorkspace'
@@ -17,7 +18,7 @@ if (typeof document !== 'undefined') {
 
 /** 启动已认证的工作台；没有会话时显示空状态。 */
 export function App() {
-  const { user, loading, bootstrap, activeConversationId, setActiveConversation } = useAppStore()
+  const { user, passwordResetRequired, loading, bootstrap, activeConversationId, setActiveConversation } = useAppStore()
   
   const [view, setView] = useState<'landing' | 'auth'>('landing')
   const [currentHash, setCurrentHash] = useState(typeof window !== 'undefined' ? window.location.hash || '#/' : '#/')
@@ -95,6 +96,9 @@ export function App() {
   }
 
   if (!user) return <AuthScreen />
+
+  // 待改密账号只能看到重置页：服务端已拒绝其余接口，工作台在此也不予渲染。
+  if (passwordResetRequired) return <PasswordResetScreen />
 
   return (
     <main className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none relative font-sans">

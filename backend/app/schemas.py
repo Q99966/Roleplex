@@ -7,11 +7,24 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class RegisterRequest(BaseModel):
-    """注册请求；密码只作为写入参数接收，不会回显。"""
+    """注册请求；密码只作为写入参数接收，不会回显。
+
+    密码规则不写在这里：长度和字符类别由 `password_policy` 统一判定，
+    以便注册和改密返回同一个稳定错误码，而不是笼统的参数校验错。
+    此处的 `max_length` 只是防止超大请求体的外层护栏，正常不合规密码
+    会先被策略拦下。
+    """
 
     username: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
-    password: SecretStr = Field(min_length=8, max_length=256)
+    password: SecretStr = Field(max_length=256)
     nickname: str = Field(min_length=1, max_length=128)
+
+
+class ChangePasswordRequest(BaseModel):
+    """改密请求；校验旧密码后写入新密码并撤销全部旧 Token。"""
+
+    current_password: SecretStr = Field(max_length=256)
+    new_password: SecretStr = Field(max_length=256)
 
 
 class LoginRequest(BaseModel):
@@ -33,11 +46,16 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """包含 Bearer Token 和公开用户资料的认证响应。"""
+    """包含 Bearer Token 和公开用户资料的认证响应。
+
+    `password_reset_required` 显式回传待改密状态，使前端不必解析 JWT：
+    为 true 时除改密和查看本人资料外的接口都会被拒绝，客户端应直接进入重置流程。
+    """
 
     access_token: str
     token_type: Literal["bearer"] = "bearer"
     user: UserResponse
+    password_reset_required: bool = False
 
 
 class ModelConfigCreate(BaseModel):

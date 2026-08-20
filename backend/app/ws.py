@@ -12,6 +12,7 @@ from .config import settings
 from .db import SessionLocal
 from .events import current_epoch
 from .models import ConversationMember, User
+from .security import token_requires_password_reset
 from .services import chat, event_store
 
 logger = logging.getLogger("roleplex.ws")
@@ -25,11 +26,17 @@ _BACKLOG_LIMIT = 300
 
 
 async def _authenticate(token: str) -> User | None:
-    """校验首帧 Token 并返回用户；Token 无效或已撤销时返回 None。"""
+    """校验首帧 Token 并返回用户；Token 无效、已撤销或待改密时返回 None。
+
+    待改密的 Token 在这里一并拒绝，与 REST 侧的默认拒绝保持一致：
+    否则弱口令账号虽然进不了 REST 接口，却仍能订阅会话事件流。
+    """
     try:
         payload = jwt.decode(token, settings.resolved_jwt_secret(), algorithms=[settings.jwt_algorithm])
         user_id = int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
+        return None
+    if token_requires_password_reset(payload):
         return None
     async with SessionLocal() as session:
         user = await session.get(User, user_id)

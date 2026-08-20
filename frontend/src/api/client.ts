@@ -1,4 +1,12 @@
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }
+
+/**
+ * 认证响应。
+ *
+ * `password_reset_required` 由服务端显式回传，前端据此进入强制重置流程，
+ * 不解析 JWT。为 true 时该 Token 只能调用改密和查看本人资料两个接口。
+ */
+export type AuthResult = { access_token: string; user: User; password_reset_required: boolean }
 export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number; model_name: string; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; created_at: string; updated_at: string }
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; role_ids: number[]; last_message_at: string | null; pinned: boolean; archived: boolean }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; [key: string]: unknown }
@@ -51,6 +59,25 @@ export function setToken(next: string | null) {
 /** 返回当前浏览器会话 Token 的内存副本。 */
 export function getToken() { return token }
 
+const PASSWORD_RESET_KEY = 'roleplex_password_reset'
+
+/**
+ * 记录或清除"当前 Token 必须先改密"的本地标记。
+ *
+ * 该标记只是刷新页面后免去一次失败请求的 UI 提示，不是安全边界：
+ * 真正的拦截在服务端，标记丢失或被篡改时，业务接口仍会返回
+ * `PASSWORD_RESET_REQUIRED`，前端据此回到重置流程。
+ */
+export function setPasswordResetRequired(next: boolean) {
+  if (next) localStorage.setItem(PASSWORD_RESET_KEY, '1')
+  else localStorage.removeItem(PASSWORD_RESET_KEY)
+}
+
+/** 读取本地的待改密标记。 */
+export function getPasswordResetRequired() {
+  return localStorage.getItem(PASSWORD_RESET_KEY) === '1'
+}
+
 /**
  * 执行 JSON API 请求，并将公开错误信封映射为 ApiError。
  * @param path 相对于后端地址的 API 路径。
@@ -73,10 +100,11 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const api = {
-  register: (body: { username: string; password: string; nickname: string }) => request<{ access_token: string; user: User }>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
-  login: (body: { username: string; password: string }) => request<{ access_token: string; user: User }>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),
+  register: (body: { username: string; password: string; nickname: string }) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
+  login: (body: { username: string; password: string }) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   me: () => request<User>('/api/auth/me'),
-  
+  changePassword: (body: { current_password: string; new_password: string }) => request<AuthResult>('/api/auth/password', { method: 'POST', body: JSON.stringify(body) }),
+
   // 角色管理 API
   roles: () => request<Role[]>('/api/roles'),
   createRole: (body: Omit<Role, 'id' | 'created_at' | 'updated_at' | 'active'>) => request<Role>('/api/roles', { method: 'POST', body: JSON.stringify(body) }),

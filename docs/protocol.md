@@ -30,7 +30,7 @@ docs/protocol/
 
 | 领域 | 当前状态 | 权威位置 |
 |---|---|---|
-| REST 认证与基础错误 | 已实现 | 本文档（待拆分） |
+| REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | 消息发送、历史与停止生成 | 已实现（单聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（单聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
@@ -42,25 +42,9 @@ docs/protocol/
 
 ## 认证
 
-### REST
+REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传递令牌，不得放入查询参数。令牌有效期七天；Token 版本变化后旧令牌立即失效。
 
-REST 请求使用以下请求头：
-
-```http
-Authorization: Bearer <访问令牌>
-```
-
-### WebSocket
-
-WebSocket 必须通过首帧完成认证，不得把令牌放在查询参数中：
-
-```json
-{"type":"auth","token":"<访问令牌>"}
-```
-
-服务端认证成功时返回 `auth_ok`；认证失败时以关闭码 `1008` 关闭连接。令牌有效期为七天；用户的 Token 版本发生变化后，旧令牌立即失效。
-
-当前状态：REST 认证与 WebSocket 首帧认证均已实现，细节见 [WebSocket 会话事件流](protocol/public/websocket/conversation-stream.md)。
+密码策略、弱口令强制重置的拦截规则、改密接口和认证错误码的权威文档见 [public/rest/auth.md](protocol/public/rest/auth.md)。WebSocket 首帧的帧格式见 [WebSocket 会话事件流](protocol/public/websocket/conversation-stream.md)。
 
 ## 错误信封
 
@@ -73,11 +57,13 @@ WebSocket 必须通过首帧完成认证，不得把令牌放在查询参数中�
 状态码约定：
 
 - `401`：`AUTH_REQUIRED`、`AUTH_INVALID`、`AUTH_REVOKED`
-- `403`：`OWNER_REQUIRED`、`FORBIDDEN`
+- `403`：`OWNER_REQUIRED`、`FORBIDDEN`、`PASSWORD_RESET_REQUIRED`
 - `404`：资源不存在或请求者无权访问；不得通过响应泄露资源是否存在
 - `409`：重复、幂等冲突或版本冲突
-- `422`：请求参数无效
+- `422`：请求参数无效；策略类拒绝使用各自的稳定错误码而不是笼统的 `VALIDATION_ERROR`
 - `429`：配额或速率限制
+
+错误信封在 `code`、`message`、`request_id` 之外允许附带 `details`，用于逐条说明校验或策略未通过的原因。
 
 当前状态：REST 认证和基础资源接口已使用错误信封；尚未实现的接口必须继续复用该格式。
 

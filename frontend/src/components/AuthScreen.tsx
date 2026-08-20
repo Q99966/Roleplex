@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react'
 import { LogIn, WandSparkles, AlertCircle } from 'lucide-react'
 import { useAppStore } from '../store/app'
+import { PasswordRequirements, isPasswordCompliant } from './PasswordRequirements'
 
 /** 渲染登录和首次 Owner 注册流程，背景采用简洁静雅的极光色调，无动画特效。 */
 export function AuthScreen() {
@@ -19,9 +20,17 @@ export function AuthScreen() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     setValidationError(null)
-    if (mode === 'register' && form.password !== passwordConfirmation) {
-      setValidationError('两次输入的密码不一致')
-      return
+    if (mode === 'register') {
+      if (form.password !== passwordConfirmation) {
+        setValidationError('两次输入的密码不一致')
+        return
+      }
+      // 注册前先按前端镜像的策略拦一次，避免一次必然失败的请求；
+      // 最终判定仍以服务端返回的 PASSWORD_POLICY_VIOLATION 为准。
+      if (!isPasswordCompliant(form.password)) {
+        setValidationError('密码不满足安全要求')
+        return
+      }
     }
     setBusy(true)
     try {
@@ -102,28 +111,28 @@ export function AuthScreen() {
           
           <label className="block text-sm font-medium">
             <span className="text-slate-400">密码</span>
-            <input 
-              required 
-              minLength={8} 
-              type="password" 
-              value={form.password} 
-              onChange={(event) => { setForm({ ...form, password: event.target.value }); setValidationError(null) }} 
-              className="mt-1.5 w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500 transition-all placeholder:text-slate-600" 
-              placeholder="至少 8 位" 
+            <input
+              required
+              type="password"
+              value={form.password}
+              onChange={(event) => { setForm({ ...form, password: event.target.value }); setValidationError(null) }}
+              className="mt-1.5 w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500 transition-all placeholder:text-slate-600"
+              placeholder="密码"
             />
+            {/* 登录时不提示策略：老账号可能是弱口令，登录后会被引导到强制重置页。 */}
+            {mode === 'register' && <PasswordRequirements password={form.password} />}
           </label>
-          
+
           {mode === 'register' && (
             <label className="block text-sm font-medium">
               <span className="text-slate-400">再次输入密码</span>
-              <input 
-                required 
-                minLength={8} 
-                type="password" 
-                value={passwordConfirmation} 
-                onChange={(event) => { setPasswordConfirmation(event.target.value); setValidationError(null) }} 
-                className="mt-1.5 w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500 transition-all placeholder:text-slate-600" 
-                placeholder="再次输入密码" 
+              <input
+                required
+                type="password"
+                value={passwordConfirmation}
+                onChange={(event) => { setPasswordConfirmation(event.target.value); setValidationError(null) }}
+                className="mt-1.5 w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500 transition-all placeholder:text-slate-600"
+                placeholder="再次输入密码"
               />
             </label>
           )}

@@ -8,6 +8,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 - SQLite + SQLAlchemy 2 async，WAL、busy timeout、外键约束、单进程单 worker 边界
 - Owner 原子初始化模型、JWT 7 天有效期与 token version 撤销
+- 密码策略（至少 10 位且含字母、数字、符号）、弱口令登录后强制重置与改密接口
 - API Key 加密落库，接口只返回 masked hint
 - 用户认证、模型配置 CRUD、角色 CRUD、会话创建/列表/个人置顶归档
 - 单聊消息发送、客户端幂等键、确定性 fake provider 流式回复、停止生成
@@ -58,7 +59,7 @@ pytest tests/contract -m contract -q
 - 端到端：`data/roleplex-e2e-<时间戳>.db`
 
 测试账号与本轮数据库同名可追溯：Owner 为 `test<时间戳>`，Guest 为 `test<时间戳>_<用途>`，
-密码统一是 `12345678`。想查看某轮测试产生的数据，把后端指向那个库启动即可登录查看：
+密码统一是 `Roleplex-Test-1234`。想查看某轮测试产生的数据，把后端指向那个库启动即可登录查看：
 
 ```powershell
 cd backend

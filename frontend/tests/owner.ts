@@ -11,7 +11,8 @@ const STAMP = process.env.ROLEPLEX_E2E_STAMP ?? 'local'
 export const OWNER = {
   username: `test${STAMP}`,
   nickname: `测试 Owner ${STAMP}`,
-  password: '12345678',
+  // 固定占位口令，符合密码策略以免测试账号被强制改密；仅用于本地测试库。
+  password: 'Roleplex-Test-1234',
 }
 
 /**
@@ -24,7 +25,7 @@ export async function ensureOwnerSession(page: Page) {
   await page.goto('/#/auth')
   await page.getByRole('button', { name: '登录' }).click()
   await page.getByPlaceholder('owner').fill(OWNER.username)
-  await page.getByPlaceholder('至少 8 位').fill(OWNER.password)
+  await page.getByPlaceholder('密码', { exact: true }).fill(OWNER.password)
   await page.getByRole('button', { name: '进入工作台' }).click()
 
   const workspace = page.getByText('欢迎来到 Roleplex')
@@ -35,7 +36,7 @@ export async function ensureOwnerSession(page: Page) {
   await page.getByRole('button', { name: '首次注册' }).click()
   await page.getByPlaceholder('owner').fill(OWNER.username)
   await page.getByPlaceholder('我的名字').fill(OWNER.nickname)
-  await page.getByPlaceholder('至少 8 位').fill(OWNER.password)
+  await page.getByPlaceholder('密码', { exact: true }).fill(OWNER.password)
   await page.getByPlaceholder('再次输入密码').fill(OWNER.password)
   await page.getByRole('button', { name: '创建 Owner 账号' }).click()
   await expect(page.getByText('欢迎来到 Roleplex')).toBeVisible({ timeout: 15_000 })

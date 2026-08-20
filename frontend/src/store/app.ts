@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import { api, Conversation, Role, setToken, User, ModelConfig } from '../api/client'
+import { api, Conversation, getPasswordResetRequired, Role, setPasswordResetRequired, setToken, User, ModelConfig } from '../api/client'
 import { navigateToConversation } from '../router'
 
 type AppState = {
   user: User | null
+  passwordResetRequired: boolean
   roles: Role[]
   conversations: Conversation[]
   modelConfigs: ModelConfig[]
@@ -13,6 +14,7 @@ type AppState = {
   setActiveConversation: (id: number | null) => void
   bootstrap: () => Promise<void>
   authenticate: (mode: 'login' | 'register', form: { username: string; password: string; nickname: string }) => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: () => void
   loadWorkspace: () => Promise<void>
   
@@ -33,6 +35,7 @@ type AppState = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   user: null,
+  passwordResetRequired: false,
   roles: [],
   conversations: [],
   modelConfigs: [],
@@ -40,32 +43,60 @@ export const useAppStore = create<AppState>((set, get) => ({
   loading: true,
   error: null,
   setActiveConversation: (activeConversationId) => set({ activeConversationId }),
-  
+
   // 仅在存在 Token 时恢复会话；匿名页面避免发起无意义的 401 请求。
   bootstrap: async () => {
     if (!localStorage.getItem('roleplex_token')) {
-      set({ loading: false, user: null })
+      set({ loading: false, user: null, passwordResetRequired: false })
       return
     }
     try {
       const user = await api.me()
-      set({ user })
-      await get().loadWorkspace()
+      // 刷新页面后本地标记决定是否直接进入重置流程；标记丢失时 loadWorkspace
+      // 会收到 403 PASSWORD_RESET_REQUIRED 并自行切回重置流程。
+      const pending = getPasswordResetRequired()
+      set({ user, passwordResetRequired: pending })
+      if (!pending) await get().loadWorkspace()
     } catch {
       setToken(null)
-      set({ user: null })
+      setPasswordResetRequired(false)
+      set({ user: null, passwordResetRequired: false })
     } finally {
       set({ loading: false })
     }
   },
-  
+
   // 将请求的加载和错误状态集中管理，保证所有认证视图行为一致。
   authenticate: async (mode, form) => {
     set({ loading: true, error: null })
     try {
       const result = mode === 'login' ? await api.login(form) : await api.register(form)
       setToken(result.access_token)
-      set({ user: result.user })
+      setPasswordResetRequired(result.password_reset_required)
+      set({ user: result.user, passwordResetRequired: result.password_reset_required })
+      // 待改密时不加载工作台：除改密和查看本人资料外的接口都会被服务端拒绝。
+      if (!result.password_reset_required) await get().loadWorkspace()
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : '请求失败' })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
+  /**
+   * 提交改密，成功后用新 Token 接管会话并进入工作台。
+   *
+   * 服务端在改密时递增 Token 版本，旧 Token（含待改密标记的那一个）立即失效，
+   * 因此必须用响应里的新 Token 替换本地 Token，否则后续请求会被判为已撤销。
+   */
+  changePassword: async (currentPassword, newPassword) => {
+    set({ loading: true, error: null })
+    try {
+      const result = await api.changePassword({ current_password: currentPassword, new_password: newPassword })
+      setToken(result.access_token)
+      setPasswordResetRequired(false)
+      set({ user: result.user, passwordResetRequired: false })
       await get().loadWorkspace()
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '请求失败' })
@@ -74,10 +105,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ loading: false })
     }
   },
-  
+
   logout: () => {
     setToken(null)
-    set({ user: null, roles: [], conversations: [], modelConfigs: [], activeConversationId: null })
+    setPasswordResetRequired(false)
+    set({ user: null, passwordResetRequired: false, roles: [], conversations: [], modelConfigs: [], activeConversationId: null })
   },
   
   // 保留已有的当前会话，否则将最新会话设为当前会话。
@@ -100,6 +132,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         navigateToConversation(null)
       }
     } catch (err) {
+      // 待改密的 Token 会让业务接口返回 403：这是预期内的状态而不是故障，
+      // 直接切到强制重置流程，避免本地标记丢失后停在空白工作台。
+      if ((err as { code?: string }).code === 'PASSWORD_RESET_REQUIRED') {
+        setPasswordResetRequired(true)
+        set({ passwordResetRequired: true })
+        return
+      }
       console.error('Failed to load workspace data:', err)
     }
   },

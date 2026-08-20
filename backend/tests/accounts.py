@@ -15,7 +15,9 @@ from typing import Any
 TEST_STAMP = os.environ.get("ROLEPLEX_TEST_STAMP", "local")
 OWNER_USERNAME = f"test{TEST_STAMP}"
 OWNER_NICKNAME = f"测试 Owner {TEST_STAMP}"
-TEST_PASSWORD = "12345678"
+# 固定占位口令，符合密码策略（长度、字母、数字、符号）以免测试账号被强制改密。
+# 仅用于本地测试库，不具备任何实际价值，禁止用于真实环境。
+TEST_PASSWORD = "Roleplex-Test-1234"
 OWNER_PASSWORD = TEST_PASSWORD
 
 
