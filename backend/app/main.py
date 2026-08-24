@@ -14,6 +14,7 @@ from .events import EventHub
 from . import events
 from .errors import http_error_handler, validation_error_handler
 from .routers import artifacts, auth, conversations, messages, model_configs, roles
+from .services import retention
 from .ws import router as ws_router
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s %(message)s")
@@ -21,9 +22,14 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(na
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """在应用生命周期内初始化进程事件广播器和数据库资源。"""
+    """在应用生命周期内初始化进程事件广播器和数据库资源。
+
+    数据库就绪后清理一次超过保留期的已删除会话：回收站没有常驻定时任务，
+    启动是唯一的清理时机（理由见 `services/retention.py`）。
+    """
     events.hub = EventHub()
     await init_db()
+    await retention.purge_expired_on_startup()
     yield
     events.hub = None
     await close_db()

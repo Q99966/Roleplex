@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
@@ -16,15 +16,39 @@ router = APIRouter(prefix="/api/roles", tags=["roles"])
 
 
 def to_response(role: Role) -> RoleResponse:
-    """将 Owner 拥有的 ORM 角色转换为公开 API 表示。"""
+    """将 Owner 拥有的 ORM 角色转换为公开 API 表示。
+
+    墓碑角色同样返回：客户端渲染历史消息时需要按 id 查出原名称与头像，
+    通过 `deleted_at` 区分并做降级展示，而不是显示成匿名 Agent。
+    """
     return RoleResponse(
         id=role.id, name=role.name, avatar=role.avatar, description=role.description,
         tags=role.tags_json or [], system_prompt=role.system_prompt,
         model_config_id=role.model_config_id, model_name=role.model_name,
         params=role.params_json or {}, skills=role.skills_json or [],
         builtin_tools=role.builtin_tools_json or [], mcp_servers=role.mcp_servers_json or [],
-        active=role.active, created_at=role.created_at, updated_at=role.updated_at,
+        active=role.active, deleted_at=role.deleted_at,
+        created_at=role.created_at, updated_at=role.updated_at,
     )
+
+
+async def editable_role(session: AsyncSession, role_id: int, owner_id: int) -> Role:
+    """解析可编辑的角色；墓碑与他人角色一律按不存在处理。
+
+    Args:
+        session：请求级数据库会话。
+        role_id：目标角色 id。
+        owner_id：当前 Owner 的用户 id，用于资源隔离。
+
+    Raises:
+        HTTPException：404 `ROLE_NOT_FOUND`，不区分"不存在"、"非本人"和"已删除"。
+    """
+    role = await session.scalar(select(Role).where(
+        Role.id == role_id, Role.created_by == owner_id, Role.deleted_at.is_(None),
+    ))
+    if not role:
+        raise HTTPException(status_code=404, detail="ROLE_NOT_FOUND")
+    return role
 
 
 async def owned_model_config(session: AsyncSession, owner_id: int, config_id: int) -> ModelConfig:
@@ -72,9 +96,7 @@ async def get_role(role_id: int, user: Annotated[User, Depends(get_current_user)
 @router.put("/{role_id}", response_model=RoleResponse)
 async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
     """替换 Owner 拥有的角色，同时保持模型配置隔离。"""
-    role = await session.scalar(select(Role).where(Role.id == role_id, Role.created_by == user.id))
-    if not role:
-        raise HTTPException(status_code=404, detail="ROLE_NOT_FOUND")
+    role = await editable_role(session, role_id, user.id)
     await owned_model_config(session, user.id, payload.model_config_id)
     role.name = payload.name
     role.avatar = payload.avatar
@@ -95,9 +117,28 @@ async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, D
 
 @router.delete("/{role_id}", status_code=204)
 async def delete_role(role_id: int, user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
-    """删除 Owner 拥有的角色；数据库约束保护仍被引用的配置。"""
-    role = await session.scalar(select(Role).where(Role.id == role_id, Role.created_by == user.id))
-    if not role:
-        raise HTTPException(status_code=404, detail="ROLE_NOT_FOUND")
-    await session.delete(role)
+    """把角色置为墓碑：保留身份信息，清除全部可用配置。
+
+    不做物理删除——消息只按 `sender_id` 记录发送者，角色行一旦消失，历史里
+    就再也查不出"谁说的"。因此保留 id、名称、头像与删除时间，清空系统提示词、
+    模型绑定、技能与 MCP 配置，并置为停用，使它不能再被选进会话或触发生成。
+
+    角色重名约束是"只约束未删除角色"的部分唯一索引，所以墓碑保留原名的同时
+    不会挡住立刻新建同名角色。
+    """
+    role = await editable_role(session, role_id, user.id)
+    role.deleted_at = datetime.now(timezone.utc)
+    role.updated_at = role.deleted_at
+    role.active = False
+    # 清除全部可用配置：墓碑只保留身份，不保留任何能驱动模型或工具的内容。
+    role.system_prompt = ""
+    role.model_config_id = None
+    role.model_name = ""
+    role.description = None
+    role.tags_json = []
+    role.params_json = {}
+    role.skills_json = []
+    role.builtin_tools_json = []
+    role.mcp_servers_json = []
+    role.mcp_tools_cache_json = []
     await session.commit()

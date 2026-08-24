@@ -11,7 +11,7 @@ from . import events as events_module
 from .config import settings
 from .db import SessionLocal
 from .events import current_epoch
-from .models import ConversationMember, User
+from .models import Conversation, ConversationMember, User
 from .security import token_requires_password_reset
 from .services import chat, event_store
 
@@ -46,13 +46,21 @@ async def _authenticate(token: str) -> User | None:
 
 
 async def _is_member(conversation_id: int, user_id: int) -> bool:
-    """检查用户是否为该会话成员，用于订阅前的资源级授权。"""
+    """检查用户是否为该会话成员，用于订阅前的资源级授权。
+
+    回收站中的会话按不存在处理，与 REST 侧保持一致：已删除的会话不应还能订阅事件流。
+    """
     async with SessionLocal() as session:
-        member = await session.scalar(select(ConversationMember).where(
-            ConversationMember.conversation_id == conversation_id,
-            ConversationMember.member_type == "user",
-            ConversationMember.member_id == user_id,
-        ))
+        member = await session.scalar(
+            select(ConversationMember)
+            .join(Conversation, Conversation.id == ConversationMember.conversation_id)
+            .where(
+                ConversationMember.conversation_id == conversation_id,
+                ConversationMember.member_type == "user",
+                ConversationMember.member_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
         return member is not None
 
 

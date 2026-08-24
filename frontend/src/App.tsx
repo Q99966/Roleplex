@@ -4,6 +4,7 @@ import { useAppStore } from './store/app'
 import { type Role } from './api/client'
 import { AuthScreen } from './components/AuthScreen'
 import { PasswordResetScreen } from './components/PasswordResetScreen'
+import { RecycleBinModal } from './components/RecycleBinModal'
 import { Sidebar } from './components/Sidebar'
 import { EmptyWorkspace } from './components/EmptyWorkspace'
 import { ActiveWorkspace } from './components/ActiveWorkspace'
@@ -26,6 +27,7 @@ export function App() {
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null)
   const [showConvModal, setShowConvModal] = useState(false)
+  const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
   // 页面初始化加载状态
@@ -102,7 +104,7 @@ export function App() {
 
   return (
     <main className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none relative font-sans">
-      <Sidebar 
+      <Sidebar
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(true)}
         onOpenSettings={() => setShowSettings(true)}
@@ -111,6 +113,7 @@ export function App() {
           setShowRoleModal(true)
         }}
         onOpenConvModal={() => setShowConvModal(true)}
+        onOpenRecycleBin={() => setShowRecycleBin(true)}
       />
       {activeConversationId ? (
         <ActiveWorkspace 
@@ -158,6 +161,8 @@ export function App() {
       )}
       
       {showConvModal && <ConversationModal onClose={() => setShowConvModal(false)} />}
+
+      {showRecycleBin && <RecycleBinModal onClose={() => setShowRecycleBin(false)} />}
       
       {/* 桌面宠物悬浮层 */}
       <WebPet />

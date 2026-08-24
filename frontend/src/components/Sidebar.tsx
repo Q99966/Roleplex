@@ -15,10 +15,11 @@ interface SidebarProps {
   onOpenSettings: () => void
   onOpenRoleModal: (role?: Role) => void
   onOpenConvModal: () => void
+  onOpenRecycleBin: () => void
 }
 
 /** 侧边栏组件。 */
-export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal }: SidebarProps) {
+export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal, onOpenRecycleBin }: SidebarProps) {
   const { conversations, activeConversationId, roles, user, logout } = useAppStore()
   const [searchTerm, setSearchTerm] = useState('')
   const [failedAvatars, setFailedAvatars] = useState<number[]>([])
@@ -81,9 +82,20 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
       </div>
 
       {/* 会话列表 */}
-      <div className="flex items-center gap-2 px-5 pb-2 pt-6 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        <MessageCircle size={14} />
-        <span>会话列表</span>
+      <div className="flex items-center justify-between px-5 pb-2 pt-6 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <div className="flex items-center gap-2">
+          <MessageCircle size={14} />
+          <span>会话列表</span>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenRecycleBin}
+          title="回收站"
+          className="flex items-center gap-1 rounded-lg px-2 py-1 normal-case tracking-normal text-slate-500 transition hover:bg-slate-800/60 hover:text-amber-300"
+        >
+          <Trash2 size={13} />
+          <span>回收站</span>
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 space-y-1">
@@ -185,8 +197,9 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
         
         <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
           {roles.map((role) => (
-            <div 
-              key={role.id} 
+            <div
+              key={role.id}
+              data-testid="sidebar-role"
               onClick={() => onOpenRoleModal(role)}
               className="flex items-center justify-between rounded-lg px-2.5 py-2 text-sm hover:bg-slate-800/60 cursor-pointer border border-transparent hover:border-slate-800/80 group transition"
             >

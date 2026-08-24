@@ -31,6 +31,8 @@ docs/protocol/
 | 领域 | 当前状态 | 权威位置 |
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
+| REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
+| REST 会话管理与回收站 | 已实现（单聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | 消息发送、历史与停止生成 | 已实现（单聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（单聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |

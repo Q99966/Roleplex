@@ -98,7 +98,11 @@ class RoleCreate(BaseModel):
 
 
 class RoleResponse(BaseModel):
-    """返回给角色所属用户的公开 Agent 定义。"""
+    """返回给角色所属用户的公开 Agent 定义。
+
+    `deleted_at` 非空表示墓碑：身份信息保留供历史消息展示，配置已被清空、
+    不能再选进会话或触发生成，`model_config_id` 也随之为空。
+    """
 
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -107,13 +111,14 @@ class RoleResponse(BaseModel):
     description: str | None
     tags: list[str]
     system_prompt: str
-    model_config_id: int
+    model_config_id: int | None
     model_name: str
     params: dict[str, Any]
     skills: list[dict[str, Any]]
     builtin_tools: list[str]
     mcp_servers: list[dict[str, Any]]
     active: bool
+    deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -129,7 +134,11 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationResponse(BaseModel):
-    """合并共享会话状态、角色成员和请求用户个人偏好的响应。"""
+    """合并共享会话状态、角色成员和请求用户个人偏好的响应。
+
+    `deleted_at` 非空表示会话在回收站中：不出现在普通列表里，保留期内可恢复。
+    `role_ids` 不包含已删除的角色，避免成员列表出现指向墓碑的孤儿项。
+    """
 
     id: int
     type: str
@@ -140,6 +149,7 @@ class ConversationResponse(BaseModel):
     last_message_at: datetime | None
     pinned: bool
     archived: bool
+    deleted_at: datetime | None = None
 
 
 class Part(BaseModel):

@@ -210,7 +210,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
         description: role.description || '',
         tags: role.tags.join(', '),
         system_prompt: role.system_prompt,
-        model_config_id: role.model_config_id,
+        // 墓碑角色不会进入编辑弹窗（列表已过滤），这里回退到 0 只是为了让
+        // 表单状态保持非空数字，提交前仍会校验必须选中一个模型配置。
+        model_config_id: role.model_config_id ?? 0,
         model_name: role.model_name,
         params: JSON.stringify(role.params || {}, null, 2),
         builtin_tools: role.builtin_tools || []

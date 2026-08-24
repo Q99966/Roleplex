@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -59,7 +59,11 @@ class ModelConfig(Base):
 
 
 class Role(Base):
-    """Owner 创建的 Agent 定义及其序列化能力配置。"""
+    """Owner 创建的 Agent 定义及其序列化能力配置。
+
+    删除采用墓碑：保留 id、名称、头像与删除时间，清除系统提示词、模型绑定、
+    技能与 MCP 配置，使历史消息永远能显示"谁说的"，同时不再残留可用配置。
+    """
 
     __tablename__ = "roles"
 
@@ -70,7 +74,8 @@ class Role(Base):
     description: Mapped[str | None] = mapped_column(Text)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=json_list, nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    model_config_id: Mapped[int] = mapped_column(ForeignKey("model_configs.id", ondelete="RESTRICT"), nullable=False)
+    # 墓碑需要清除模型绑定，因此允许为空；仍在使用的角色由服务层保证非空。
+    model_config_id: Mapped[int | None] = mapped_column(ForeignKey("model_configs.id", ondelete="RESTRICT"))
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     params_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=json_dict, nullable=False)
     skills_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=json_list, nullable=False)
@@ -78,14 +83,26 @@ class Role(Base):
     mcp_servers_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=json_list, nullable=False)
     mcp_tools_cache_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=json_list, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (UniqueConstraint("created_by", "name", name="uq_role_owner_name"),)
+    __table_args__ = (
+        # 只对未删除的角色约束重名：墓碑保留原名用于历史展示，同时允许立刻新建同名角色。
+        # 部分索引在 SQLite 与 PostgreSQL 上都支持，不依赖单一数据库的专属特性。
+        Index(
+            "uq_role_owner_name_active", "created_by", "name", unique=True,
+            sqlite_where=text("deleted_at IS NULL"), postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
 
 class Conversation(Base):
-    """共享聊天元数据；个人置顶和归档状态保存在成员记录中。"""
+    """共享聊天元数据；个人置顶和归档状态保存在成员记录中。
+
+    删除采用回收站：只写入 `deleted_at`，会话立即从列表消失但数据仍在，
+    保留期内可以恢复；超过保留期后由启动清理真正级联删除。
+    """
 
     __tablename__ = "conversations"
 
@@ -98,7 +115,13 @@ class Conversation(Base):
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     event_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        # 启动清理按删除时间扫描过期会话，列表查询按该列过滤未删除会话。
+        Index("ix_conversations_deleted_at", "deleted_at"),
+    )
 
 
 class ConversationMember(Base):

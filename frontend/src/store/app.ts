@@ -5,8 +5,13 @@ import { navigateToConversation } from '../router'
 type AppState = {
   user: User | null
   passwordResetRequired: boolean
+  /** 仅存活角色：侧边栏、成员选择器和统计都只应看到这些。 */
   roles: Role[]
+  /** 按 id 索引的全部角色（含墓碑），供历史消息按 sender_id 查出原名称与头像。 */
+  roleDirectory: Record<number, Role>
   conversations: Conversation[]
+  /** 回收站中的会话，仅在打开回收站时按需加载。 */
+  deletedConversations: Conversation[]
   modelConfigs: ModelConfig[]
   activeConversationId: number | null
   loading: boolean
@@ -17,19 +22,21 @@ type AppState = {
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: () => void
   loadWorkspace: () => Promise<void>
-  
+
   // 模型配置操作
   createModelConfig: (body: Parameters<typeof api.createModelConfig>[0]) => Promise<void>
   deleteModelConfig: (id: number) => Promise<void>
-  
+
   // 角色操作
   createRole: (body: Parameters<typeof api.createRole>[0]) => Promise<void>
   updateRole: (id: number, body: Parameters<typeof api.updateRole>[1]) => Promise<void>
   deleteRole: (id: number) => Promise<void>
-  
+
   // 会话操作
   createConversation: (body: Parameters<typeof api.createConversation>[0]) => Promise<void>
   deleteConversation: (id: number) => Promise<void>
+  loadDeletedConversations: () => Promise<void>
+  restoreConversation: (id: number) => Promise<void>
   updateConversationPreferences: (id: number, pinned?: boolean, archived?: boolean) => Promise<void>
 }
 
@@ -37,7 +44,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   user: null,
   passwordResetRequired: false,
   roles: [],
+  roleDirectory: {},
   conversations: [],
+  deletedConversations: [],
   modelConfigs: [],
   activeConversationId: null,
   loading: true,
@@ -109,7 +118,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: () => {
     setToken(null)
     setPasswordResetRequired(false)
-    set({ user: null, passwordResetRequired: false, roles: [], conversations: [], modelConfigs: [], activeConversationId: null })
+    set({ user: null, passwordResetRequired: false, roles: [], roleDirectory: {}, conversations: [], deletedConversations: [], modelConfigs: [], activeConversationId: null })
   },
   
   // 保留已有的当前会话，否则将最新会话设为当前会话。
@@ -123,7 +132,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? api.modelConfigs().catch(() => []) 
           : Promise.resolve([])
       ])
-      set({ roles, conversations, modelConfigs })
+      // 服务端会连墓碑一起返回：查找表保留全部角色用于历史消息展示，
+      // 列表只保留存活角色，避免墓碑出现在侧边栏和成员选择器里。
+      set({
+        roles: roles.filter((role) => !role.deleted_at),
+        roleDirectory: Object.fromEntries(roles.map((role) => [role.id, role])),
+        conversations,
+        modelConfigs,
+      })
       
       // 如果 activeConversationId 不存在或在会话列表中找不到，则回到工作台空态
       const currentActiveId = get().activeConversationId
@@ -180,6 +196,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       navigateToConversation(null)
     }
     await get().loadWorkspace()
+  },
+
+  /** 加载回收站列表；打开回收站时调用，不随工作台常驻刷新。 */
+  loadDeletedConversations: async () => {
+    set({ deletedConversations: await api.deletedConversations() })
+  },
+
+  /** 从回收站恢复会话，并同步刷新工作台与回收站两份列表。 */
+  restoreConversation: async (id) => {
+    await api.restoreConversation(id)
+    await Promise.all([get().loadWorkspace(), get().loadDeletedConversations()])
   },
   updateConversationPreferences: async (id, pinned, archived) => {
     await api.updateConversationPreferences(id, pinned, archived)

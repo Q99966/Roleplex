@@ -23,7 +23,7 @@ function unknownPartTypes(parts: Part[]): string[] {
 
 /** 渲染真实单聊工作台：历史消息、流式回复、停止生成与会话成员面板。 */
 export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveWorkspaceProps) {
-  const { conversations, activeConversationId, roles, user } = useAppStore()
+  const { conversations, activeConversationId, roles, roleDirectory, user } = useAppStore()
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
@@ -145,8 +145,10 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
 
           {messages.map((message: Message) => {
             const isUser = message.sender_type === 'user'
-            const role = roles.find((r) => r.id === message.sender_id)
+            // 用含墓碑的查找表：角色被删除后仍要显示原名称，否则历史会变成匿名 Agent。
+            const role = message.sender_id === null ? undefined : roleDirectory[message.sender_id]
             const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
+            const senderDeleted = !isUser && Boolean(role?.deleted_at)
             const text = messageText(message.parts_json)
             const unknown = unknownPartTypes(message.parts_json)
             return (
@@ -159,6 +161,9 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
                 <div className="min-w-0">
                   <div className={`flex items-center gap-2 mb-1.5 ${isUser ? 'justify-end' : ''}`}>
                     <span className="text-xs font-semibold text-slate-300">{senderName}</span>
+                    {senderDeleted && (
+                      <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 py-px">已删除</span>
+                    )}
                     {message.status === 'generating' && <span className="text-[10px] text-indigo-400">生成中…</span>}
                     {message.status === 'stopped' && <span className="text-[10px] text-amber-400">已停止</span>}
                     {message.status === 'error' && <span className="text-[10px] text-red-400">生成失败</span>}

@@ -89,25 +89,37 @@ Owner 单例的载体。注册时用一条 `UPDATE ... WHERE id=1 AND owner_user
 
 Agent 角色定义，是"联系人"的数据来源。
 
+**删除采用墓碑，永不物理删除**：消息只按 `sender_id` 记录发送者，角色行一旦消失，
+历史里就再也查不出"谁说的"。删除时保留 `id` / `name` / `avatar` / `deleted_at`，
+清空全部可用配置并置 `active=false`。
+
 | 字段 | 含义 |
 |---|---|
-| `created_by` | 所属 Owner；与 `name` 组成唯一约束 `uq_role_owner_name` |
-| `name` / `avatar` / `description` | 展示信息 |
-| `tags_json` | 能力标签数组，用于联系人列表展示 |
-| `system_prompt` | 角色的 System Prompt |
-| `model_config_id` | 使用哪份厂商配置；保存时校验属于同一 Owner |
-| `model_name` | 具体模型名，如占位的 `fake-model` |
-| `params_json` | 采样参数（temperature、max_tokens 等）。运行时按模型能力剔除不兼容项 |
-| `skills_json` | 追加到 System Prompt 的技能片段 |
-| `builtin_tools_json` | 启用的内置工具名列表 |
-| `mcp_servers_json` | MCP server 配置列表（预留，M5 接入） |
-| `mcp_tools_cache_json` | 测试连接时缓存的 MCP 工具清单，兼作能力标签来源（预留） |
-| `active` | 是否可用；停用的角色不参与回复 |
+| `created_by` | 所属 Owner；与 `name` 组成部分唯一索引 `uq_role_owner_name_active`（仅约束 `deleted_at IS NULL` 的行） |
+| `name` / `avatar` / `description` | 展示信息；墓碑保留 `name` 与 `avatar`，清空 `description` |
+| `tags_json` | 能力标签数组，用于联系人列表展示；墓碑清空 |
+| `system_prompt` | 角色的 System Prompt；墓碑清空 |
+| `model_config_id` | 使用哪份厂商配置；保存时校验属于同一 Owner。**可空**：墓碑要清除模型绑定 |
+| `model_name` | 具体模型名，如占位的 `fake-model`；墓碑清空 |
+| `params_json` | 采样参数（temperature、max_tokens 等）。运行时按模型能力剔除不兼容项；墓碑清空 |
+| `skills_json` | 追加到 System Prompt 的技能片段；墓碑清空 |
+| `builtin_tools_json` | 启用的内置工具名列表；墓碑清空 |
+| `mcp_servers_json` | MCP server 配置列表（预留，M5 接入）；墓碑清空 |
+| `mcp_tools_cache_json` | 测试连接时缓存的 MCP 工具清单，兼作能力标签来源（预留）；墓碑清空 |
+| `active` | 是否可用；停用的角色不参与回复。墓碑一律为 `false` |
+| `deleted_at` | 墓碑时间；非空表示该角色已删除，只保留身份信息 |
 | `created_at` / `updated_at` | 创建与最后修改时间 |
+
+重名约束之所以改成部分唯一索引，是为了让墓碑保留原名的同时不挡住新建同名角色。
+部分索引在 SQLite 与 PostgreSQL 上都支持，不依赖单一数据库的专属特性。
 
 ## conversations
 
 会话元数据，同时是**该会话事件序号的分配器**。
+
+**删除采用回收站**：只写 `deleted_at`，会话立即从列表消失但数据完整保留，
+保留期（7 天）内可以恢复；超期后由服务启动时的清理任务真正级联删除
+（见 `backend/app/services/retention.py`）。没有常驻定时清理任务。
 
 | 字段 | 含义 |
 |---|---|
@@ -118,9 +130,13 @@ Agent 角色定义，是"联系人"的数据来源。
 | `last_message_at` | 最后一条消息时间，用于会话列表排序 |
 | `revision` | 会话级版本，发送消息时递增。当前只作为变更计数，尚未参与冲突检测 |
 | `event_seq` | **该会话已分配的最大事件序号**。每写一条事件就在同一事务内 `+1`，是 `event_log.event_seq` 的唯一来源，保证不重号 |
+| `deleted_at` | 进入回收站的时间；非空表示已删除。索引 `ix_conversations_deleted_at` 供列表过滤与过期扫描 |
 | `created_at` | 创建时间 |
 
 注意"置顶/归档"不在本表：多人会话下它们是个人偏好，存在成员表里。
+
+回收站中的会话对消息链路和 WebSocket 订阅等同于不存在：不能读历史、不能发言、
+不能订阅事件，否则被删除的会话仍会产生新消息和新事件。
 
 ## conversation_members
 

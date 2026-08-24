@@ -20,12 +20,21 @@ router = APIRouter(prefix="/api/conversations", tags=["messages"])
 
 
 async def require_member(session: AsyncSession, conversation_id: int, user_id: int) -> ConversationMember:
-    """要求请求者是会话成员；无权访问的会话一律按不存在处理。"""
-    member = await session.scalar(select(ConversationMember).where(
-        ConversationMember.conversation_id == conversation_id,
-        ConversationMember.member_type == "user",
-        ConversationMember.member_id == user_id,
-    ))
+    """要求请求者是会话成员；无权访问或已进回收站的会话一律按不存在处理。
+
+    回收站中的会话对消息链路等同于不存在：不能读历史、不能发言、不能触发生成，
+    否则被删除的会话仍会产生新消息和新事件。
+    """
+    member = await session.scalar(
+        select(ConversationMember)
+        .join(Conversation, Conversation.id == ConversationMember.conversation_id)
+        .where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.member_type == "user",
+            ConversationMember.member_id == user_id,
+            Conversation.deleted_at.is_(None),
+        )
+    )
     if not member:
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
     return member
