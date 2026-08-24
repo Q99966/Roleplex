@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_session
 from .models import User
+from .logging_config import set_log_context
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -115,6 +116,7 @@ async def _resolve_token_user(
     user = await session.get(User, user_id)
     if not user or user.token_version != payload.get("ver"):
         raise HTTPException(status_code=401, detail="AUTH_REVOKED")
+    set_log_context(user_id=user.id)
     return user, token_requires_password_reset(payload)
 
 

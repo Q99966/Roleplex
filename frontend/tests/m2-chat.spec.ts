@@ -31,11 +31,24 @@ async function seedConversation(page: Page, title: string): Promise<number> {
 test.describe('M2 single chat', () => {
   test('sends a message and renders the streamed reply', async ({ page }) => {
     const browserErrors: string[] = []
-    page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()) })
-    page.on('pageerror', (error) => browserErrors.push(error.message))
+    const websocketUrls: string[] = []
+    const historyRequests: string[] = []
 
     await ensureOwnerSession(page)
     await seedConversation(page, '单聊流式测试')
+
+    // 账号不存在时准备步骤会先产生一次预期 401，监听必须在准备完成后挂载。
+    page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()) })
+    page.on('pageerror', (error) => browserErrors.push(error.message))
+    page.on('websocket', (socket) => {
+      if (socket.url().endsWith('/api/ws')) websocketUrls.push(socket.url())
+    })
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && /\/api\/conversations\/\d+\/messages$/.test(request.url())) {
+        historyRequests.push(request.url())
+      }
+    })
+
     await page.reload()
 
     await page.getByText('单聊流式测试').first().click()
@@ -48,6 +61,11 @@ test.describe('M2 single chat', () => {
     await expect(page.getByText('你好，请自我介绍')).toBeVisible()
     await expect(page.getByText(/已收到你的消息：你好，请自我介绍/)).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('这是 M2 fake provider 的确定性回复。')).toBeVisible({ timeout: 20_000 })
+
+    // React StrictMode 会重复执行 effect；会话打开逻辑必须抵消过期异步调用，
+    // 一个页面、一个会话只能读取一次历史并保留一条 WebSocket。
+    expect(historyRequests).toHaveLength(1)
+    expect(websocketUrls).toHaveLength(1)
 
     // 刷新后历史仍然完整，证明内容已经落库而不是只存在于内存。
     await page.reload()

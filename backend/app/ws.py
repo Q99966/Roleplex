@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 
 import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -12,6 +13,7 @@ from .config import settings
 from .db import SessionLocal
 from .events import current_epoch
 from .models import Conversation, ConversationMember, User
+from .logging_config import log_context, set_log_context
 from .security import token_requires_password_reset
 from .services import chat, event_store
 
@@ -82,24 +84,39 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
     协议要求 Token 只出现在首帧消息体中，不允许放在查询参数或日志里。
     """
+    connection_id = uuid.uuid4().hex
+    peer = getattr(websocket, "client", None)
+    client = f"{peer.host}:{peer.port}" if peer else None
+    with log_context(request_id=f"ws-{connection_id}", ws_connection_id=connection_id):
+        await _serve_conversation_stream(websocket, client)
+
+
+async def _serve_conversation_stream(websocket: WebSocket, client: str | None) -> None:
+    """在已建立日志上下文中处理认证、订阅、恢复与连接回收。"""
     await websocket.accept()
+    logger.info("ws.accepted", extra={"client": client})
     try:
         first_frame = await asyncio.wait_for(websocket.receive_json(), timeout=_AUTH_TIMEOUT_SECONDS)
     except WebSocketDisconnect:
         # 对端在认证前主动断开：连接已经不存在，不需要也不能再发关闭帧。
-        logger.debug("ws.closed_before_auth")
+        logger.info("ws.closed_before_auth", extra={"client": client})
         return
     except (asyncio.TimeoutError, ValueError):
+        logger.warning("ws.auth_rejected", extra={"reason": "timeout_or_invalid_json", "client": client})
         await _close_policy_violation(websocket)
         return
 
     if first_frame.get("type") != "auth" or not isinstance(first_frame.get("token"), str):
+        logger.warning("ws.auth_rejected", extra={"reason": "invalid_auth_frame", "client": client})
         await _close_policy_violation(websocket)
         return
     user = await _authenticate(first_frame["token"])
     if user is None:
+        logger.warning("ws.auth_rejected", extra={"reason": "invalid_credentials", "client": client})
         await _close_policy_violation(websocket)
         return
+    set_log_context(user_id=user.id)
+    logger.info("ws.authenticated", extra={"client": client})
     await websocket.send_json({"type": "auth_ok", "stream_epoch": current_epoch()})
 
     queue: asyncio.Queue | None = None
@@ -114,6 +131,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             if action == "subscribe":
                 new_id = frame.get("conversation_id")
                 if not isinstance(new_id, int) or not await _is_member(new_id, user.id):
+                    logger.warning("ws.subscription_rejected", extra={"requested_conversation_id": new_id})
                     async with send_lock:
                         await websocket.send_json({"type": "error", "payload": {"code": "CONVERSATION_NOT_FOUND"}})
                     continue
@@ -122,10 +140,12 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 if queue is not None and conversation_id is not None:
                     await events_module.hub.unsubscribe(conversation_id, queue)
                 conversation_id = new_id
+                set_log_context(conversation_id=conversation_id)
                 # 先注册实时订阅，再读取 backlog，保证注册和回放之间不丢事件。
                 queue = await events_module.hub.subscribe(conversation_id)
                 async with send_lock:
-                    await _send_recovery(websocket, conversation_id, frame)
+                    recovery = await _send_recovery(websocket, conversation_id, frame)
+                logger.info("ws.subscribed", extra=recovery)
                 pump = asyncio.create_task(_pump(websocket, queue, send_lock))
 
             elif action == "ping":
@@ -146,9 +166,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
             pump.cancel()
         if queue is not None and conversation_id is not None:
             await events_module.hub.unsubscribe(conversation_id, queue)
+        logger.info("ws.disconnected", extra={"client": client})
 
 
-async def _send_recovery(websocket: WebSocket, conversation_id: int, frame: dict) -> None:
+async def _send_recovery(websocket: WebSocket, conversation_id: int, frame: dict) -> dict:
     """按客户端游标发送 backlog 或完整快照。"""
     after_seq = frame.get("after_event_seq")
     after_seq = after_seq if isinstance(after_seq, int) and after_seq >= 0 else 0
@@ -161,7 +182,12 @@ async def _send_recovery(websocket: WebSocket, conversation_id: int, frame: dict
         if needs_snapshot:
             snapshot = await chat.build_snapshot(session, conversation_id)
             await websocket.send_json({"type": "snapshot", "stream_epoch": epoch, "payload": snapshot})
-            return
+            return {
+                "recovery_mode": "snapshot",
+                "stream_epoch": epoch,
+                "after_event_seq": after_seq,
+                "latest_event_seq": latest,
+            }
         backlog = await event_store.read_backlog(session, conversation_id, after_seq, _BACKLOG_LIMIT)
 
     await websocket.send_json({
@@ -172,6 +198,13 @@ async def _send_recovery(websocket: WebSocket, conversation_id: int, frame: dict
     })
     for event in backlog:
         await websocket.send_json(event.as_dict())
+    return {
+        "recovery_mode": "backlog",
+        "stream_epoch": epoch,
+        "after_event_seq": after_seq,
+        "latest_event_seq": latest,
+        "backlog_count": len(backlog),
+    }
 
 
 async def _pump(websocket: WebSocket, queue: asyncio.Queue, send_lock: asyncio.Lock) -> None:

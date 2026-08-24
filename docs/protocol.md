@@ -41,6 +41,7 @@ docs/protocol/
 | 分页与兼容性 | 预留/总则 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 | Agent 运行时（领域事件、工具安全、MCP） | 内部/原型 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
+| 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |
 
 ## 认证
 
@@ -66,6 +67,8 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 - `429`：配额或速率限制
 
 错误信封在 `code`、`message`、`request_id` 之外允许附带 `details`，用于逐条说明校验或策略未通过的原因。
+服务端还会在所有 HTTP 响应返回同值的 `X-Request-ID`；调用方可以传入该请求头以复用自己的关联 ID，
+未传时由服务端生成。
 
 当前状态：REST 认证和基础资源接口已使用错误信封；尚未实现的接口必须继续复用该格式。
 

@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
+LOG_DIR = ROOT_DIR / "logs"
 
 
 class Settings(BaseSettings):
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     pin_budget_ratio: float = 0.30
     max_context_tokens: int = 100_000
     max_upload_bytes: int = 10 * 1024 * 1024
+    log_dir: str = str(LOG_DIR)
+    log_level: str = "INFO"
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
 
     def _load_or_create_secret(self, filename: str, configured: str = "") -> str:
         """加载已配置的密钥，或原子创建本地实例密钥。

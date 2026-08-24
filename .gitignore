@@ -10,6 +10,7 @@ data/*.db-*
 data/files/
 data/.jwt-secret
 data/.api-key-secret
+logs/
 .env
 
 # Frontend

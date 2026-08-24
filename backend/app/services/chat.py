@@ -4,12 +4,14 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from time import perf_counter
 
 from sqlalchemy import select
 
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
+from ..logging_config import set_log_context
 from ..agent import providers
 from ..agent.domain import MessageDone, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
@@ -115,7 +117,25 @@ def start_generation(
         )
     )
     _running[generation_id] = task
-    task.add_done_callback(lambda _t: _running.pop(generation_id, None))
+    logger.info(
+        "generation.task_created",
+        extra={"conversation_id": conversation_id, "generation_id": generation_id},
+    )
+
+    def task_finished(done: asyncio.Task[None]) -> None:
+        """回收任务引用，并显式暴露逃出生成函数的异常。"""
+        _running.pop(generation_id, None)
+        if done.cancelled():
+            return
+        error = done.exception()
+        if error is not None:
+            logger.error(
+                "generation.task_unhandled",
+                extra={"conversation_id": conversation_id, "generation_id": generation_id},
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
+    task.add_done_callback(task_finished)
 
 
 async def request_stop(generation_id: int) -> bool:
@@ -166,12 +186,12 @@ async def _record_tool_call(
         await session.commit()
 
 
-async def _finalize(generation_id: int, status: str, text: str, error_code: str | None = None) -> None:
-    """把生成的终态和已缓冲内容写入数据库并广播事件。"""
+async def _finalize(generation_id: int, status: str, text: str, error_code: str | None = None) -> dict:
+    """把生成终态写入数据库并广播，返回终态事件的可观测字段。"""
     async with SessionLocal() as session:
         generation = await session.get(Generation, generation_id)
         if generation is None or generation.status in {"completed", "stopped", "failed"}:
-            return
+            return {}
         message = await session.get(Message, generation.assistant_message_id) if generation.assistant_message_id else None
         generation.status = status
         generation.error_code = error_code
@@ -193,6 +213,15 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
             )
         await session.commit()
     await event_store.publish_events(*events_to_publish)
+    if not events_to_publish:
+        return {}
+    event = events_to_publish[-1]
+    return {
+        "stream_epoch": event.stream_epoch,
+        "event_seq": event.event_seq,
+        "message_revision": event.revision,
+        "delta_seq": event.delta_seq,
+    }
 
 
 async def _run_generation(
@@ -215,6 +244,13 @@ async def _run_generation(
         triggered_by_user_id：触发者，写入工具审计。
         allow_dangerous：触发者是否可以执行 dangerous 工具。
     """
+    set_log_context(
+        user_id=triggered_by_user_id,
+        conversation_id=conversation_id,
+        generation_id=generation_id,
+    )
+    logger.info("generation.task_started")
+    task_started = perf_counter()
     accumulated = ""
     delta_seq = 0
     tool_args: dict[str, str] = {}
@@ -222,12 +258,20 @@ async def _run_generation(
         async with SessionLocal() as session:
             generation = await session.get(Generation, generation_id)
             if generation is None:
+                logger.warning("generation.record_missing")
                 return
+            set_log_context(chain_id=generation.run_id, execution_id=generation.run_id)
             role = await resolve_reply_role(session, conversation_id)
             if role is None:
                 await _finalize(generation_id, "failed", "", error_code="CONVERSATION_HAS_NO_ROLE")
+                logger.warning("generation.role_unavailable", extra={"error_code": "CONVERSATION_HAS_NO_ROLE"})
                 return
+            set_log_context(role_id=role.id)
             model, tools = await build_agent_inputs(session, role, prompt, allow_dangerous=allow_dangerous)
+            logger.info(
+                "generation.provider_ready",
+                extra={"provider_mode": "fake" if settings.agent_use_fake_provider else "real", "model": role.model_name},
+            )
             assistant = Message(
                 conversation_id=conversation_id,
                 sender_type="role",
@@ -252,12 +296,21 @@ async def _run_generation(
             )
             await session.commit()
             assistant_id = assistant.id
+            set_log_context(message_id=assistant_id)
             role_id = role.id
             system_prompt = role.system_prompt
         await event_store.publish_events(created_event)
         logger.info(
             "generation.started",
-            extra={"conversation_id": conversation_id, "generation_id": generation_id, "message_id": assistant_id},
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "message_id": assistant_id,
+                "stream_epoch": created_event.stream_epoch,
+                "event_seq": created_event.event_seq,
+                "message_revision": created_event.revision,
+                "startup_duration_ms": round((perf_counter() - task_started) * 1000, 2),
+            },
         )
 
         last_persist = asyncio.get_running_loop().time()
@@ -293,7 +346,7 @@ async def _run_generation(
                     "tool.started",
                     extra={
                         "conversation_id": conversation_id, "generation_id": generation_id,
-                        "tool_name": event.tool_name, "call_id": event.call_id,
+                        "tool_name": event.tool_name, "tool_call_id": event.call_id,
                     },
                 )
             elif isinstance(event, ToolCallFinished):
@@ -306,7 +359,7 @@ async def _run_generation(
                     "tool.finished",
                     extra={
                         "conversation_id": conversation_id, "generation_id": generation_id,
-                        "tool_name": event.tool_name, "call_id": event.call_id,
+                        "tool_name": event.tool_name, "tool_call_id": event.call_id,
                         "status": event.status, "duration_ms": event.duration_ms,
                     },
                 )
@@ -314,31 +367,55 @@ async def _run_generation(
                 failed_code = event.code
 
         if failed_code:
-            await _finalize(generation_id, "failed", accumulated, error_code=failed_code)
+            terminal = await _finalize(generation_id, "failed", accumulated, error_code=failed_code)
             logger.warning(
                 "generation.failed",
-                extra={"conversation_id": conversation_id, "generation_id": generation_id, "error_code": failed_code},
+                extra={
+                    "conversation_id": conversation_id,
+                    "generation_id": generation_id,
+                    "error_code": failed_code,
+                    "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                    **terminal,
+                },
             )
             return
 
-        await _finalize(generation_id, "completed", accumulated)
+        terminal = await _finalize(generation_id, "completed", accumulated)
         logger.info(
             "generation.completed",
-            extra={"conversation_id": conversation_id, "generation_id": generation_id, "delta_count": delta_seq},
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "delta_count": delta_seq,
+                "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **terminal,
+            },
         )
     except asyncio.CancelledError:
         # 用户主动停止属于预期结果，按 stopped 落库而不是未处理异常。
-        await _finalize(generation_id, "stopped", accumulated)
+        terminal = await _finalize(generation_id, "stopped", accumulated)
         logger.info(
             "generation.stopped",
-            extra={"conversation_id": conversation_id, "generation_id": generation_id, "delta_count": delta_seq},
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "delta_count": delta_seq,
+                "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **terminal,
+            },
         )
         raise
     except Exception:
-        await _finalize(generation_id, "failed", accumulated, error_code="PROVIDER_ERROR")
+        terminal = await _finalize(generation_id, "failed", accumulated, error_code="PROVIDER_ERROR")
         logger.exception(
             "generation.failed",
-            extra={"conversation_id": conversation_id, "generation_id": generation_id},
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "error_code": "PROVIDER_ERROR",
+                "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **terminal,
+            },
         )
 
 

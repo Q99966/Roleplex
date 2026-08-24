@@ -186,7 +186,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   // 会话操作实现
   createConversation: async (body) => {
     const conv = await api.createConversation(body)
-    await get().loadWorkspace()
+    // 201 已返回完整会话对象，直接写入本地状态，避免创建后立刻全量 GET。
+    set({
+      conversations: [conv, ...get().conversations.filter((item) => item.id !== conv.id)],
+      activeConversationId: conv.id,
+    })
     navigateToConversation(conv.id)
   },
   deleteConversation: async (id) => {

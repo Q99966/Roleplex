@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from .logging_config import current_request_id
+
 
 async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
     """将请求校验失败映射为稳定的公开错误信封。"""
-    return JSONResponse(status_code=422, content={"error": {"code": "VALIDATION_ERROR", "message": "请求参数无效", "details": exc.errors()}})
+    return JSONResponse(
+        status_code=422,
+        content={"error": {"code": "VALIDATION_ERROR", "message": "请求参数无效", "details": exc.errors(), "request_id": current_request_id()}},
+    )
 
 
 async def http_error_handler(_request: Request, exc: Any) -> JSONResponse:
@@ -30,7 +34,7 @@ async def http_error_handler(_request: Request, exc: Any) -> JSONResponse:
         details = detail.get("details")
     else:
         code = "REQUEST_FAILED"
-    body: dict[str, Any] = {"code": code, "message": code, "request_id": uuid.uuid4().hex}
+    body: dict[str, Any] = {"code": code, "message": code, "request_id": current_request_id()}
     if details is not None:
         body["details"] = details
     return JSONResponse(status_code=status_code, content={"error": body})

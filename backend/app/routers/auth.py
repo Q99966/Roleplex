@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import password_policy
 from ..db import get_session
+from ..logging_config import current_request_id, set_log_context
 from ..models import InstanceSettings, User
 from ..password_policy import PasswordPolicyError
 from ..schemas import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UserResponse
@@ -22,6 +24,7 @@ from ..security import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger("roleplex.auth")
 
 
 def _reject_weak_password(password: str) -> None:
@@ -91,8 +94,17 @@ async def login(payload: LoginRequest, session: Annotated[AsyncSession, Depends(
     user = await session.scalar(select(User).where(User.username == payload.username))
     password = payload.password.get_secret_value()
     if not user or not verify_password(password, user.password_hash):
+        logger.info(
+            "auth.login_failed",
+            extra={"username": payload.username, "reason": "invalid_credentials", "request_id": current_request_id()},
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="AUTH_INVALID")
     reset_required = not password_policy.is_compliant(password)
+    set_log_context(user_id=user.id)
+    logger.info(
+        "auth.login_succeeded",
+        extra={"username": user.username, "user_id": user.id, "password_reset_required": reset_required},
+    )
     return TokenResponse(
         access_token=create_access_token(user, password_reset_required=reset_required),
         user=UserResponse.model_validate(user),

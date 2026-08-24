@@ -14,6 +14,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 角色删除保留墓碑（历史消息仍显示原发送者），会话删除进回收站并可在 7 天内恢复
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
+- HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
 
@@ -105,6 +106,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 这些库只用于本地排查，密码是无实际价值的固定占位值，不要把该口令用于任何真实环境。
+
+### 日志与排障
+
+后端启动后会同时输出两份内容一致的日志：终端使用便于阅读的单行格式，机器可检索的
+JSONL 写入 `logs/roleplex.jsonl`，单文件默认最多 10 MiB 并保留 5 份轮转文件。路径、级别和
+轮转参数可分别通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_BACKUP_COUNT` 调整。
+
+每个 HTTP 响应都带 `X-Request-ID`；错误信封中的 `request_id` 与它相同。前端报错时可用该值
+串起 `http.request_started`、认证/消息业务事件、后台 `generation.*` 和最终状态。WebSocket 使用
+独立的 `ws_connection_id`，并在认证、订阅（含 `conversation_id`）、恢复方式和断开时记录生命周期。
+例如：
+
+```bash
+# 查看一次请求的完整链路
+grep 'req-login-failed' logs/roleplex.jsonl
+
+# 只看生成任务的开始、结束或失败
+grep '"event": "generation\.' logs/roleplex.jsonl
+```
+
+登录失败审计会记录提交的用户名和失败原因，便于人工验证；密码、Token、Authorization、API Key、
+完整用户输入和完整模型输出不会写入持久化日志。JSONL 字段和事件含义见
+`docs/protocol/internal/observability.md`。
 
 ## Windows 开发
 

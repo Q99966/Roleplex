@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from time import perf_counter
+import uuid
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -13,11 +15,13 @@ from .db import close_db, init_db
 from .events import EventHub
 from . import events
 from .errors import http_error_handler, validation_error_handler
+from .logging_config import configure_logging, log_context
 from .routers import artifacts, auth, conversations, messages, model_configs, roles
 from .services import retention
 from .ws import router as ws_router
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s %(message)s")
+configure_logging(settings.log_dir, settings.log_level, settings.log_max_bytes, settings.log_backup_count)
+logger = logging.getLogger("roleplex.http")
 
 
 @asynccontextmanager
@@ -44,7 +48,37 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=600,
 )
+
+
+@app.middleware("http")
+async def request_logging(request, call_next):
+    """为 HTTP 请求建立关联上下文，并记录状态码与端到端耗时。"""
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    started = perf_counter()
+    client = f"{request.client.host}:{request.client.port}" if request.client else None
+    with log_context(request_id=request_id):
+        logger.info("http.request_started", extra={"method": request.method, "path": request.url.path, "client": client})
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "http.request_failed",
+                extra={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started) * 1000, 2)},
+            )
+            raise
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "http.request_completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+            },
+        )
+        return response
 app.include_router(auth.router)
 app.include_router(model_configs.router)
 app.include_router(roles.router)

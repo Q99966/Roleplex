@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..events import current_epoch
 from ..models import Conversation, ConversationMember, Generation, Message, User
+from ..logging_config import set_log_context
 from ..schemas import MessageCreate
 from ..security import get_current_user
 from ..services import chat, event_store
@@ -127,6 +128,15 @@ async def send_message(
     await session.refresh(generation)
     await event_store.publish_events(created_event)
 
+    set_log_context(
+        user_id=user.id,
+        conversation_id=conversation_id,
+        message_id=message.id,
+        generation_id=generation.id,
+        chain_id=run_id,
+        execution_id=run_id,
+    )
+
     chat.start_generation(
         generation.id, conversation_id, text,
         # Owner 是本机可信主体，Guest 触发的链路在工具执行层拒绝 dangerous 调用。
@@ -134,7 +144,15 @@ async def send_message(
     )
     logger.info(
         "message.queued",
-        extra={"conversation_id": conversation_id, "generation_id": generation.id, "chain_id": run_id},
+        extra={
+            "conversation_id": conversation_id,
+            "message_id": message.id,
+            "generation_id": generation.id,
+            "chain_id": run_id,
+            "stream_epoch": created_event.stream_epoch,
+            "event_seq": created_event.event_seq,
+            "message_revision": created_event.revision,
+        },
     )
     return {"message": chat.message_payload(message), "generation_id": generation.id, "duplicate": False}
 
