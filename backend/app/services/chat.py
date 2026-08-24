@@ -13,7 +13,7 @@ from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
 from ..logging_config import set_log_context
 from ..agent import providers
-from ..agent.domain import MessageDone, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
@@ -254,6 +254,14 @@ async def _run_generation(
     accumulated = ""
     delta_seq = 0
     tool_args: dict[str, str] = {}
+    provider_call_count = 0
+    first_ttft_ms: int | None = None
+    usage_summary: dict[str, int | None] = {
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "cache_hit_tokens": None,
+    }
     try:
         async with SessionLocal() as session:
             generation = await session.get(Generation, generation_id)
@@ -363,6 +371,26 @@ async def _run_generation(
                         "status": event.status, "duration_ms": event.duration_ms,
                     },
                 )
+            elif isinstance(event, ProviderCallCompleted):
+                provider_call_count += 1
+                if first_ttft_ms is None:
+                    first_ttft_ms = event.ttft_ms
+                logger.info(
+                    "provider.call_completed",
+                    extra={
+                        "provider_call_index": event.call_index,
+                        "provider_mode": "fake" if settings.agent_use_fake_provider else "real",
+                        "model": role.model_name,
+                        "ttft_ms": event.ttft_ms,
+                        "duration_ms": event.duration_ms,
+                        "input_tokens": event.input_tokens,
+                        "output_tokens": event.output_tokens,
+                        "total_tokens": event.total_tokens,
+                        "cache_hit_tokens": event.cache_hit_tokens,
+                    },
+                )
+            elif isinstance(event, MessageDone):
+                usage_summary.update(event.usage)
             elif isinstance(event, ProviderError):
                 failed_code = event.code
 
@@ -374,6 +402,9 @@ async def _run_generation(
                     "conversation_id": conversation_id,
                     "generation_id": generation_id,
                     "error_code": failed_code,
+                    "provider_call_count": provider_call_count,
+                    "ttft_ms": first_ttft_ms,
+                    **usage_summary,
                     "duration_ms": round((perf_counter() - task_started) * 1000, 2),
                     **terminal,
                 },
@@ -387,6 +418,9 @@ async def _run_generation(
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "delta_count": delta_seq,
+                "provider_call_count": provider_call_count,
+                "ttft_ms": first_ttft_ms,
+                **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
                 **terminal,
             },
@@ -400,6 +434,9 @@ async def _run_generation(
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "delta_count": delta_seq,
+                "provider_call_count": provider_call_count,
+                "ttft_ms": first_ttft_ms,
+                **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
                 **terminal,
             },
@@ -413,6 +450,9 @@ async def _run_generation(
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "error_code": "PROVIDER_ERROR",
+                "provider_call_count": provider_call_count,
+                "ttft_ms": first_ttft_ms,
+                **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
                 **terminal,
             },

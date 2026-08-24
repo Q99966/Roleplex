@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,9 +17,9 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 
-from app.agent.domain import MessageDone, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from app.agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn, fake_reply_model
-from app.agent.loop import run_agent
+from app.agent.loop import normalize_provider_usage, run_agent
 from app.agent.tools import guard_tools
 
 # 只有防腐层可以出现这些框架私有名称，业务层必须只认领域事件。
@@ -113,6 +114,90 @@ async def test_text_only_run_maps_to_deltas_and_done():
     assert "".join(delta.text for delta in deltas) == events[-1].text
     assert events[-1].text.startswith("已收到你的消息：你好")
     assert not any(isinstance(event, ProviderError) for event in events)
+
+
+@pytest.mark.anyio
+async def test_provider_call_reports_deterministic_ttft_and_duration():
+    """每次模型 API 调用都报告首分片耗时与总耗时，fake 不伪造 token 数。"""
+    ticks = iter([10.0, 10.125, 10.5])
+    events = await _collect(
+        model=fake_reply_model("计时", delay=0.0),
+        tools=[],
+        prompt="计时",
+        time_source=lambda: next(ticks),
+    )
+
+    calls = [event for event in events if isinstance(event, ProviderCallCompleted)]
+    assert len(calls) == 1
+    assert calls[0].call_index == 1
+    assert calls[0].ttft_ms == 125
+    assert calls[0].duration_ms == 500
+    assert calls[0].input_tokens is None
+    assert calls[0].output_tokens is None
+    assert calls[0].total_tokens is None
+    assert calls[0].cache_hit_tokens is None
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        (
+            SimpleNamespace(
+                usage_metadata={
+                    "input_tokens": 120,
+                    "output_tokens": 30,
+                    "total_tokens": 150,
+                    "input_token_details": {"cache_read": 80},
+                },
+                response_metadata={},
+            ),
+            {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150, "cache_hit_tokens": 80},
+        ),
+        (
+            SimpleNamespace(
+                usage_metadata=None,
+                response_metadata={
+                    "token_usage": {
+                        "prompt_tokens": 90,
+                        "completion_tokens": 10,
+                        "total_tokens": 100,
+                        "prompt_cache_hit_tokens": 60,
+                    }
+                },
+            ),
+            {"input_tokens": 90, "output_tokens": 10, "total_tokens": 100, "cache_hit_tokens": 60},
+        ),
+        (
+            SimpleNamespace(
+                usage_metadata=None,
+                response_metadata={
+                    "usage": {
+                        "input_tokens": 70,
+                        "output_tokens": 20,
+                        "cache_read_input_tokens": 40,
+                    }
+                },
+            ),
+            {"input_tokens": 70, "output_tokens": 20, "total_tokens": 90, "cache_hit_tokens": 40},
+        ),
+        (
+            SimpleNamespace(
+                usage_metadata=None,
+                response_metadata={
+                    "token_usage": {
+                        "prompt_tokens": 50,
+                        "completion_tokens": 25,
+                        "prompt_tokens_details": {"cached_tokens": 32},
+                    }
+                },
+            ),
+            {"input_tokens": 50, "output_tokens": 25, "total_tokens": 75, "cache_hit_tokens": 32},
+        ),
+    ],
+)
+def test_provider_usage_is_normalized_across_vendor_shapes(output: Any, expected: dict[str, int]):
+    """LangChain、DeepSeek、Anthropic 与 OpenAI usage 字段归一为稳定日志字段。"""
+    assert normalize_provider_usage(output) == expected
 
 
 @pytest.mark.anyio

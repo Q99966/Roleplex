@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -17,7 +17,7 @@ from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
-from .domain import AgentEvent, MessageDone, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from .tools import REJECTED_OUTPUT_PREFIX, summarize_args
 
 logger = logging.getLogger("roleplex.agent.loop")
@@ -30,6 +30,7 @@ _WRAP_UP_PROMPT = "已达到本轮工具调用上限，请基于已有信息直�
 
 # 框架事件名集中在此，业务层不感知。
 _EVENT_MODEL_STREAM = "on_chat_model_stream"
+_EVENT_MODEL_START = "on_chat_model_start"
 _EVENT_MODEL_END = "on_chat_model_end"
 _EVENT_TOOL_START = "on_tool_start"
 _EVENT_TOOL_END = "on_tool_end"
@@ -71,6 +72,71 @@ def _chunk_text(chunk: Any) -> str:
     return "".join(parts)
 
 
+def _non_negative_int(value: Any) -> int | None:
+    """把厂商返回的非负整数安全归一化，未知或异常值返回 None。"""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized >= 0 else None
+
+
+def _first_token_value(*values: Any) -> int | None:
+    """按兼容字段优先级返回第一个可用的 token 数。"""
+    for value in values:
+        normalized = _non_negative_int(value)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def normalize_provider_usage(output: Any) -> dict[str, int]:
+    """将 LangChain 与常见厂商 usage 形态映射为稳定字段。
+
+    支持标准 `usage_metadata`、OpenAI-compatible/DeepSeek 的 `token_usage`，
+    以及 Anthropic 的 `usage`。没有厂商数据时返回空字典，不进行字符数估算。
+    """
+    standard = getattr(output, "usage_metadata", None) or {}
+    response = getattr(output, "response_metadata", None) or {}
+    raw = response.get("token_usage") or response.get("usage") or {}
+    standard_details = standard.get("input_token_details") or {}
+    prompt_details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
+
+    input_tokens = _first_token_value(standard.get("input_tokens"), raw.get("input_tokens"), raw.get("prompt_tokens"))
+    output_tokens = _first_token_value(
+        standard.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens")
+    )
+    total_tokens = _first_token_value(standard.get("total_tokens"), raw.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    cache_hit_tokens = _first_token_value(
+        standard_details.get("cache_read"),
+        standard_details.get("cached_tokens"),
+        raw.get("prompt_cache_hit_tokens"),
+        raw.get("cache_read_input_tokens"),
+        prompt_details.get("cached_tokens"),
+    )
+
+    values = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "cache_hit_tokens": cache_hit_tokens,
+    }
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _aggregate_usage(calls: list[dict[str, int]]) -> dict[str, int | None]:
+    """仅在每次调用都报告某字段时汇总，避免用部分数据冒充整轮总量。"""
+    keys = ("input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens")
+    return {
+        key: sum(call[key] for call in calls) if calls and all(key in call for call in calls) else None
+        for key in keys
+    }
+
+
 def _tool_status(output: Any) -> str:
     """判断工具结束事件的结果状态。
 
@@ -86,13 +152,18 @@ def _tool_status(output: Any) -> str:
 
 
 async def _wrap_up(
-    model: BaseChatModel, messages: list[Any], accumulated: str, usage: dict[str, Any]
+    model: BaseChatModel,
+    messages: list[Any],
+    accumulated: str,
+    call_usages: list[dict[str, int]],
+    time_source: Callable[[], float],
 ) -> AsyncIterator[AgentEvent]:
     """追加一次禁用工具的收尾调用，保证本轮有文本结尾。
 
     收尾调用只带原始输入和收尾提示，**不带那条包含未完成工具调用的助手消息**：
     把未配对的 tool_use 再发回厂商会被直接拒绝（400），反而让本轮彻底失败。
     """
+    started = time_source()
     try:
         final = await model.ainvoke([*messages, ("user", _WRAP_UP_PROMPT)])
     except asyncio.CancelledError:
@@ -100,10 +171,22 @@ async def _wrap_up(
     except Exception as exc:
         yield ProviderError(code=_error_code(exc), message=str(exc))
         return
+    duration_ms = int((time_source() - started) * 1000)
+    normalized_usage = normalize_provider_usage(final)
+    call_usages.append(normalized_usage)
+    yield ProviderCallCompleted(
+        call_index=len(call_usages),
+        ttft_ms=duration_ms,
+        duration_ms=duration_ms,
+        input_tokens=normalized_usage.get("input_tokens"),
+        output_tokens=normalized_usage.get("output_tokens"),
+        total_tokens=normalized_usage.get("total_tokens"),
+        cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+    )
     text = _chunk_text(final)
     if text:
         yield TextDelta(text=text)
-    yield MessageDone(text=accumulated + text, usage=usage)
+    yield MessageDone(text=accumulated + text, usage=_aggregate_usage(call_usages))
 
 
 async def run_agent(
@@ -114,6 +197,7 @@ async def run_agent(
     system_prompt: str | None = None,
     history: Sequence[BaseMessage] | None = None,
     recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+    time_source: Callable[[], float] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """执行一次 Agent 循环，按领域事件流式产出结果。
 
@@ -124,9 +208,11 @@ async def run_agent(
         system_prompt：角色的系统提示词。
         history：更早的对话历史，按框架消息类型传入。
         recursion_limit：react 循环步数上限。
+        time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
 
     Yields:
-        `TextDelta` / `ToolCallStarted` / `ToolCallFinished` / `MessageDone` / `ProviderError`。
+        `TextDelta` / `ToolCallStarted` / `ToolCallFinished` / `ProviderCallCompleted` /
+        `MessageDone` / `ProviderError`。
         正常结束以 `MessageDone` 收尾，失败以 `ProviderError` 收尾，两者互斥。
 
     Raises:
@@ -136,8 +222,14 @@ async def run_agent(
     agent = create_react_agent(model, list(tools), prompt=system_prompt)
     messages: list[Any] = [*(history or []), ("user", prompt)]
     accumulated = ""
-    usage: dict[str, Any] = {}
+    clock = time_source or loop_time
+    call_usages: list[dict[str, int]] = []
     started_at: dict[str, float] = {}
+    provider_started_at: dict[str, float] = {}
+    provider_ttft_ms: dict[str, int] = {}
+    provider_call_index: dict[str, int] = {}
+    provider_stream_usage: dict[str, dict[str, int]] = {}
+    next_provider_call_index = 0
     # 最近一次模型回合中尚未拿到结果的工具调用数量。
     # 实测锁定版本的 LangGraph 在达到步数上限时**不会抛异常**，而是直接结束事件流，
     # 留下一条带未配对 tool_use 的助手消息；因此触顶只能靠这个计数自行识别。
@@ -148,20 +240,42 @@ async def run_agent(
             {"messages": messages}, version="v2", config={"recursion_limit": recursion_limit}
         ):
             kind = event["event"]
-            if kind == _EVENT_MODEL_STREAM:
-                text = _chunk_text(event["data"].get("chunk"))
+            run_id = str(event.get("run_id"))
+            if kind == _EVENT_MODEL_START:
+                next_provider_call_index += 1
+                provider_call_index[run_id] = next_provider_call_index
+                provider_started_at[run_id] = clock()
+            elif kind == _EVENT_MODEL_STREAM:
+                chunk = event["data"].get("chunk")
+                if run_id in provider_started_at and run_id not in provider_ttft_ms:
+                    provider_ttft_ms[run_id] = int((clock() - provider_started_at[run_id]) * 1000)
+                chunk_usage = normalize_provider_usage(chunk)
+                if chunk_usage:
+                    provider_stream_usage[run_id] = chunk_usage
+                text = _chunk_text(chunk)
                 if text:
                     accumulated += text
                     yield TextDelta(text=text)
             elif kind == _EVENT_MODEL_END:
                 output = event["data"].get("output")
                 pending_tool_calls = len(getattr(output, "tool_calls", None) or [])
-                metadata = getattr(output, "usage_metadata", None)
-                if metadata:
-                    usage = dict(metadata)
+                stream_usage = provider_stream_usage.pop(run_id, {})
+                normalized_usage = normalize_provider_usage(output) or stream_usage
+                call_usages.append(normalized_usage)
+                started = provider_started_at.pop(run_id, None)
+                duration_ms = int((clock() - started) * 1000) if started is not None else 0
+                yield ProviderCallCompleted(
+                    call_index=provider_call_index.pop(run_id, len(call_usages)),
+                    ttft_ms=provider_ttft_ms.pop(run_id, None),
+                    duration_ms=duration_ms,
+                    input_tokens=normalized_usage.get("input_tokens"),
+                    output_tokens=normalized_usage.get("output_tokens"),
+                    total_tokens=normalized_usage.get("total_tokens"),
+                    cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+                )
             elif kind == _EVENT_TOOL_START:
                 call_id = str(event.get("run_id"))
-                started_at[call_id] = loop_time()
+                started_at[call_id] = clock()
                 yield ToolCallStarted(
                     call_id=call_id,
                     tool_name=event.get("name", ""),
@@ -171,17 +285,18 @@ async def run_agent(
                 call_id = str(event.get("run_id"))
                 output = event["data"].get("output")
                 pending_tool_calls = max(0, pending_tool_calls - 1)
+                tool_started = started_at.pop(call_id, None)
                 yield ToolCallFinished(
                     call_id=call_id,
                     tool_name=event.get("name", ""),
                     status=_tool_status(output),
-                    duration_ms=int((loop_time() - started_at.pop(call_id, loop_time())) * 1000),
+                    duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
                     output_summary=summarize_args(getattr(output, "content", output)),
                 )
     except GraphRecursionError:
         # 某些版本会抛异常而不是静默结束，两条路径都走同一个收尾流程。
         logger.info("agent.recursion_limit_reached", extra={"recursion_limit": recursion_limit})
-        async for event in _wrap_up(model, messages, accumulated, usage):
+        async for event in _wrap_up(model, messages, accumulated, call_usages, clock):
             yield event
         return
     except asyncio.CancelledError:
@@ -197,8 +312,8 @@ async def run_agent(
             "agent.unresolved_tool_calls",
             extra={"recursion_limit": recursion_limit, "pending_tool_calls": pending_tool_calls},
         )
-        async for event in _wrap_up(model, messages, accumulated, usage):
+        async for event in _wrap_up(model, messages, accumulated, call_usages, clock):
             yield event
         return
 
-    yield MessageDone(text=accumulated, usage=usage)
+    yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages))

@@ -20,7 +20,13 @@ from .routers import artifacts, auth, conversations, messages, model_configs, ro
 from .services import retention
 from .ws import router as ws_router
 
-configure_logging(settings.log_dir, settings.log_level, settings.log_max_bytes, settings.log_backup_count)
+configure_logging(
+    settings.log_dir,
+    settings.log_level,
+    settings.log_max_bytes,
+    settings.log_run_kind,
+    settings.log_max_seconds,
+)
 logger = logging.getLogger("roleplex.http")
 
 

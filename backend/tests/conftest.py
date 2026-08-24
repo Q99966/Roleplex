@@ -41,6 +41,8 @@ os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production")
 # 强制使用确定性 fake provider：环境变量优先于本地 .env，
 # 因此即使开发机上配了真实厂商开关，普通回归也不会联网或产生费用。
 os.environ["AGENT_USE_FAKE_PROVIDER"] = "true"
+# pytest 产生的应用日志与开发运行、浏览器 E2E 分目录保存，便于按测试层级排查。
+os.environ["LOG_RUN_KIND"] = "unit"
 
 
 @pytest.fixture(scope="session")

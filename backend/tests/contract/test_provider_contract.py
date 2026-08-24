@@ -16,7 +16,7 @@ import time
 import pytest
 from langchain_core.tools import tool
 
-from app.agent.domain import MessageDone, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from app.agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from app.agent.loop import run_agent
 from app.agent.tools import guard_tools
 
@@ -45,6 +45,14 @@ async def test_streaming_text_arrives_in_chunks(vendor):
     assert len(deltas) >= 2, "流式回复应分多次到达，而不是一次性返回"
     assert isinstance(events[-1], MessageDone)
     assert events[-1].text.strip(), "最终文本不应为空"
+    calls = [event for event in events if isinstance(event, ProviderCallCompleted)]
+    assert len(calls) == 1
+    assert calls[0].ttft_ms is not None and calls[0].ttft_ms >= 0
+    assert calls[0].input_tokens is not None and calls[0].input_tokens > 0
+    assert calls[0].output_tokens is not None and calls[0].output_tokens > 0
+    assert calls[0].total_tokens == calls[0].input_tokens + calls[0].output_tokens
+    # 部分厂商不报告缓存明细；支持时必须是非负 token 数，不允许用估算值。
+    assert calls[0].cache_hit_tokens is None or calls[0].cache_hit_tokens >= 0
 
 
 @pytest.mark.anyio

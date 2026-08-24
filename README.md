@@ -110,20 +110,36 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### 日志与排障
 
 后端启动后会同时输出两份内容一致的日志：终端使用便于阅读的单行格式，机器可检索的
-JSONL 写入 `logs/roleplex.jsonl`，单文件默认最多 10 MiB 并保留 5 份轮转文件。路径、级别和
-轮转参数可分别通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_BACKUP_COUNT` 调整。
+JSONL 按“日期 → 运行类型 → 片段起始时间”保存：
+
+```text
+logs/
+└── 20260824/
+    ├── runtime/20260824153000.jsonl  # 正常开发或产品运行
+    ├── unit/20260824153500.jsonl     # pytest
+    ├── e2e-fake/20260824154000.jsonl # 普通 Playwright，fake provider
+    └── e2e-real/20260824154500.jsonl # 真实 API Playwright
+```
+
+每次后端进程启动都会新建文件，不续写上一次运行；单个文件写入跨度达到 1 小时，或下一条日志会使
+文件超过 10 MiB 时，立即以新片段的起始时间创建文件；跨过本地午夜也会切片，保证目录日期准确。
+同一类型在同一秒启动或轮转时使用 `-01`、`-02` 后缀避免覆盖。根路径、级别、大小上限和时间上限
+可分别通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_MAX_SECONDS` 调整，其中大小不能超过
+10 MiB、时间不能超过 3600 秒。
 
 每个 HTTP 响应都带 `X-Request-ID`；错误信封中的 `request_id` 与它相同。前端报错时可用该值
 串起 `http.request_started`、认证/消息业务事件、后台 `generation.*` 和最终状态。WebSocket 使用
 独立的 `ws_connection_id`，并在认证、订阅（含 `conversation_id`）、恢复方式和断开时记录生命周期。
+模型调用结束还会记录 `provider.call_completed`，包含首分片耗时、调用总耗时、输入/输出/总 token
+和缓存命中 token；厂商未提供的数据保持 `null`。
 例如：
 
 ```bash
 # 查看一次请求的完整链路
-grep 'req-login-failed' logs/roleplex.jsonl
+grep 'req-login-failed' logs/20260824/runtime/*.jsonl
 
 # 只看生成任务的开始、结束或失败
-grep '"event": "generation\.' logs/roleplex.jsonl
+grep '"event": "generation\.' logs/20260824/{runtime,e2e-fake,e2e-real}/*.jsonl
 ```
 
 登录失败审计会记录提交的用户名和失败原因，便于人工验证；密码、Token、Authorization、API Key、

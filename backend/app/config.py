@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,8 +36,9 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     log_dir: str = str(LOG_DIR)
     log_level: str = "INFO"
-    log_max_bytes: int = 10 * 1024 * 1024
-    log_backup_count: int = 5
+    log_run_kind: Literal["runtime", "unit", "e2e-fake", "e2e-real"] = "runtime"
+    log_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=10 * 1024 * 1024)
+    log_max_seconds: int = Field(default=3600, gt=0, le=3600)
 
     def _load_or_create_secret(self, filename: str, configured: str = "") -> str:
         """加载已配置的密钥，或原子创建本地实例密钥。

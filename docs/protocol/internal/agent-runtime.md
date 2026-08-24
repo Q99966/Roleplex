@@ -22,6 +22,7 @@
 | `TextDelta` | 模型输出的一段文本增量 | `text` |
 | `ToolCallStarted` | 一次工具调用开始 | `call_id`、`tool_name`、`args_summary` |
 | `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary` |
+| `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存 token |
 | `MessageDone` | 本轮正常结束 | `text`（最终全文）、`usage` |
 | `ProviderError` | 本轮失败 | `code`（稳定错误码）、`message` |
 
@@ -78,14 +79,15 @@ trace/video，具体运行与留存约定见 README。
 
 | 厂商 / 模型 | 复核日期 | 结论 |
 |---|---|---|
-| OpenAI 兼容（DeepSeek，`deepseek-v4-flash`） | 2026-08-18 | 文本按小分片真流式到达（44 字回复分 23 片，首片 2 字）；工具调用单次往返正常并能继续作答；`temperature` / `max_tokens` 直接可用；无效 Key 返回 401 并映射为 `PROVIDER_AUTH_FAILED`；取消在 0.02 秒内返回 |
+| OpenAI 兼容（DeepSeek，`deepseek-v4-flash`） | 2026-08-24 | 文本按小分片真流式到达；工具调用单次往返正常并能继续作答；`temperature` / `max_tokens` 直接可用；无效 Key 返回 401 并映射为 `PROVIDER_AUTH_FAILED`；取消可及时传播；真实浏览器链路已取得首分片耗时、输入/输出/总 token 和缓存命中 token |
 | Anthropic | 未验证 | 尚未配置凭据，能力表沿用内置默认值 |
 
 其他共性结论：
 
-- **用量口径已被 LangChain 统一**：领域事件里的 `usage` 直接取模型返回的 `usage_metadata`，
-  字段为 `input_tokens` / `output_tokens` / `total_tokens`，并可能带 `input_token_details.cache_read`
-  （命中提示缓存的输入量）与 `output_token_details.reasoning`（思考输出量）。不需要按厂商各写一套解析。
+- **用量口径在防腐层统一**：优先读取 LangChain `usage_metadata`，并兼容 OpenAI-compatible、
+  DeepSeek 和 Anthropic 的原始 usage 形态，统一为 `input_tokens`、`output_tokens`、`total_tokens`、
+  `cache_hit_tokens`。厂商未报告的字段保持为空，不按字符数估算。多轮工具调用会为每次模型请求
+  产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
 - **厂商错误信息本身可能带打码后的 Key 片段**，所以错误信息只能按稳定错误码消费，
   不得原样回显给客户端，日志侧也保留脱敏处理。
 

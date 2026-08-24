@@ -36,6 +36,8 @@ export default defineConfig({
         DATABASE_URL: `sqlite+aiosqlite:///../data/${DATABASE}`,
         CORS_ORIGINS: WEB_ORIGIN,
         AGENT_USE_FAKE_PROVIDER: 'false',
+        // 真实 provider 会联网计费，日志必须与普通 fake E2E 分开归档。
+        LOG_RUN_KIND: 'e2e-real',
         ROLEPLEX_REAL_E2E_STAMP: STAMP,
         ROLEPLEX_REAL_E2E_API_PORT: String(API_PORT),
       },

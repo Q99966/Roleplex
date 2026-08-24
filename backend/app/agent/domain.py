@@ -54,6 +54,19 @@ class MessageDone:
 
 
 @dataclass(frozen=True)
+class ProviderCallCompleted:
+    """一次模型厂商 API 调用完成后的归一化性能与用量摘要。"""
+
+    call_index: int
+    ttft_ms: int | None
+    duration_ms: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cache_hit_tokens: int | None
+
+
+@dataclass(frozen=True)
 class ProviderError:
     """本轮生成失败，`code` 是稳定错误码，业务层据此决定展示与降级。"""
 
@@ -62,4 +75,4 @@ class ProviderError:
 
 
 # 业务层按此联合类型消费事件；新增事件类型时必须同步更新内部协议文档。
-AgentEvent = TextDelta | ToolCallStarted | ToolCallFinished | MessageDone | ProviderError
+AgentEvent = TextDelta | ToolCallStarted | ToolCallFinished | ProviderCallCompleted | MessageDone | ProviderError

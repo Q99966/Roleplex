@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -33,10 +34,20 @@ async def _bootstrap(client: AsyncClient) -> dict:
 
 @pytest.mark.anyio
 async def test_single_chat_streams_and_persists():
-    """发送消息后 fake 生成应完成，并留下可恢复的事件序列。"""
+    """发送消息后 fake 生成应完成，并留下事件序列及明确为空的用量日志。"""
     from app.main import app
     from app.db import SessionLocal, engine
     from app.services import event_store
+
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = Capture()
+    chat_logger = logging.getLogger("roleplex.chat")
+    chat_logger.addHandler(handler)
 
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
@@ -85,6 +96,19 @@ async def test_single_chat_streams_and_persists():
             deltas = [event for event in backlog if event.type == "message_delta"]
             assert [event.delta_seq for event in deltas] == list(range(1, len(deltas) + 1))
 
+    chat_logger.removeHandler(handler)
+    provider_call = next(record for record in records if record.getMessage() == "provider.call_completed")
+    assert provider_call.provider_call_index == 1
+    assert provider_call.ttft_ms >= 0
+    assert provider_call.duration_ms >= provider_call.ttft_ms
+    assert provider_call.input_tokens is None
+    assert provider_call.output_tokens is None
+    assert provider_call.total_tokens is None
+    assert provider_call.cache_hit_tokens is None
+
+    completed = next(record for record in records if record.getMessage() == "generation.completed")
+    assert completed.provider_call_count == 1
+    assert completed.total_tokens is None
     await engine.dispose()
 
 

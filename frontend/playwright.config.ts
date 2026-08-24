@@ -56,6 +56,8 @@ export default defineConfig({
         // 显式锁定确定性 fake provider：环境变量优先于 backend/.env，
         // 保证端到端测试既不联网也不消耗真实模型额度。
         AGENT_USE_FAKE_PROVIDER: 'true',
+        // 浏览器链路日志独立归档，不与 pytest 或正常运行日志混在一起。
+        LOG_RUN_KIND: 'e2e-fake',
       },
       url: `${E2E_API_ORIGIN}/api/health`,
       reuseExistingServer: false,
