@@ -61,6 +61,25 @@ test.describe('delete semantics', () => {
     // 墓碑保留原名称，并在发送者旁标注已删除。
     await expect(page.getByText(seeded.roleName).first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('已删除').first()).toBeVisible()
+
+    // 历史只读保留，但墓碑角色不能再接受消息。前端禁用输入只是用户体验，
+    // 同时直接调用后端确认服务端边界也会拒绝，避免绕过界面继续生成。
+    await expect(page.getByText('角色已删除，当前会话仅可查看历史消息。')).toBeVisible()
+    await expect(page.getByLabel('消息输入框')).toBeDisabled()
+    const rejectedCode = await page.evaluate(async ({ base, conversationId }) => {
+      const token = localStorage.getItem('roleplex_token')
+      const response = await fetch(`${base}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          parts: [{ type: 'text', text: '墓碑不应回复' }],
+          client_message_id: `deleted-role-${Date.now()}`,
+        }),
+      })
+      const body = await response.json()
+      return { status: response.status, code: body.error?.code }
+    }, { base: backend, conversationId: seeded.conversationId })
+    expect(rejectedCode).toEqual({ status: 422, code: 'CONVERSATION_HAS_NO_ROLE' })
     await page.screenshot({ path: 'test-results/deleted-role-history.png', fullPage: true })
 
     // 墓碑不再出现在侧边栏的角色列表里；测试库由多个用例共享，

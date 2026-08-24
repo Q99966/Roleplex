@@ -7,8 +7,8 @@
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
-| 关联测试 | `backend/tests/test_chat_flow.py` |
-| 复核日期 | 2026-08-14 |
+| 关联测试 | `backend/tests/test_chat_flow.py`、`backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
+| 复核日期 | 2026-08-24 |
 
 ## 范围
 
@@ -54,7 +54,7 @@ POST /api/conversations/{conversation_id}/messages
 }
 ```
 
-`parts` 至少一项，part 信封允许未知字段以保持向前兼容；当前必须包含一个非空 `text` part，否则返回 `422 TEXT_PART_REQUIRED`。会话内没有可回复角色时返回 `422 CONVERSATION_HAS_NO_ROLE`。
+`parts` 至少一项，part 信封允许未知字段以保持向前兼容；当前必须包含一个非空 `text` part，否则返回 `422 TEXT_PART_REQUIRED`。会话内没有存活且启用的可回复角色时返回 `422 CONVERSATION_HAS_NO_ROLE`；角色删除后成员关系仍为历史保留，但墓碑不能继续触发生成。该拒绝发生在用户消息与生成任务落库之前。
 
 成功返回 `202`，表示消息已持久化、生成已排队：
 

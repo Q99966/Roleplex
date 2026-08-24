@@ -31,6 +31,8 @@ process.env.ROLEPLEX_E2E_DATABASE_PATH = `../data/${E2E_DATABASE}`
 
 export default defineConfig({
   testDir: './tests',
+  // 真实厂商测试必须通过独立配置显式运行，普通回归永不联网、不计费。
+  testIgnore: '**/real/**',
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,

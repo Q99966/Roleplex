@@ -12,7 +12,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - API Key 加密落库，接口只返回 masked hint
 - 用户认证、模型配置 CRUD、角色 CRUD、会话创建/列表/个人置顶归档
 - 角色删除保留墓碑（历史消息仍显示原发送者），会话删除进回收站并可在 7 天内恢复
-- 单聊消息发送、客户端幂等键、确定性 fake provider 流式回复、停止生成
+- 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
@@ -21,19 +21,21 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
-真实模型厂商接入、富媒体产物、群聊调度、Orchestrator、MCP 产品接入将在后续里程碑完成。
+富媒体产物、群聊调度、Orchestrator 与 MCP 产品接入将在后续里程碑完成。
 
 ### 模型 provider 开关与契约测试
 
 自动化测试固定使用确定性 fake provider：pytest 与 Playwright 都会显式设置
 `AGENT_USE_FAKE_PROVIDER=true`，即使本地 `.env` 配了真实厂商也不会联网或产生费用。
 
+正常启动默认使用角色绑定的真实模型配置，不需要额外设置 provider 开关。只有需要离线调试时，
+才显式设置 `AGENT_USE_FAKE_PROVIDER=true`；不要把该值长期写进正常运行环境。
+
 手动跑真实厂商时，先把凭据写进 `backend/.env`（已被 Git 忽略），再生成一份可用的模型配置与角色：
 
 ```powershell
 cd backend
 python scripts/seed_dev_provider.py
-$env:AGENT_USE_FAKE_PROVIDER = "false"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -52,15 +54,49 @@ pytest tests/contract -m contract -q
 `ROLEPLEX_CONTRACT_OPENAI_MODEL`、`ROLEPLEX_CONTRACT_OPENAI_BASE_URL`（OpenAI 兼容厂商），
 以及 `ROLEPLEX_CONTRACT_ANTHROPIC_KEY`、`ROLEPLEX_CONTRACT_ANTHROPIC_MODEL`。
 
+### 真实 API 浏览器测试
+
+普通 `npm run test:e2e` 始终使用 fake provider。需要验证“真实前端 → 真实后端 → 真实厂商 →
+流式回复落库”的完整链路时，在确认 `backend/.env` 已配置 OpenAI-compatible 的 Key、模型名和
+Base URL 后显式运行：
+
+```bash
+cd frontend
+npm run test:e2e:real
+```
+
+该命令会联网并产生少量模型费用，默认不属于普通回归或 CI。真实 Key 只在后端播种阶段进入
+产品加密边界，不传给浏览器；真实测试关闭 trace/video。每轮使用并保留独立数据库
+`data/roleplex-real-e2e-<时间戳>.db`，最近 5 轮之外的旧库在下一轮结束时清理。
+
+真实 E2E 的 Owner 为 `realtest<时间戳>`，密码固定为 `Roleplex-Real-E2E-1`。数据库包含加密后的
+真实 Key，只能用于本机核对，不要分享或提交；离开当前实例密钥后其中的模型配置无法解密。
+
 ### 测试数据库与测试账号
 
 每轮测试使用带时间戳的独立数据库，跑完保留最近 5 轮，更早的在下一轮开始时自动清理：
 
 - 后端：`data/roleplex-test-<时间戳>.db`（pytest 结束时会打印本轮路径）
 - 端到端：`data/roleplex-e2e-<时间戳>.db`
+- 真实 API 端到端：`data/roleplex-real-e2e-<时间戳>.db`（仅显式运行 `test:e2e:real` 时产生）
 
 测试账号与本轮数据库同名可追溯：Owner 为 `test<时间戳>`，Guest 为 `test<时间戳>_<用途>`，
 密码统一是 `Roleplex-Test-1234`。想查看某轮测试产生的数据，把后端指向那个库启动即可登录查看：
+
+WSL / Linux（Bash）：
+
+```bash
+cd backend
+export DATABASE_URL="sqlite+aiosqlite:///../data/roleplex-test-<时间戳>.db"
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+`export` 不能省略：只执行 `DATABASE_URL="..."` 会得到一个未导出的 shell 变量，随后启动的
+`uvicorn` 子进程看不到它并会连接默认数据库。也可以把赋值与启动写在同一条命令中：
+`DATABASE_URL="..." uvicorn app.main:app --host 0.0.0.0 --port 8000`。
+Bash 赋值时变量名前不加 `$`，且 `=` 两侧不能有空格。
+
+Windows PowerShell：
 
 ```powershell
 cd backend

@@ -42,15 +42,28 @@ def message_payload(message: Message) -> dict:
 
 
 async def resolve_reply_role(session, conversation_id: int) -> Role | None:
-    """返回该会话中负责回复的角色；当前单聊只取唯一角色成员。"""
-    role_id = await session.scalar(
-        select(ConversationMember.member_id)
-        .where(ConversationMember.conversation_id == conversation_id, ConversationMember.member_type == "role")
+    """返回该会话中可回复的角色；墓碑或停用角色不能触发生成。
+
+    角色成员关系会为历史保留，不能仅凭成员表判断可用性；必须同时检查角色当前仍存活
+    且启用。这个判断在服务端执行，前端的输入禁用只用于改善用户体验。
+
+    Args:
+        session：用于读取会话成员与角色状态的数据库会话。
+        conversation_id：目标会话标识。
+    """
+    return await session.scalar(
+        select(Role)
+        .join(
+            ConversationMember,
+            (ConversationMember.member_id == Role.id) & (ConversationMember.member_type == "role"),
+        )
+        .where(
+            ConversationMember.conversation_id == conversation_id,
+            Role.deleted_at.is_(None),
+            Role.active.is_(True),
+        )
         .order_by(ConversationMember.id.asc())
     )
-    if role_id is None:
-        return None
-    return await session.get(Role, role_id)
 
 
 async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerous: bool):
@@ -63,8 +76,8 @@ async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerou
         allow_dangerous：本次调用链是否允许执行 dangerous 工具。
 
     Returns:
-        `(模型, 工具列表)`。默认使用确定性 fake provider，需要连真实厂商时通过配置切换；
-        无论走哪条路径，都经过同一个 Agent 循环与防腐层。
+        `(模型, 工具列表)`。正常运行默认使用真实 provider；自动化测试通过显式配置切换
+        到确定性 fake。无论走哪条路径，都经过同一个 Agent 循环与防腐层。
     """
     if settings.agent_use_fake_provider:
         model = fake_reply_model(prompt)

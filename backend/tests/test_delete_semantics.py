@@ -1,9 +1,10 @@
 """删除语义集成测试：角色墓碑与会话回收站。
 
-覆盖三条要求：
+覆盖四条要求：
 1. 角色删除后保留身份、清空配置，历史消息仍能查到"谁说的"，且同名角色可以立刻重建；
-2. 会话删除进回收站后从列表消失、消息链路按不存在处理，保留期内可完整恢复；
-3. 过期清理只删除超过保留期的会话，未到期的不受影响。
+2. 角色删除后原会话只读保留历史，不能再触发该墓碑角色生成；
+3. 会话删除进回收站后从列表消失、消息链路按不存在处理，保留期内可完整恢复；
+4. 过期清理只删除超过保留期的会话，未到期的不受影响。
 """
 from __future__ import annotations
 
@@ -88,7 +89,7 @@ async def test_role_delete_keeps_identity_and_frees_the_name():
 
 @pytest.mark.anyio
 async def test_deleted_role_disappears_from_conversation_members():
-    """墓碑不再作为孤儿项出现在会话成员里，但会话本身仍然可用。"""
+    """墓碑不再作为孤儿项出现在会话成员里，但会话历史仍然可读。"""
     from app.main import app
 
     async with app.router.lifespan_context(app):
@@ -104,6 +105,41 @@ async def test_deleted_role_disappears_from_conversation_members():
             after = (await client.get("/api/conversations", headers=headers)).json()
             entry = next(c for c in after if c["id"] == conversation_id)
             assert entry["role_ids"] == []
+
+
+@pytest.mark.anyio
+async def test_deleted_role_conversation_rejects_new_messages():
+    """墓碑角色所在的旧会话保留历史，但不能再接受消息或触发生成。"""
+    from app.main import app
+    from app.db import SessionLocal
+    from app.models import Generation, Message
+    from sqlalchemy import func, select
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ctx = await _bootstrap(client, "deleted-chat")
+            headers, conversation_id = ctx["headers"], ctx["conversation_id"]
+
+            assert (await client.delete(f"/api/roles/{ctx['role_id']}", headers=headers)).status_code == 204
+
+            rejected = await client.post(
+                f"/api/conversations/{conversation_id}/messages",
+                headers=headers,
+                json={"parts": [{"type": "text", "text": "墓碑不应回复"}], "client_message_id": "deleted-chat-1"},
+            )
+            assert rejected.status_code == 422
+            assert rejected.json()["error"]["code"] == "CONVERSATION_HAS_NO_ROLE"
+
+            # 拒绝必须发生在持久化用户消息和创建生成任务之前，避免留下无回复的半成品。
+            async with SessionLocal() as session:
+                message_count = await session.scalar(
+                    select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
+                )
+                generation_count = await session.scalar(
+                    select(func.count(Generation.id)).where(Generation.conversation_id == conversation_id)
+                )
+            assert message_count == 0
+            assert generation_count == 0
 
 
 @pytest.mark.anyio

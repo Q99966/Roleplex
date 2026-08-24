@@ -46,6 +46,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
     if (!activeConv) return []
     return roles.filter((role) => activeConv.role_ids.includes(role.id))
   }, [activeConv, roles])
+  const hasReplyRole = memberRoles.some((role) => role.active && !role.deleted_at)
 
   const orchestrator = useMemo(() => {
     if (!activeConv?.orchestrator_enabled || !activeConv.orchestrator_role_id) return null
@@ -63,6 +64,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
 
   function submit(event: React.FormEvent) {
     event.preventDefault()
+    if (!hasReplyRole) return
     const text = draft
     setDraft('')
     void sendMessage(text)
@@ -192,13 +194,20 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
         </div>
 
         <form onSubmit={submit} className="p-4 border-t border-slate-800 bg-slate-900">
+          {!hasReplyRole && (
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+              <AlertCircle size={13} className="shrink-0" />
+              <span>角色已删除，当前会话仅可查看历史消息。</span>
+            </div>
+          )}
           <div className="flex items-center gap-2 rounded-xl bg-slate-950/80 p-2.5 border border-slate-800 focus-within:border-indigo-500/40 transition-all">
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="输入消息，回车发送…"
+              disabled={!hasReplyRole}
+              placeholder={hasReplyRole ? '输入消息，回车发送…' : '角色已删除，无法继续发送'}
               aria-label="消息输入框"
-              className="w-full bg-transparent text-sm text-slate-200 outline-none placeholder:text-slate-600"
+              className="w-full bg-transparent text-sm text-slate-200 outline-none placeholder:text-slate-600 disabled:cursor-not-allowed disabled:text-slate-600"
             />
             <div className="flex items-center gap-1 shrink-0">
               {generating ? (
@@ -212,7 +221,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
               ) : (
                 <button
                   type="submit"
-                  disabled={sending || !draft.trim()}
+                  disabled={sending || !draft.trim() || !hasReplyRole}
                   aria-label="发送消息"
                   className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition ml-1"
                 >

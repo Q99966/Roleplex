@@ -6,7 +6,7 @@
 用法（在 backend 目录，需先在 .env 或环境变量里配置凭据）：
     python scripts/seed_dev_provider.py
 
-之后用 `AGENT_USE_FAKE_PROVIDER=false` 启动后端，即可让该角色走真实厂商。
+正常启动默认走真实厂商；仅在显式设置 `AGENT_USE_FAKE_PROVIDER=true` 时使用假回应。
 """
 from __future__ import annotations
 
