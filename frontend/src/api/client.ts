@@ -36,6 +36,9 @@ export type Message = { id: number; conversation_id: number; sender_type: string
 export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
 export type MessageHistory = { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null }
 export type SendMessageResult = { message: Message; generation_id: number | null; duplicate: boolean }
+export type HealthStatus = { status: string; stream_epoch: string; world_name: string; world_managed: boolean }
+export type WorldSummary = { name: string; current: boolean; created_at: string }
+export type WorldList = { current: string; switching_supported: boolean; items: WorldSummary[] }
 
 /** 服务端事件信封；未知事件类型必须被客户端安全忽略。 */
 export type StreamEvent = {
@@ -122,10 +125,17 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const api = {
+  health: () => request<HealthStatus>('/api/health'),
   register: (body: { username: string; password: string; nickname: string }) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   login: (body: { username: string; password: string }) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   me: () => request<User>('/api/auth/me'),
   changePassword: (body: { current_password: string; new_password: string }) => request<AuthResult>('/api/auth/password', { method: 'POST', body: JSON.stringify(body) }),
+
+  // 世界存档：列表仅 Owner 可读，切换必须由包装器托管后端。
+  worlds: () => request<WorldList>('/api/worlds'),
+  switchWorld: (name: string) => request<{ target: string; restarting: boolean }>('/api/worlds/switch', {
+    method: 'POST', body: JSON.stringify({ name }),
+  }),
 
   // 角色管理 API
   roles: () => request<Role[]>('/api/roles'),

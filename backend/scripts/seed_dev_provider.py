@@ -40,9 +40,11 @@ async def seed() -> int:
     """创建或更新开发用模型配置与角色，返回进程退出码。"""
     from sqlalchemy import select
 
+    from app.config import settings
     from app.db import SessionLocal, init_db
     from app.models import InstanceSettings, ModelConfig, Role
     from app.security import encrypt_api_key
+    from app.worlds import WorldManager
 
     api_key = os.environ.get("ROLEPLEX_CONTRACT_OPENAI_KEY", "")
     model_name = os.environ.get("ROLEPLEX_CONTRACT_OPENAI_MODEL", "")
@@ -51,6 +53,12 @@ async def seed() -> int:
         print("缺少 ROLEPLEX_CONTRACT_OPENAI_KEY 或 ROLEPLEX_CONTRACT_OPENAI_MODEL")
         return 1
 
+    if settings.world_managed:
+        manager = WorldManager(settings.worlds_dir)
+        manager.ensure(settings.world_name)
+        if manager.is_active(settings.world_name):
+            print("当前世界正在运行，请先停止后端再播种真实 provider")
+            return 1
     await init_db()
     now = datetime.now(timezone.utc)
     async with SessionLocal() as session:

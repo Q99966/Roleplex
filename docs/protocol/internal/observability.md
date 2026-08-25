@@ -49,6 +49,7 @@ HTTP、依赖、路由与 `asyncio.create_task` 通过 `contextvars` 继承上�
   `generation.failed`、`generation.stopped`、`generation.task_unhandled`。
 - WebSocket：`ws.accepted`、`ws.authenticated`、`ws.auth_rejected`、`ws.subscribed`、
   `ws.subscription_rejected`、`ws.closed_before_auth`、`ws.disconnected`。
+- 世界生命周期：`world.starting`、`world.switch_requested`，均记录源/目标或当前世界名和托管模式。
 
 流式过程不逐 token 记录。开始和终态日志使用 `stream_epoch`、`event_seq`、`message_revision`、
 `delta_seq`/`delta_count` 形成摘要；订阅日志记录恢复方式、客户端游标、最新事件序号和 backlog 数量。

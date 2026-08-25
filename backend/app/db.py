@@ -104,8 +104,17 @@ async def run_migrations() -> None:
     迁移在工作线程中执行，因为 alembic 的在线迁移会自行启动事件循环。
     """
     from alembic import command
+    from alembic.util.exc import CommandError
+    from .worlds.compatibility import WorldRequiresNewerRoleplex
 
-    await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
+    try:
+        await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
+    except CommandError as exc:
+        if "Can't locate revision identified by" in str(exc):
+            raise WorldRequiresNewerRoleplex(
+                "这个世界来自更新版本的 Roleplex，请升级软件后再打开；世界数据没有被修改。"
+            ) from None
+        raise
 
 
 async def ensure_instance_settings() -> None:

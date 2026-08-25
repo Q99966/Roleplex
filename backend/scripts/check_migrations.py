@@ -9,6 +9,7 @@
    任何差异都说明有 schema 变更没有写进迁移；
 3. 以 PostgreSQL 方言渲染离线 SQL，确认迁移不含只在 SQLite 可用的写法。
    该步骤不连接数据库、也不加载 app.db，因此本机无需安装 PostgreSQL 驱动。
+4. 核对 SQLite batch 重建后的外键仍指向正确表，且 `foreign_key_check` 无违规。
 """
 from __future__ import annotations
 
@@ -61,6 +62,43 @@ def compare_with_metadata(sqlite_path: Path) -> list[object]:
         engine.dispose()
 
 
+def check_sqlite_foreign_keys(sqlite_path: Path) -> list[str]:
+    """核对被 0003 batch 重建影响的外键定义和现存数据。
+
+    Args:
+        sqlite_path：已经升级到 head 的 SQLite 数据库。
+
+    Returns:
+        发现的问题列表；空列表表示引用与数据均完整。
+    """
+    from sqlalchemy import create_engine
+
+    expected = {
+        "conversations": {("orchestrator_role_id", "roles")},
+        "tool_calls": {("role_id", "roles")},
+    }
+    failures: list[str] = []
+    engine = create_engine(f"sqlite:///{sqlite_path.as_posix()}")
+    try:
+        with engine.connect() as connection:
+            # 新连接默认同迁移引擎一样为 OFF；这里检查的是迁移后的 schema，不改变前提。
+            pragma = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
+            if pragma != 0:
+                failures.append(f"迁移等价连接的 foreign_keys 应为 0，实际为 {pragma}")
+            for table, required in expected.items():
+                rows = connection.exec_driver_sql(f"PRAGMA foreign_key_list({table})").all()
+                actual = {(row[3], row[2]) for row in rows}
+                missing = required - actual
+                if missing:
+                    failures.append(f"{table} 缺少外键引用：{sorted(missing)}")
+            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+            if violations:
+                failures.append(f"foreign_key_check 发现违规：{violations}")
+    finally:
+        engine.dispose()
+    return failures
+
+
 def render_postgres_sql() -> str:
     """按 PostgreSQL 方言离线渲染整条迁移链，返回渲染出的 SQL 文本。
 
@@ -109,6 +147,13 @@ def main() -> int:
             failures.extend(f"    {diff}" for diff in diffs)
         else:
             print("[ok] 迁移结果与 ORM metadata 一致")
+
+        foreign_key_failures = check_sqlite_foreign_keys(Path(tmp) / "migrate-check.db")
+        if foreign_key_failures:
+            failures.append("[fail] SQLite 外键完整性：")
+            failures.extend(f"    {failure}" for failure in foreign_key_failures)
+        else:
+            print("[ok] SQLite batch 重建后的外键完整")
 
         downgraded = run_alembic(url, "downgrade", "base")
         if downgraded.returncode != 0:

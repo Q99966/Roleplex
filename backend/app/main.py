@@ -16,9 +16,11 @@ from .realtime import events
 from .realtime.events import EventHub
 from .errors import http_error_handler, validation_error_handler
 from .config.logging import configure_logging, log_context
-from .routers import artifacts, auth, conversations, messages, model_configs, roles
+from .routers import artifacts, auth, conversations, messages, model_configs, roles, worlds
 from .services import retention
 from .realtime.websocket import router as ws_router
+from .worlds import WorldManager
+from .worlds.compatibility import assert_world_compatible
 
 configure_logging(
     settings.log_dir,
@@ -38,11 +40,25 @@ async def lifespan(_app: FastAPI):
     启动是唯一的清理时机（理由见 `services/retention.py`）。
     """
     events.hub = EventHub()
-    await init_db()
-    await retention.purge_expired_on_startup()
-    yield
-    events.hub = None
-    await close_db()
+    world_manager: WorldManager | None = None
+    if settings.world_managed:
+        world_manager = WorldManager(settings.worlds_dir)
+        world = world_manager.ensure(settings.world_name)
+        assert_world_compatible(world.database_path)
+        world_manager.acquire(settings.world_name)
+    try:
+        logger.info(
+            "world.starting",
+            extra={"world_name": settings.world_name, "world_managed": settings.world_managed},
+        )
+        await init_db()
+        await retention.purge_expired_on_startup()
+        yield
+    finally:
+        events.hub = None
+        await close_db()
+        if world_manager is not None:
+            world_manager.release(settings.world_name)
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
@@ -91,10 +107,16 @@ app.include_router(roles.router)
 app.include_router(conversations.router)
 app.include_router(messages.router)
 app.include_router(artifacts.router)
+app.include_router(worlds.router)
 app.include_router(ws_router)
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, str | bool]:
     """报告进程可用性和当前事件 epoch。"""
-    return {"status": "ok", "stream_epoch": events.current_epoch()}
+    return {
+        "status": "ok",
+        "stream_epoch": events.current_epoch(),
+        "world_name": settings.world_name,
+        "world_managed": settings.world_managed,
+    }

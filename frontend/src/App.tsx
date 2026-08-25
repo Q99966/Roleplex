@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PanelLeftOpen } from 'lucide-react'
+import { Globe2, PanelLeftOpen } from 'lucide-react'
 import { useAppStore } from './store/app'
 import { type Role } from './api/client'
 import { AuthScreen } from './components/AuthScreen'
@@ -19,7 +19,7 @@ if (typeof document !== 'undefined') {
 
 /** 启动已认证的工作台；没有会话时显示空状态。 */
 export function App() {
-  const { user, passwordResetRequired, loading, bootstrap, activeConversationId, setActiveConversation } = useAppStore()
+  const { user, passwordResetRequired, loading, bootstrap, activeConversationId, setActiveConversation, switchingWorld } = useAppStore()
   
   const [view, setView] = useState<'landing' | 'auth'>('landing')
   const [currentHash, setCurrentHash] = useState(typeof window !== 'undefined' ? window.location.hash || '#/' : '#/')
@@ -166,7 +166,19 @@ export function App() {
       
       {/* 桌面宠物悬浮层 */}
       <WebPet />
+
+      {switchingWorld && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 px-6" role="status" aria-live="polite">
+          <div className="w-full max-w-md rounded-2xl border border-indigo-500/30 bg-slate-900 p-7 text-center shadow-2xl shadow-indigo-950/50">
+            <Globe2 className="mx-auto text-indigo-400" size={32} />
+            <h2 className="mt-4 text-lg font-bold text-white">正在进入世界“{switchingWorld}”</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">后端正在安全重启。世界密钥彼此隔离，完成后需要重新登录。</p>
+            <div className="mx-auto mt-5 h-1.5 w-48 overflow-hidden rounded-full bg-slate-800">
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-indigo-500" />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
-

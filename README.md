@@ -15,6 +15,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
+- 多世界物理存档、CLI 一致性备份与包装器热切换；每个世界独立数据库和密钥
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
 
@@ -37,7 +38,7 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 ```powershell
 cd backend
 python scripts/seed_dev_provider.py
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python scripts/run_world_server.py --world default --host 0.0.0.0 --port 8000
 ```
 
 脚本会把凭据按产品同一条路径加密落库，并创建/更新开发用的模型配置与角色；不打印任何 Key。
@@ -82,7 +83,7 @@ npm run test:e2e:real
 - 真实 API 端到端：`data/roleplex-real-e2e-<时间戳>.db`（仅显式运行 `test:e2e:real` 时产生）
 
 测试账号与本轮数据库同名可追溯：Owner 为 `test<时间戳>`，Guest 为 `test<时间戳>_<用途>`，
-密码统一是 `Roleplex-Test-1234`。想查看某轮测试产生的数据，把后端指向那个库启动即可登录查看：
+密码统一是 `Roleplex-Test-1234`。想查看某轮测试产生的数据，可以让后端显式连接那一个数据库：
 
 WSL / Linux（Bash）：
 
@@ -106,6 +107,62 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 这些库只用于本地排查，密码是无实际价值的固定占位值，不要把该口令用于任何真实环境。
+这里直接运行 Uvicorn 是有意的：显式 `DATABASE_URL` 会进入单库兼容模式，只用于查看该轮测试结果，
+世界切换控件会禁用。正常开发和产品运行统一使用下文的世界包装器。
+
+### 世界存档与切换
+
+正常运行默认使用 `worlds/default/`，其中包含数据库、JWT 密钥、模型 Key 加密密钥和附件目录。
+每个世界都是可以单独备份、移动的物理目录。首次启用前，如果已有旧的 `data/roleplex.db`，先在
+后端停止状态下接管；接管使用一致性复制并保留原目录作为回退：
+
+```bash
+cd backend
+python scripts/manage_worlds.py adopt default
+```
+
+常用命令：
+
+```bash
+python scripts/manage_worlds.py list
+python scripts/manage_worlds.py create another-world
+python scripts/manage_worlds.py backup default --output ../backups
+python scripts/manage_worlds.py delete another-world --yes
+```
+
+备份 ZIP 包含可解密模型 Key 的世界密钥，必须按敏感数据保管。删除命令不可恢复，拒绝删除当前世界，
+且必须显式传入 `--yes`。
+
+要在界面中切换世界，后端必须通过包装器启动；直接运行 Uvicorn 时仍可使用当前世界，但切换控件禁用：
+
+```bash
+cd backend
+python scripts/run_world_server.py --world default --host 0.0.0.0 --port 8000
+```
+
+前端仍按原方式另开终端运行。切换时包装器会重启后端；不同世界的 JWT 密钥彼此独立，因此前端会
+清除旧 Token 并要求重新登录。`ROLEPLEX_WORLD` 可指定启动世界，`WORLDS_DIR` 可覆盖世界根目录。
+显式 `DATABASE_URL` 的优先级最高，会进入兼容模式，pytest、普通 E2E 和人工检查测试库的命令不变。
+
+普通 pytest、普通 E2E 和真实 API E2E 继续使用显式的独立数据库，避免短生命周期测试数据出现在正式
+世界列表中。专门验证 A1 切换链路的 `npm run test:e2e:worlds` 会创建真正的 alpha/beta 物理世界，
+但放在带时间戳的 `data/roleplex-world-e2e-*/` 隔离目录中并只保留最近五轮，不写入正式 `worlds/`。
+要人工查看其中一轮，在 `backend` 目录把包装器的世界根目录指向该轮目录即可：
+
+```bash
+python scripts/run_world_server.py \
+  --world alpha \
+  --worlds-dir ../data/roleplex-world-e2e-<时间戳> \
+  --host 0.0.0.0 --port 8000
+```
+
+启动后界面可在 alpha/beta 间切换。两个世界的测试 Owner 都是 `test<时间戳>`，密码为
+`Roleplex-Test-1234`。这里的 `../data` 是相对于 `backend` 的仓库数据目录；写成 `data/...` 会错误地
+指向 `backend/data/...`。
+
+旧世界由新软件打开时自动执行 Alembic 向前迁移；世界的迁移 revision 或格式版本高于当前软件时，
+启动会只读阻断并提示升级，不会 stamp、降级或修改世界数据。接口契约见
+`docs/protocol/public/rest/worlds.md`。
 
 ### 日志与排障
 
@@ -164,7 +221,7 @@ conda activate roleplex
 cd backend
 python --version
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python scripts/run_world_server.py --world default --host 0.0.0.0 --port 8000
 ```
 
 如果本机还没有 `roleplex` Conda 环境，可以先创建与当前验证环境一致的 Python 3.12 环境：
@@ -182,13 +239,17 @@ npm install
 npm run dev
 ```
 
-首次注册的账号是 Owner。运行数据写入 `data/`，API Key 使用实例密钥加密，密钥文件不应提交到 Git。
+每个世界首次注册的账号是该世界 Owner。正常运行数据写入 `worlds/<世界名>/`；显式测试数据库仍写入
+`data/`。API Key 使用所在世界的实例密钥加密，世界目录和密钥文件都不应提交到 Git。
 
 ## 数据库迁移边界
 
-业务代码只使用 SQLAlchemy 通用类型和 ORM，数据库 URL 由 `DATABASE_URL` 配置。SQLite 适合 P1 单进程开发；需要多 worker 或常态化多人并发时切 PostgreSQL。迁移前运行测试并使用 Alembic 重放 schema，再导入存量数据。
+业务代码只使用 SQLAlchemy 通用类型和 ORM。正常数据库地址由当前世界目录推导，显式
+`DATABASE_URL` 仅用于测试与兼容模式。SQLite 适合 P1 单进程开发；需要多 worker 或常态化多人并发时切 PostgreSQL。迁移前运行测试并使用 Alembic 重放 schema，再导入存量数据。
 
-表结构只由 Alembic 迁移创建：后端启动时自动执行 `alembic upgrade head`，因此新库会被记录迁移版本，已有库会拿到新增字段。开发阶段如果数据库早于迁移体系创建（没有 `alembic_version`），升级会失败，直接删除 `data/*.db` 重建即可。
+表结构只由 Alembic 迁移创建：后端启动时自动执行 `alembic upgrade head`，因此新世界会记录迁移版本，
+旧世界会自动向前升级。开发阶段如果某个显式测试数据库早于迁移体系创建（没有 `alembic_version`），
+可删除该测试数据库重跑；世界数据不得用删除重建代替正常迁移。
 
 修改表结构后在 `backend` 目录运行迁移检查：
 

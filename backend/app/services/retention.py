@@ -17,7 +17,7 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import DATA_DIR
+from ..config import settings
 from ..db import SessionLocal
 from ..models import Attachment, Conversation, Message
 
@@ -43,7 +43,7 @@ def _resolve_attachment_path(stored: str) -> Path:
         stored：附件表中记录的路径，可能是相对于数据目录的相对路径。
     """
     path = Path(stored)
-    return path if path.is_absolute() else DATA_DIR / path
+    return path if path.is_absolute() else settings.storage_dir / path
 
 
 async def purge_expired_conversations(session: AsyncSession, now: datetime | None = None) -> dict[str, int]:

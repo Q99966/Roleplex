@@ -4,6 +4,6 @@
 隐式创建 handler 或日志文件。
 """
 
-from .settings import DATA_DIR, LOG_DIR, ROOT_DIR, Settings, settings
+from .settings import DATA_DIR, LOG_DIR, ROOT_DIR, WORLDS_DIR, Settings, settings
 
-__all__ = ["DATA_DIR", "LOG_DIR", "ROOT_DIR", "Settings", "settings"]
+__all__ = ["DATA_DIR", "LOG_DIR", "ROOT_DIR", "WORLDS_DIR", "Settings", "settings"]

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { 
   Bot, MessageCircle, Plus, Search, Users, WandSparkles, 
-  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose, Sparkles
+  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose, Sparkles, Globe2
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { usePetStore } from '../store/pet'
@@ -20,7 +20,8 @@ interface SidebarProps {
 
 /** 侧边栏组件。 */
 export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal, onOpenRecycleBin }: SidebarProps) {
-  const { conversations, activeConversationId, roles, user, logout } = useAppStore()
+  const { conversations, activeConversationId, roles, user, logout, worldName, worlds, worldSwitchingSupported, switchingWorld } = useAppStore()
+  const switchWorld = useAppStore((state) => state.switchWorld)
   const [searchTerm, setSearchTerm] = useState('')
   const [failedAvatars, setFailedAvatars] = useState<number[]>([])
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
@@ -65,6 +66,36 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
             <PanelLeftClose size={18} />
           </button>
         </div>
+      </div>
+
+      <div className="border-b border-slate-800/80 px-4 py-3">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+          <Globe2 size={14} className="shrink-0 text-indigo-400" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-xs font-semibold text-slate-200">{worldName}</span>
+              <span className="text-[9px] uppercase tracking-wider text-slate-600">世界</span>
+            </div>
+            <select
+              aria-label="切换世界"
+              value={worldName}
+              disabled={!user?.is_owner || !worldSwitchingSupported || Boolean(switchingWorld)}
+              onChange={(event) => {
+                const target = event.target.value
+                if (target !== worldName && confirm(`切换到世界“${target}”并重新登录吗？`)) {
+                  void switchWorld(target)
+                }
+              }}
+              className="mt-1 w-full bg-transparent text-[11px] text-slate-400 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {!worlds.some((world) => world.name === worldName) && <option value={worldName}>{worldName}</option>}
+              {worlds.map((world) => <option key={world.name} value={world.name}>{world.name}</option>)}
+            </select>
+          </div>
+        </div>
+        {!worldSwitchingSupported && (
+          <p className="mt-1.5 px-1 text-[10px] text-slate-600">需使用世界包装器启动</p>
+        )}
       </div>
 
       {/* 搜索栏 */}
