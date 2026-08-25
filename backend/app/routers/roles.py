@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..models import ModelConfig, Role, User
 from ..schemas import RoleCreate, RoleResponse
-from ..security import get_current_user, require_owner
+from ..security.tokens import get_current_user, require_owner
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])
 

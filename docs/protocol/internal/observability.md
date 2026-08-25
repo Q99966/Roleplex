@@ -4,7 +4,7 @@
 - 状态：已实现
 - 协议版本：4
 - 维护者：Roleplex
-- 事实来源：`backend/app/logging_config.py`、`backend/app/main.py`、`backend/app/services/chat.py`、`backend/app/ws.py`
+- 事实来源：`backend/app/config/logging.py`、`backend/app/main.py`、`backend/app/services/chat.py`、`backend/app/realtime/websocket.py`
 - 复核日期：2026-08-24
 
 ## 输出与轮转
@@ -68,9 +68,9 @@ HTTP、依赖、路由与 `asyncio.create_task` 通过 `contextvars` 继承上�
 
 ## 关联代码与测试
 
-- 格式、过滤与配置：`backend/app/logging_config.py`
+- 格式、过滤与配置：`backend/app/config/logging.py`
 - HTTP middleware 与响应头：`backend/app/main.py`
 - 后台任务与流式摘要：`backend/app/services/chat.py`
-- WebSocket 生命周期：`backend/app/ws.py`
+- WebSocket 生命周期：`backend/app/realtime/websocket.py`
 - 回归测试：`backend/tests/test_logging.py`、`backend/tests/test_chat_flow.py`、
   `backend/tests/test_ws_recovery.py`、`frontend/tests/m2-chat.spec.ts`

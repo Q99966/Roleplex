@@ -6,7 +6,7 @@
 | 状态 | 已实现（单聊事件；成员、会话状态与正在输入事件未实现） |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/ws.py`、`backend/app/events.py`、`backend/app/services/event_store.py` |
+| 事实来源 | `backend/app/realtime/websocket.py`、`backend/app/realtime/events.py`、`backend/app/realtime/store.py` |
 | 关联测试 | `backend/tests/test_ws_recovery.py` |
 | 复核日期 | 2026-08-14 |
 

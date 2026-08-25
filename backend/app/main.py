@@ -12,13 +12,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .db import close_db, init_db
-from .events import EventHub
-from . import events
+from .realtime import events
+from .realtime.events import EventHub
 from .errors import http_error_handler, validation_error_handler
-from .logging_config import configure_logging, log_context
+from .config.logging import configure_logging, log_context
 from .routers import artifacts, auth, conversations, messages, model_configs, roles
 from .services import retention
-from .ws import router as ws_router
+from .realtime.websocket import router as ws_router
 
 configure_logging(
     settings.log_dir,

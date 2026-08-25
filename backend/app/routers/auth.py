@@ -9,18 +9,16 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import password_policy
+from ..security import passwords as password_policy
 from ..db import get_session
-from ..logging_config import current_request_id, set_log_context
+from ..config.logging import current_request_id, set_log_context
 from ..models import InstanceSettings, User
-from ..password_policy import PasswordPolicyError
+from ..security.passwords import PasswordPolicyError, hash_password, verify_password
 from ..schemas import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from ..security import (
+from ..security.tokens import (
     create_access_token,
     get_current_user,
     get_current_user_pending_password_reset,
-    hash_password,
-    verify_password,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])

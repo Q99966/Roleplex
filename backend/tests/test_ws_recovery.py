@@ -125,7 +125,7 @@ async def test_disconnect_before_auth_is_not_an_error():
     页面刷新或快速切换会话时，连接可能刚握手完就被关掉。此时服务端若仍去发送关闭帧，
     ASGI 层会拒绝并抛错，把一次正常断开变成带堆栈的 ERROR 噪声。
     """
-    from app.ws import conversation_stream
+    from app.realtime.websocket import conversation_stream
 
     socket = _AbortedWebSocket()
     await conversation_stream(socket)

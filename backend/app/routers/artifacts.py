@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..models import Artifact, ArtifactVersion, ConversationMember, User
-from ..security import get_current_user
+from ..security.tokens import get_current_user
 
 router = APIRouter(prefix="/api/artifacts", tags=["artifacts"])
 

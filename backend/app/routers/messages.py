@@ -9,12 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..events import current_epoch
+from ..realtime.events import current_epoch
 from ..models import Conversation, ConversationMember, Generation, Message, User
-from ..logging_config import set_log_context
+from ..config.logging import set_log_context
 from ..schemas import MessageCreate
-from ..security import get_current_user
-from ..services import chat, event_store
+from ..security.tokens import get_current_user
+from ..realtime import store as event_store
+from ..services import chat
 
 logger = logging.getLogger("roleplex.messages")
 router = APIRouter(prefix="/api/conversations", tags=["messages"])

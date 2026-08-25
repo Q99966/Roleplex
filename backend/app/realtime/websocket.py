@@ -8,15 +8,17 @@ import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from ..config import settings
+from ..config.logging import log_context, set_log_context
+from ..db import SessionLocal
+from ..models import Conversation, ConversationMember, User
+from ..security.tokens import token_requires_password_reset
+from ..services import chat
 from . import events as events_module
-from .config import settings
-from .db import SessionLocal
+from . import store as event_store
 from .events import current_epoch
-from .models import Conversation, ConversationMember, User
-from .logging_config import log_context, set_log_context
-from .security import token_requires_password_reset
-from .services import chat, event_store
 
+# logger 名称属于既有排障查询条件，文件移动不应改变可观测字段。
 logger = logging.getLogger("roleplex.ws")
 router = APIRouter()
 

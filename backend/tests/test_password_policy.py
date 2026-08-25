@@ -65,7 +65,7 @@ def _create_weak_password_user(username: str) -> None:
 
 def test_policy_rejects_short_missing_category_and_overlong_passwords():
     """策略模块本身覆盖长度、字符类别和 bcrypt 字节上限。"""
-    from app import password_policy
+    from app.security import passwords as password_policy
 
     assert password_policy.is_compliant("Roleplex-Test-1234")
     # 缺符号、缺数字、缺字母、长度不足各自都必须被判为不合规。

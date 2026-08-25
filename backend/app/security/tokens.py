@@ -3,58 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .config import settings
-from .db import get_session
-from .models import User
-from .logging_config import set_log_context
+from ..config import settings
+from ..config.logging import set_log_context
+from ..db import get_session
+from ..models import User
 
 bearer = HTTPBearer(auto_error=False)
-
-
-def hash_password(password: str) -> str:
-    """对用户密码进行哈希，且不保留明文。
-
-    Args:
-        password：仅在认证输入阶段接收的明文密码。
-
-    Returns:
-        适合存入数据库的 bcrypt 编码密码哈希。
-    """
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    """使用已存储的 bcrypt 哈希校验候选密码。"""
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
-
-
-def _fernet() -> Fernet:
-    """构造用于模型厂商 API Key 的认证加密器。"""
-    secret = settings.resolved_api_key_secret().encode()
-    # Fernet 需要 32 字节的 URL 安全 Base64 密钥，这里根据实例密钥确定性派生。
-    import base64
-    import hashlib
-    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret).digest()))
-
-
-def encrypt_api_key(value: str) -> str:
-    """在厂商 Key 写入数据库前进行加密。"""
-    return _fernet().encrypt(value.encode()).decode()
-
-
-def decrypt_api_key(value: str) -> str:
-    """仅为已授权的内部集成解密厂商 Key。"""
-    try:
-        return _fernet().decrypt(value.encode()).decode()
-    except InvalidToken as exc:
-        raise ValueError("无法解密模型厂商 API Key") from exc
 
 
 # Token 中标记"该用户必须先改密"的声明名；旧 Token 没有该字段时按不需要改密处理。

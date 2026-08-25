@@ -34,7 +34,7 @@ def _record(message: str) -> logging.LogRecord:
 
 def test_json_formatter_includes_context_and_safe_extra_fields():
     """JSONL 日志保留链路与业务字段，同时剔除敏感键。"""
-    from app.logging_config import JsonFormatter, log_context
+    from app.config.logging import JsonFormatter, log_context
 
     formatter = JsonFormatter(run_kind="e2e-real")
     logger = logging.getLogger("roleplex.test.logging")
@@ -94,7 +94,7 @@ def test_json_formatter_includes_context_and_safe_extra_fields():
 
 def test_each_start_creates_a_timestamped_file_in_run_kind_folder(tmp_path: Path):
     """每次进程启动都新建文件，即使两个进程恰好在同一秒启动也不续写旧文件。"""
-    from app.logging_config import JsonFormatter, SessionRotatingFileHandler
+    from app.config.logging import JsonFormatter, SessionRotatingFileHandler
 
     clock = _Clock()
     first = SessionRotatingFileHandler(tmp_path, "unit", clock=clock)
@@ -121,7 +121,7 @@ def test_each_start_creates_a_timestamped_file_in_run_kind_folder(tmp_path: Path
 
 def test_log_segment_rotates_on_hour_or_size_limit(tmp_path: Path):
     """时间和大小任一条件先达到，都必须在写入下一条记录前切换文件。"""
-    from app.logging_config import JsonFormatter, SessionRotatingFileHandler
+    from app.config.logging import JsonFormatter, SessionRotatingFileHandler
 
     time_clock = _Clock()
     time_handler = SessionRotatingFileHandler(tmp_path / "time", "e2e-fake", max_seconds=3600, clock=time_clock)
@@ -150,7 +150,7 @@ def test_log_segment_rotates_on_hour_or_size_limit(tmp_path: Path):
 
 def test_log_segment_moves_to_new_day_folder_at_midnight(tmp_path: Path):
     """跨过本地午夜时立即切片，次日记录不能留在前一天目录。"""
-    from app.logging_config import JsonFormatter, SessionRotatingFileHandler
+    from app.config.logging import JsonFormatter, SessionRotatingFileHandler
 
     clock = _Clock()
     clock.current = datetime(2026, 8, 24, 23, 59, 30, tzinfo=timezone(timedelta(hours=8)))

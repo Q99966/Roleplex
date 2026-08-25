@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..models import ModelConfig, User
 from ..schemas import ModelConfigCreate, ModelConfigResponse
-from ..security import encrypt_api_key, require_owner
+from ..security.credentials import encrypt_api_key
+from ..security.tokens import require_owner
 
 router = APIRouter(prefix="/api/model-configs", tags=["model-configs"])
 

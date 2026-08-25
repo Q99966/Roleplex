@@ -1,4 +1,4 @@
-"""密码策略：本项目关于"什么样的密码可用"的唯一权威。
+"""密码策略与哈希：本项目关于密码可用性和存储方式的唯一权威。
 
 注册、改密和登录时的弱密码判定必须全部经过本模块，避免同一规则在
 schema、路由和前端各写一份而互相漂移。前端可以复制这里的规则做实时提示，
@@ -16,6 +16,8 @@ schema、路由和前端各写一份而互相漂移。前端可以复制这里�
 from __future__ import annotations
 
 import string
+
+import bcrypt
 
 # 长度按字符计：面向用户的"至少 10 位"应该对中文和 emoji 有一致含义。
 MIN_LENGTH = 10
@@ -47,6 +49,23 @@ class PasswordPolicyError(ValueError):
     def __init__(self, reasons: list[str]) -> None:
         self.reasons = reasons
         super().__init__("；".join(reasons))
+
+
+def hash_password(password: str) -> str:
+    """对用户密码进行哈希，且不保留明文。
+
+    Args:
+        password：仅在认证输入阶段接收的明文密码。
+
+    Returns:
+        适合存入数据库的 bcrypt 编码密码哈希。
+    """
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """使用已存储的 bcrypt 哈希校验候选密码。"""
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
 def check(password: str) -> list[str]:

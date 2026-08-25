@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 class RegisterRequest(BaseModel):
     """注册请求；密码只作为写入参数接收，不会回显。
 
-    密码规则不写在这里：长度和字符类别由 `password_policy` 统一判定，
+    密码规则不写在这里：长度和字符类别由 `security.passwords` 统一判定，
     以便注册和改密返回同一个稳定错误码，而不是笼统的参数校验错。
     此处的 `max_length` 只是防止超大请求体的外层护栏，正常不合规密码
     会先被策略拦下。

@@ -12,7 +12,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from ..models import ModelConfig, Role
-from ..security import decrypt_api_key
+from ..security.credentials import decrypt_api_key
 
 logger = logging.getLogger("roleplex.agent.provider")
 

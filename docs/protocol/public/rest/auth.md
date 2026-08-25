@@ -6,7 +6,7 @@
 | 状态 | 已实现 |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/routers/auth.py`、`backend/app/password_policy.py`、`backend/app/security.py`、`backend/app/schemas.py` |
+| 事实来源 | `backend/app/routers/auth.py`、`backend/app/security/passwords.py`、`backend/app/security/tokens.py`、`backend/app/security/credentials.py`、`backend/app/schemas.py` |
 | 关联测试 | `backend/tests/test_password_policy.py`、`frontend/tests/m1-workspace.spec.ts` |
 | 复核日期 | 2026-08-20 |
 
@@ -32,7 +32,7 @@ WebSocket 通过首帧传递令牌，不得放入查询参数：
 
 ## 密码策略
 
-服务端 `backend/app/password_policy.py` 是唯一权威，注册与改密共用同一套校验：
+服务端 `backend/app/security/passwords.py` 是唯一权威，注册与改密共用同一套校验：
 
 | 要求 | 说明 |
 |---|---|

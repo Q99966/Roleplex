@@ -11,13 +11,13 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
-from ..logging_config import set_log_context
+from ..config.logging import set_log_context
 from ..agent import providers
 from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
-from . import event_store
+from ..realtime import store as event_store
 
 logger = logging.getLogger("roleplex.chat")
 

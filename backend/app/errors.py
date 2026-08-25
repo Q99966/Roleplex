@@ -6,7 +6,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .logging_config import current_request_id
+from .config.logging import current_request_id
 
 
 async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:

@@ -5,10 +5,10 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import events
 from ..db import now_utc
-from ..events import DomainEvent
 from ..models import Conversation, EventLog
+from . import events
+from .events import DomainEvent
 
 
 async def append_event(

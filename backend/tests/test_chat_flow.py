@@ -37,7 +37,7 @@ async def test_single_chat_streams_and_persists():
     """发送消息后 fake 生成应完成，并留下事件序列及明确为空的用量日志。"""
     from app.main import app
     from app.db import SessionLocal, engine
-    from app.services import event_store
+    from app.realtime import store as event_store
 
     records: list[logging.LogRecord] = []
 
