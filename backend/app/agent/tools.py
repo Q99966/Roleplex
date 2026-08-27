@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Collection, Sequence
 from typing import Any
 
@@ -18,6 +20,14 @@ SAFE_BUILTIN_TOOLS: frozenset[str] = frozenset({"create_artifact", "update_artif
 
 # MCP 工具统一使用该前缀，便于审计与排查；前缀本身不授予任何权限。
 MCP_TOOL_PREFIX = "mcp_"
+
+# 工具审计采用专用允许字段，不从原始参数做“删敏感键后剩余全写”的反向过滤。
+_TOOL_ARG_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "create_artifact": ("kind", "language"),
+    "update_artifact": ("artifact_id", "expected_version"),
+    "read_artifact": ("artifact_id",),
+}
+_SAFE_LABEL = re.compile(r"^[A-Za-z0-9_.+-]{1,32}$")
 
 # 被拒绝的工具结果以该前缀开头，防腐层据此把结束事件标记为 rejected。
 REJECTED_OUTPUT_PREFIX = "[工具被拒绝]"
@@ -102,11 +112,39 @@ def guard_tools(
     return guarded
 
 
-def summarize_args(args: Any, *, limit: int = 200) -> str:
-    """把工具参数压缩为可写入审计的摘要。
+def summarize_tool_args(tool_name: str, args: Any) -> str:
+    """仅提取已登记工具的安全参数；未知/MCP 工具默认不保存任何值。
 
-    审计需要能回答"调了什么工具、大致参数是什么"，但不得保存凭据或敏感原文，
-    因此这里只做截断而不做结构化保存；调用方仍需保证不把凭据放进工具参数。
+    Args:
+        tool_name：领域工具名，用于选择专用允许字段。
+        args：框架提供的原始参数；本函数不会整体序列化它。
     """
-    text = str(args)
-    return text if len(text) <= limit else f"{text[:limit]}…"
+    if not isinstance(args, dict):
+        return "{}"
+    summary: dict[str, int | str] = {}
+    for key in _TOOL_ARG_ALLOWLIST.get(tool_name, ()):
+        value = args.get(key)
+        if key in {"artifact_id", "expected_version"} and isinstance(value, int) and not isinstance(value, bool):
+            summary[key] = value
+        elif key in {"kind", "language"} and isinstance(value, str) and _SAFE_LABEL.fullmatch(value):
+            summary[key] = value
+    return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+
+
+def summarize_tool_output(output: Any) -> str:
+    """只记录输出形态和大小，不序列化工具返回的正文或嵌套值。
+
+    Args:
+        output：工具执行层返回的原始对象。
+    """
+    if isinstance(output, str):
+        summary = {"type": "text", "chars": len(output)}
+    elif isinstance(output, (bytes, bytearray)):
+        summary = {"type": "bytes", "bytes": len(output)}
+    elif isinstance(output, (list, tuple, dict, set)):
+        summary = {"type": type(output).__name__, "items": len(output)}
+    elif output is None:
+        summary = {"type": "none"}
+    else:
+        summary = {"type": type(output).__name__}
+    return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))

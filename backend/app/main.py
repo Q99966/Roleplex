@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from time import perf_counter
 import uuid
@@ -10,12 +12,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .config import settings
+from .config import ROOT_DIR, settings
 from .db import close_db, init_db
 from .realtime import events
 from .realtime.events import EventHub
 from .errors import http_error_handler, validation_error_handler
-from .config.logging import configure_logging, log_context
+from .config.logging import (
+    collect_git_metadata,
+    configure_logging,
+    current_logging_session,
+    log_context,
+    process_stop_reason,
+)
+from .config.log_archive import maintain_logs
 from .routers import artifacts, auth, conversations, messages, model_configs, roles, worlds
 from .services import retention
 from .realtime.websocket import router as ws_router
@@ -28,8 +37,10 @@ configure_logging(
     settings.log_max_bytes,
     settings.log_run_kind,
     settings.log_max_seconds,
+    world_name=settings.world_name,
 )
-logger = logging.getLogger("roleplex.http")
+http_logger = logging.getLogger("roleplex.http")
+lifecycle_logger = logging.getLogger("roleplex.lifecycle")
 
 
 @asynccontextmanager
@@ -46,15 +57,48 @@ async def lifespan(_app: FastAPI):
         world = world_manager.ensure(settings.world_name)
         assert_world_compatible(world.database_path)
         world_manager.acquire(settings.world_name)
+    process_status = "success"
     try:
-        logger.info(
-            "world.starting",
-            extra={"world_name": settings.world_name, "world_managed": settings.world_managed},
+        logging_session = current_logging_session()
+        source = (
+            collect_git_metadata(ROOT_DIR)
+            if logging_session is not None and logging_session.run_kind != "unit"
+            else {}
+        )
+        lifecycle_logger.info(
+            "process.started",
+            extra={
+                "pid": os.getpid(),
+                "backend_version": "0.1.0",
+                **source,
+            },
+        )
+        if settings.log_archive_enabled and settings.log_run_kind == "runtime":
+            try:
+                await asyncio.to_thread(
+                    maintain_logs,
+                    settings.log_dir,
+                    retention_days=settings.log_retention_days,
+                    max_total_bytes=settings.log_max_total_bytes,
+                    compresslevel=settings.log_archive_compresslevel,
+                )
+            except Exception:
+                lifecycle_logger.exception("log.retention_failed", extra={"stage": "startup"})
+        lifecycle_logger.info(
+            "world.starting", extra={"world_managed": settings.world_managed},
         )
         await init_db()
         await retention.purge_expired_on_startup()
         yield
+    except Exception:
+        process_status = "failed"
+        lifecycle_logger.exception("process.failed", extra={"status": "failed"})
+        raise
     finally:
+        lifecycle_logger.info(
+            "process.stopped",
+            extra={"status": process_status, "reason": process_stop_reason()},
+        )
         events.hub = None
         await close_db()
         if world_manager is not None:
@@ -81,23 +125,33 @@ async def request_logging(request, call_next):
     started = perf_counter()
     client = f"{request.client.host}:{request.client.port}" if request.client else None
     with log_context(request_id=request_id):
-        logger.info("http.request_started", extra={"method": request.method, "path": request.url.path, "client": client})
         try:
             response = await call_next(request)
         except Exception:
-            logger.exception(
-                "http.request_failed",
-                extra={"method": request.method, "path": request.url.path, "duration_ms": round((perf_counter() - started) * 1000, 2)},
+            http_logger.exception(
+                "http.failed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": round((perf_counter() - started) * 1000, 2),
+                    "client": client,
+                    "status": "failed",
+                },
             )
             raise
         response.headers["X-Request-ID"] = request_id
-        logger.info(
-            "http.request_completed",
+        route = request.scope.get("route")
+        content_length = response.headers.get("content-length")
+        http_logger.info(
+            "http.completed",
             extra={
                 "method": request.method,
                 "path": request.url.path,
+                "route_template": getattr(route, "path", None),
                 "status_code": response.status_code,
                 "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "client": client,
+                "response_bytes": int(content_length) if content_length and content_length.isdigit() else None,
             },
         )
         return response

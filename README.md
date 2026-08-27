@@ -166,37 +166,49 @@ python scripts/run_world_server.py \
 
 ### 日志与排障
 
-后端启动后会同时输出两份内容一致的日志：终端使用便于阅读的单行格式，机器可检索的
-JSONL 按“日期 → 运行类型 → 片段起始时间”保存：
+后端终端输出便于阅读的单行日志，机器日志按运行/测试职责保存：
 
 ```text
 logs/
-└── 20260824/
-    ├── runtime/20260824153000.jsonl  # 正常开发或产品运行
-    ├── unit/20260824153500.jsonl     # pytest
-    ├── e2e-fake/20260824154000.jsonl # 普通 Playwright，fake provider
-    └── e2e-real/20260824154500.jsonl # 真实 API Playwright
+├── runtime/YYYY-MM-DD/
+│   ├── app.jsonl
+│   ├── agent.jsonl
+│   ├── access.jsonl
+│   └── errors.jsonl
+├── tests/unit/YYYY-MM-DD/
+│   ├── summary.jsonl
+│   └── failures/
+├── tests/e2e/{fake|real}/YYYY-MM-DD/HH-MM-SS_<run-id>/
+│   ├── events.jsonl
+│   ├── errors.jsonl
+│   ├── summary.json
+│   └── artifacts.json
+└── archive/YYYY-MM/*.tar.gz
 ```
 
-每次后端进程启动都会新建文件，不续写上一次运行；单个文件写入跨度达到 1 小时，或下一条日志会使
-文件超过 10 MiB 时，立即以新片段的起始时间创建文件；跨过本地午夜也会切片，保证目录日期准确。
-同一类型在同一秒启动或轮转时使用 `-01`、`-02` 后缀避免覆盖。根路径、级别、大小上限和时间上限
-可分别通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_MAX_SECONDS` 调整，其中大小不能超过
-10 MiB、时间不能超过 3600 秒。
+runtime 同日重启继续追加 active 文件，用进程实例和序号区分；单文件达到 10 MiB、一小时或跨日时，
+关闭为递增且不可再写的 `.001/.002/...` 片段。pytest 全绿只向 summary 追加一行，失败才保存脱敏详情；
+fake/real E2E 每轮独立，世界切换重启仍保持同一 run ID。
+
+前一日及更早日志在 runtime 启动时归档为 tar.gz（gzip level 6），保留 30 天；整个日志树目标上限
+1 GiB，超限时从最旧正式归档开始淘汰。归档经过 manifest、路径、成员类型、大小和 SHA-256 校验，
+删除前后都有结构化审计；当天、活跃、running 和未迁移旧日志不会自动删除。
+可通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_MAX_SECONDS` 调整输出与轮转；归档开关和边界为
+`LOG_ARCHIVE_ENABLED`、`LOG_RETENTION_DAYS`、`LOG_MAX_TOTAL_BYTES`、`LOG_ARCHIVE_COMPRESSLEVEL`。
 
 每个 HTTP 响应都带 `X-Request-ID`；错误信封中的 `request_id` 与它相同。前端报错时可用该值
-串起 `http.request_started`、认证/消息业务事件、后台 `generation.*` 和最终状态。WebSocket 使用
+串起访问、认证/消息业务事件、后台 `generation.*` 和最终状态。WebSocket 使用
 独立的 `ws_connection_id`，并在认证、订阅（含 `conversation_id`）、恢复方式和断开时记录生命周期。
 模型调用结束还会记录 `provider.call_completed`，包含首分片耗时、调用总耗时、输入/输出/总 token
-和缓存命中 token；厂商未提供的数据保持 `null`。
+和缓存命中 token；厂商未提供的数据省略，不进行估算。
 例如：
 
 ```bash
 # 查看一次请求的完整链路
-grep 'req-login-failed' logs/20260824/runtime/*.jsonl
+rg 'req-login-failed' logs/runtime/$(date +%Y-%m-%d)/{app,agent,access,errors}*.jsonl
 
 # 只看生成任务的开始、结束或失败
-grep '"event": "generation\.' logs/20260824/{runtime,e2e-fake,e2e-real}/*.jsonl
+rg '"event":"generation\.' logs/runtime/$(date +%Y-%m-%d)/agent*.jsonl
 ```
 
 登录失败审计会记录提交的用户名和失败原因，便于人工验证；密码、Token、Authorization、API Key、

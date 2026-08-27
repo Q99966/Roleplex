@@ -11,6 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..config import settings
+from ..config.logging import set_process_stop_reason
 from ..models import User
 from ..security.tokens import require_owner
 from ..worlds import WorldManager
@@ -72,5 +73,6 @@ async def switch_world(
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="WORLD_NOT_FOUND") from None
     logger.info("world.switch_requested", extra={"source_world": settings.world_name, "target_world": payload.name})
+    set_process_stop_reason("world_switch")
     background_tasks.add_task(schedule_shutdown)
     return {"target": payload.name, "restarting": True}

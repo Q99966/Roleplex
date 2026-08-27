@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { ensureE2ELogRun } from './tests/log-run'
 
 const pad = (value: number) => String(value).padStart(2, '0')
 const now = new Date()
@@ -8,6 +9,8 @@ process.env.ROLEPLEX_REAL_E2E_STAMP ||= [
 ].join('')
 const STAMP = process.env.ROLEPLEX_REAL_E2E_STAMP
 const DATABASE = `roleplex-real-e2e-${STAMP}.db`
+const LOG_RUN = ensureE2ELogRun('real')
+process.env.ROLEPLEX_E2E_DATABASE = `data/${DATABASE}`
 
 const WEB_PORT = 51175
 const API_PORT = 8002
@@ -20,7 +23,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   globalTeardown: './tests/real/global-teardown.ts',
-  reporter: [['list']],
+  reporter: [['list'], ['./tests/log-reporter.ts', { mode: 'real' }]],
   use: {
     baseURL: WEB_ORIGIN,
     screenshot: 'only-on-failure',
@@ -38,6 +41,8 @@ export default defineConfig({
         AGENT_USE_FAKE_PROVIDER: 'false',
         // 真实 provider 会联网计费，日志必须与普通 fake E2E 分开归档。
         LOG_RUN_KIND: 'e2e-real',
+        LOG_RUN_ID: LOG_RUN.runId,
+        LOG_RUN_STARTED_AT: LOG_RUN.startedAt,
         ROLEPLEX_REAL_E2E_STAMP: STAMP,
         ROLEPLEX_REAL_E2E_API_PORT: String(API_PORT),
       },

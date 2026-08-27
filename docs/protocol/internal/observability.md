@@ -1,77 +1,83 @@
 # 日志、请求关联与异步链路观测
 
-- 受众：内部开发与运维
-- 状态：已实现
-- 协议版本：4
-- 维护者：Roleplex
-- 事实来源：`backend/app/config/logging.py`、`backend/app/main.py`、`backend/app/services/chat.py`、`backend/app/realtime/websocket.py`
-- 复核日期：2026-08-24
+| 元数据 | 值 |
+|---|---|
+| 受众 | 内部开发、测试与本机运维 |
+| 状态 | 已实现（日志 schema v2） |
+| 协议版本 | 5 |
+| 维护者 | Roleplex |
+| 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
+| 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
+| 复核日期 | 2026-08-27 |
 
-## 输出与轮转
+本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
+统一引用详细规范，不在本文复制第二份权威定义。
 
-开发终端使用带本地时区时间戳的可读单行日志；持久化文件使用 UTC ISO 8601 时间戳和 UTF-8 单行
-JSON。应用、Uvicorn error 与 Uvicorn access logger 共用同一套 handler 和格式器。
+## 输出布局
 
-持久化路径为 `logs/{本地年月日}/{运行类型}/{片段起始年月日时分秒}.jsonl`。运行类型固定为：
+- runtime：`logs/runtime/YYYY-MM-DD/`，按 app、agent、access、errors 四类写入；后端重启继续追加当天
+  active 文件，不创建进程目录。
+- pytest：`logs/tests/unit/YYYY-MM-DD/summary.jsonl` 每轮一行；全绿不保存应用事件，失败才在
+  `failures/HH-MM-SS_<run_id>/` 写有界诊断。
+- E2E：`logs/tests/e2e/{fake|real}/YYYY-MM-DD/HH-MM-SS_<run_id>/`，保存 events、errors、summary 和
+  脱敏 artifact 索引。世界切换后的多个后端进程沿用同一 run ID。
+- archive：前一日及更早的关闭日志按日期/类别归档为 tar.gz；保留 30 天，整个日志树目标上限 1 GiB。
 
-- `runtime`：正常开发或产品运行，未显式设置时的默认值。
-- `unit`：pytest，由 `backend/tests/conftest.py` 强制设置。
-- `e2e-fake`：普通 Playwright，后端和 WebSocket 真实运行，只有模型 provider 是 fake。
-- `e2e-real`：显式执行的真实 API Playwright，调用真实模型厂商并产生费用。
+runtime active 文件按 10 MiB、一小时或跨日轮转；关闭片段使用递增 `.001/.002/...` 且永不再次写入。
 
-每次进程启动必须原子占用一个新文件，不得续写已有文件。同秒冲突使用递增数字后缀。每次写入前
-同时检查三个边界：本地日期变化、当前片段持续满 3600 秒，或本条记录会使文件超过 10 MiB；任一成立
-就先关闭旧文件，再按轮转时的本地日期和时间创建新片段。`LOG_MAX_BYTES` 和 `LOG_MAX_SECONDS`
-允许调低边界用于诊断，但分别不得高于 10 MiB 和 3600 秒。
+## 事件身份与链路
 
-## 关联字段
+每条后端事件包含唯一 event ID、进程实例 ID 和进程内观察序号。错误文件复制同一事件，不改变 ID、
+category 或序号。可选业务关联字段无值时省略；当前世界名始终保留。
 
-稳定公共字段为 `timestamp`、`level`、`logger`、`event`、`run_kind`。`run_kind` 与所在目录一致，
-即使跨目录汇总 JSONL 也能区分日志来源。下列链路字段在缺失时显式为 `null`：
+Roleplex 只使用现有业务 Trace 模型：消息 chain 是整条 trace，Agent/工具 execution 是 span，父 execution
+表达父 span。上下文通过 contextvars 跨 HTTP、WS、数据库、后台任务和工具调用传播。
 
-- `request_id`：一次 HTTP 请求；响应头 `X-Request-ID` 与错误信封复用该值。
-- `user_id`、`conversation_id`、`message_id`、`generation_id`：业务资源关联。
-- `chain_id`、`execution_id`、`parent_execution_id`：消息和 Agent 执行链。
-- `role_id`、`tool_call_id`：角色与工具执行关联。
-- `ws_connection_id`：单条 WebSocket 连接；订阅成功后同时带 `conversation_id`。
+WebSocket/流式事件继续关联 stream epoch、event seq、message revision、delta seq 和工具审计标识；流式
+文本不逐 token 写日志。
 
-HTTP、依赖、路由与 `asyncio.create_task` 通过 `contextvars` 继承上下文。后台生成任务在创建后立即记录
-`generation.task_created`，进入协程先记录 `generation.task_started`，即使 provider 构建前失败也不会
-留下只有 `202 Accepted` 的黑盒。
+## 分类与错误
 
-## 稳定事件
+- app：进程、认证、世界、数据库、会话、消息与 WebSocket。
+- agent：generation、provider、context 和工具调用。
+- access：自定义 HTTP 完成/失败事件；默认 Uvicorn access 不再持久化或重复输出。
+- errors：仅 ERROR、CRITICAL 和未处理异常的原样索引副本；WARNING 不进入。
 
-- HTTP：`http.request_started`、`http.request_completed`、`http.request_failed`。完成或失败事件带
-  `status_code`（适用时）和 `duration_ms`。
-- 认证：`auth.login_succeeded`、`auth.login_failed`。失败事件记录 `username` 与稳定原因，不记录口令。
-- 消息与生成：`message.queued`、`generation.task_created`、`generation.task_started`、
-  `generation.provider_ready`、`provider.call_completed`、`generation.started`、`generation.completed`、
-  `generation.failed`、`generation.stopped`、`generation.task_unhandled`。
-- WebSocket：`ws.accepted`、`ws.authenticated`、`ws.auth_rejected`、`ws.subscribed`、
-  `ws.subscription_rejected`、`ws.closed_before_auth`、`ws.disconnected`。
-- 世界生命周期：`world.starting`、`world.switch_requested`，均记录源/目标或当前世界名和托管模式。
+错误码必须来自 [错误码注册表](../error-codes.md)。正常取消、策略拒绝、重试和降级使用稳定 status/reason，
+不伪装成 ERROR。
 
-流式过程不逐 token 记录。开始和终态日志使用 `stream_epoch`、`event_seq`、`message_revision`、
-`delta_seq`/`delta_count` 形成摘要；订阅日志记录恢复方式、客户端游标、最新事件序号和 backlog 数量。
+## Provider usage
 
-每次模型 API 调用结束写一条 `provider.call_completed`：`ttft_ms` 是模型调用开始到收到首个流式
-分片的时间，`duration_ms` 是该次调用总耗时；`input_tokens`、`output_tokens`、`total_tokens`、
-`cache_hit_tokens` 来自厂商 usage。多轮工具调用按 `provider_call_index` 分开记录。
-`generation.completed`/`failed`/`stopped` 额外记录整轮 `provider_call_count`、第一次调用的 `ttft_ms`
-和可完整汇总的 token 数。厂商或 fake provider 未报告的字段在 JSONL 中明确为 `null`，不得估算。
-递归上限后的非流式收尾调用没有独立首分片，此时 `ttft_ms` 等于该次完整响应耗时。
+每次模型调用记录 provider mode/type、模型、首分片耗时、总耗时和厂商报告的输入/输出/总量/缓存命中
+token。至少一个 usage 字段存在时标记来源为 provider；fake 或厂商未报告时省略，不做字符数估算。
+
+## 测试报告
+
+pytest summary 区分 full/partial，并记录 Git HEAD、dirty 指纹、数据库和通过/失败/跳过统计。失败文件不
+持久化 raw nodeid 或原始参数，只保存相对测试文件、测试名、安全 case ID 和 nodeid hash。stdout、
+stderr、captured logs、traceback 均保留尾部、限长、记录原始/保存字节数并递归脱敏。
+
+Playwright summary 初始原子写为 running，结束后 replace 为终态；崩溃保留 running。summary 记录
+Python/Node/浏览器/系统版本、数据库/世界、provider 公共信息和后端进程实例。所有 E2E 关闭 trace/video；
+截图可以保留，文本诊断附件必须脱敏后复制。
+
+## 归档与损坏容忍
+
+runtime 启动且结构化 handler 就绪后执行归档检测。tar.gz 必须含 manifest，并重新读取 gzip/tar、检查
+安全相对路径、成员类型、size 和 SHA-256 后才可删除源。删除归档前写 planned 事件并 flush，删除后写
+结果；无法审计则中止删除。归档清理有进程租约，失败不阻断服务启动。
+
+JSONL 只容忍最后一行崩溃截断；active 文件重启追加前会截断损坏尾部并记录恢复事件。中间行损坏会
+标记整个文件 corrupted；已关闭片段不修补。
 
 ## 敏感数据边界
 
-格式器会按键名再次过滤 `password`、`secret`、凭据类 `token`、`authorization`、`api_key` 等字段，
-但显式放行四个 token 用量字段。任何日志调用仍不得传入密码、API Key、Token、Authorization 头、完整用户
-输入、完整模型输出或 MCP 敏感参数。认证失败允许记录用户名，因为它是定位登录尝试所需的账号标识。
+密码、哈希、API Key、访问凭据、Authorization/Cookie、完整用户输入/模型输出、带凭据 query 和 MCP
+敏感参数不落盘。工具摘要先走字段白名单，递归脱敏只是兜底。只允许四个 token 用量字段。
 
-## 关联代码与测试
+## 验证覆盖
 
-- 格式、过滤与配置：`backend/app/config/logging.py`
-- HTTP middleware 与响应头：`backend/app/main.py`
-- 后台任务与流式摘要：`backend/app/services/chat.py`
-- WebSocket 生命周期：`backend/app/realtime/websocket.py`
-- 回归测试：`backend/tests/test_logging.py`、`backend/tests/test_chat_flow.py`、
-  `backend/tests/test_ws_recovery.py`、`frontend/tests/m2-chat.spec.ts`
+- `backend/tests/test_logging.py`：身份、分类、副本、轮转、重启追加、损坏恢复。
+- `backend/tests/test_reporting.py`：pytest scope、安全身份和 captured 尾部。
+- `backend/tests/test_log_archive.py`：tar.gz manifest、失败保源、30 天/容量淘汰、running 保护与审计。
+- Playwright 普通、世界切换和真实 provider 配置：run 目录、summary、环境/provider 信息与脱敏产物。

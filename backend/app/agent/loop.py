@@ -17,8 +17,8 @@ from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
-from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
-from .tools import REJECTED_OUTPUT_PREFIX, summarize_args
+from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from .tools import REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output
 
 logger = logging.getLogger("roleplex.agent.loop")
 
@@ -92,7 +92,7 @@ def _first_token_value(*values: Any) -> int | None:
     return None
 
 
-def normalize_provider_usage(output: Any) -> dict[str, int]:
+def normalize_provider_usage(output: Any) -> dict[str, int | bool]:
     """将 LangChain 与常见厂商 usage 形态映射为稳定字段。
 
     支持标准 `usage_metadata`、OpenAI-compatible/DeepSeek 的 `token_usage`，
@@ -109,8 +109,10 @@ def normalize_provider_usage(output: Any) -> dict[str, int]:
         standard.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens")
     )
     total_tokens = _first_token_value(standard.get("total_tokens"), raw.get("total_tokens"))
+    total_tokens_derived = False
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
+        total_tokens_derived = True
     cache_hit_tokens = _first_token_value(
         standard_details.get("cache_read"),
         standard_details.get("cached_tokens"),
@@ -124,6 +126,7 @@ def normalize_provider_usage(output: Any) -> dict[str, int]:
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
         "cache_hit_tokens": cache_hit_tokens,
+        "total_tokens_derived": True if total_tokens_derived else None,
     }
     return {key: value for key, value in values.items() if value is not None}
 
@@ -164,6 +167,8 @@ async def _wrap_up(
     把未配对的 tool_use 再发回厂商会被直接拒绝（400），反而让本轮彻底失败。
     """
     started = time_source()
+    call_index = len(call_usages) + 1
+    yield ProviderCallStarted(call_index=call_index)
     try:
         final = await model.ainvoke([*messages, ("user", _WRAP_UP_PROMPT)])
     except asyncio.CancelledError:
@@ -175,13 +180,14 @@ async def _wrap_up(
     normalized_usage = normalize_provider_usage(final)
     call_usages.append(normalized_usage)
     yield ProviderCallCompleted(
-        call_index=len(call_usages),
+        call_index=call_index,
         ttft_ms=duration_ms,
         duration_ms=duration_ms,
         input_tokens=normalized_usage.get("input_tokens"),
         output_tokens=normalized_usage.get("output_tokens"),
         total_tokens=normalized_usage.get("total_tokens"),
         cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+        total_tokens_derived=normalized_usage.get("total_tokens_derived"),
     )
     text = _chunk_text(final)
     if text:
@@ -245,6 +251,7 @@ async def run_agent(
                 next_provider_call_index += 1
                 provider_call_index[run_id] = next_provider_call_index
                 provider_started_at[run_id] = clock()
+                yield ProviderCallStarted(call_index=next_provider_call_index)
             elif kind == _EVENT_MODEL_STREAM:
                 chunk = event["data"].get("chunk")
                 if run_id in provider_started_at and run_id not in provider_ttft_ms:
@@ -272,6 +279,7 @@ async def run_agent(
                     output_tokens=normalized_usage.get("output_tokens"),
                     total_tokens=normalized_usage.get("total_tokens"),
                     cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+                    total_tokens_derived=normalized_usage.get("total_tokens_derived"),
                 )
             elif kind == _EVENT_TOOL_START:
                 call_id = str(event.get("run_id"))
@@ -279,7 +287,7 @@ async def run_agent(
                 yield ToolCallStarted(
                     call_id=call_id,
                     tool_name=event.get("name", ""),
-                    args_summary=summarize_args(event["data"].get("input")),
+                    args_summary=summarize_tool_args(event.get("name", ""), event["data"].get("input")),
                 )
             elif kind == _EVENT_TOOL_END:
                 call_id = str(event.get("run_id"))
@@ -291,11 +299,11 @@ async def run_agent(
                     tool_name=event.get("name", ""),
                     status=_tool_status(output),
                     duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
-                    output_summary=summarize_args(getattr(output, "content", output)),
+                    output_summary=summarize_tool_output(getattr(output, "content", output)),
                 )
     except GraphRecursionError:
         # 某些版本会抛异常而不是静默结束，两条路径都走同一个收尾流程。
-        logger.info("agent.recursion_limit_reached", extra={"recursion_limit": recursion_limit})
+        logger.info("generation.recursion_limit_reached", extra={"recursion_limit": recursion_limit})
         async for event in _wrap_up(model, messages, accumulated, call_usages, clock):
             yield event
         return
@@ -303,13 +311,29 @@ async def run_agent(
         raise
     except Exception as exc:
         code = _error_code(exc)
-        logger.warning("agent.provider_failed", extra={"error_code": code, "error_type": type(exc).__name__})
+        active_run = max(provider_call_index, key=provider_call_index.get) if provider_call_index else None
+        active_started = provider_started_at.get(active_run) if active_run else None
+        logger.warning(
+            "provider.call_failed",
+            extra={
+                "error_code": code,
+                "error_type": type(exc).__name__,
+                "provider_call_index": provider_call_index.get(active_run) if active_run else None,
+                "ttft_ms": provider_ttft_ms.get(active_run) if active_run else None,
+                "duration_ms": int((clock() - active_started) * 1000) if active_started is not None else None,
+                "status": (
+                    "timeout" if code == "PROVIDER_TIMEOUT"
+                    else "rejected" if code in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_REQUEST"}
+                    else "failed"
+                ),
+            },
+        )
         yield ProviderError(code=code, message=str(exc))
         return
 
     if pending_tool_calls:
         logger.info(
-            "agent.unresolved_tool_calls",
+            "tool.calls_unresolved",
             extra={"recursion_limit": recursion_limit, "pending_tool_calls": pending_tool_calls},
         )
         async for event in _wrap_up(model, messages, accumulated, call_usages, clock):

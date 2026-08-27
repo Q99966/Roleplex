@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { ensureE2ELogRun } from './tests/log-run'
 
 const pad = (value: number) => String(value).padStart(2, '0')
 const now = new Date()
@@ -8,6 +9,8 @@ process.env.ROLEPLEX_WORLD_E2E_STAMP ||= [
 ].join('')
 const STAMP = process.env.ROLEPLEX_WORLD_E2E_STAMP
 const WORLD_ROOT = `../data/roleplex-world-e2e-${STAMP}`
+const LOG_RUN = ensureE2ELogRun('fake')
+process.env.ROLEPLEX_E2E_WORLDS = `data/roleplex-world-e2e-${STAMP}/alpha,data/roleplex-world-e2e-${STAMP}/beta`
 
 const WEB_PORT = 51176
 const API_PORT = 8003
@@ -22,11 +25,12 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   globalTeardown: './tests/world-managed/global-teardown.ts',
-  reporter: [['list']],
+  reporter: [['list'], ['./tests/log-reporter.ts', { mode: 'fake' }]],
   use: {
     baseURL: WEB_ORIGIN,
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    // 世界切换同样经过登录流程，Trace 不得保存认证输入。
+    trace: 'off',
     video: 'off',
   },
   webServer: [
@@ -37,6 +41,8 @@ export default defineConfig({
         CORS_ORIGINS: WEB_ORIGIN,
         AGENT_USE_FAKE_PROVIDER: 'true',
         LOG_RUN_KIND: 'e2e-fake',
+        LOG_RUN_ID: LOG_RUN.runId,
+        LOG_RUN_STARTED_AT: LOG_RUN.startedAt,
       },
       url: `${API_ORIGIN}/api/health`,
       reuseExistingServer: false,

@@ -94,14 +94,24 @@ async def login(payload: LoginRequest, session: Annotated[AsyncSession, Depends(
     if not user or not verify_password(password, user.password_hash):
         logger.info(
             "auth.login_failed",
-            extra={"username": payload.username, "reason": "invalid_credentials", "request_id": current_request_id()},
+            extra={
+                "username": payload.username,
+                "reason": "invalid_credentials",
+                "status": "rejected",
+                "request_id": current_request_id(),
+            },
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="AUTH_INVALID")
     reset_required = not password_policy.is_compliant(password)
     set_log_context(user_id=user.id)
     logger.info(
         "auth.login_succeeded",
-        extra={"username": user.username, "user_id": user.id, "password_reset_required": reset_required},
+        extra={
+            "username": user.username,
+            "user_id": user.id,
+            "password_reset_required": reset_required,
+            "status": "success",
+        },
     )
     return TokenResponse(
         access_token=create_access_token(user, password_reset_required=reset_required),

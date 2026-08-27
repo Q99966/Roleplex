@@ -54,6 +54,13 @@ class MessageDone:
 
 
 @dataclass(frozen=True)
+class ProviderCallStarted:
+    """一次模型厂商 API 调用已经开始。"""
+
+    call_index: int
+
+
+@dataclass(frozen=True)
 class ProviderCallCompleted:
     """一次模型厂商 API 调用完成后的归一化性能与用量摘要。"""
 
@@ -64,6 +71,7 @@ class ProviderCallCompleted:
     output_tokens: int | None
     total_tokens: int | None
     cache_hit_tokens: int | None
+    total_tokens_derived: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -75,4 +83,4 @@ class ProviderError:
 
 
 # 业务层按此联合类型消费事件；新增事件类型时必须同步更新内部协议文档。
-AgentEvent = TextDelta | ToolCallStarted | ToolCallFinished | ProviderCallCompleted | MessageDone | ProviderError
+AgentEvent = TextDelta | ToolCallStarted | ToolCallFinished | ProviderCallStarted | ProviderCallCompleted | MessageDone | ProviderError

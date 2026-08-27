@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ _KEEP_RUNS = 5
 # 每轮测试使用带时间戳的独立数据库：Owner 是实例级单例，复用同一个库会让后注册的账号
 # 变成 Guest；时间戳同时用于测试账号名，方便按轮次对照数据库内容。
 _STAMP = os.environ.setdefault("ROLEPLEX_TEST_STAMP", datetime.now().strftime("%Y%m%d%H%M%S"))
+os.environ.setdefault("ROLEPLEX_TEST_RUN_ID", secrets.token_hex(4))
 _TEST_DB = DATA_DIR / f"roleplex-test-{_STAMP}.db"
 
 
@@ -43,6 +45,16 @@ os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production")
 os.environ["AGENT_USE_FAKE_PROVIDER"] = "true"
 # pytest 产生的应用日志与开发运行、浏览器 E2E 分目录保存，便于按测试层级排查。
 os.environ["LOG_RUN_KIND"] = "unit"
+os.environ["LOG_ARCHIVE_ENABLED"] = "false"
+
+# hooks 从独立模块导入后会成为 conftest 插件入口；业务测试无需显式依赖 reporter。
+from reporting import (  # noqa: E402,F401
+    pytest_collection_modifyitems,
+    pytest_configure,
+    pytest_runtest_logreport,
+    pytest_runtest_makereport,
+    pytest_sessionfinish,
+)
 
 
 @pytest.fixture(scope="session")

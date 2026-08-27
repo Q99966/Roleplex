@@ -1,5 +1,27 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
+## 当前追加任务：日志与测试报告 v2（已完成，经人工验收）
+
+### 范围与决策（2026-08-26）
+
+- runtime 按日分 app/agent/access/errors，不因后端/世界重启创建目录；事件使用唯一身份、进程实例和
+  进程内观察序号，错误文件保持原事实身份。
+- pytest 每轮只追加 summary，全绿不保存应用日志；失败按测试聚合有界脱敏详情，不落 raw nodeid/参数。
+- fake/real E2E 每轮独立目录，run ID 贯穿世界切换后的多个后端；summary 记录源码与非敏感环境元数据。
+- 日志前一日即按日期/类别归档为 tar.gz，保留 30 天、总量目标 1 GiB；归档/删除必须校验、审计和互斥。
+- 错误码建立跨领域注册表；日志只复用稳定大写码，正常取消/拒绝不伪装成 ERROR。
+
+### 实现与验证
+
+- runtime v2 handler、递增不可变轮转、尾部恢复、category/error 副本和进程生命周期已实现。
+- pytest reporter、Playwright reporter、脱敏 screenshot/diagnostic 索引和源码 dirty 指纹已实现。
+- tar.gz manifest/路径/成员类型/size/SHA-256 校验、30 天/容量淘汰、租约和删除前后审计已实现。
+- 受控 pytest/Playwright 失败变异验证已执行并删除探针；发现 trace/错误上下文泄密风险后，所有 E2E
+  关闭 trace/video，文本诊断附件改为脱敏后复制，旧探针敏感产物已清理。
+- 自动验证：后端 78 passed、普通 E2E 15 passed、世界切换 E2E 1 passed、真实 API E2E 1 passed，
+  前端 build 与迁移检查通过。日志目录、字段和清理范围已于 2026-08-27 经用户人工验收；提交仍等待用户
+  明确指令。
+
 ## 当前追加任务：工作项三 A1 存档机制（已完成，提交 77745cf）
 
 ### 开始状态（2026-08-25）

@@ -17,10 +17,10 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 
-from app.agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from app.agent.domain import MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn, fake_reply_model
 from app.agent.loop import normalize_provider_usage, run_agent
-from app.agent.tools import guard_tools
+from app.agent.tools import guard_tools, summarize_tool_args, summarize_tool_output
 
 # 只有防腐层可以出现这些框架私有名称，业务层必须只认领域事件。
 _FRAMEWORK_EVENT_TOKENS = ("astream_events", "on_chat_model_stream", "on_chat_model_end", "on_tool_start", "on_tool_end")
@@ -128,6 +128,8 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
     )
 
     calls = [event for event in events if isinstance(event, ProviderCallCompleted)]
+    started = [event for event in events if isinstance(event, ProviderCallStarted)]
+    assert [event.call_index for event in started] == [1]
     assert len(calls) == 1
     assert calls[0].call_index == 1
     assert calls[0].ttft_ms == 125
@@ -136,6 +138,7 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
     assert calls[0].output_tokens is None
     assert calls[0].total_tokens is None
     assert calls[0].cache_hit_tokens is None
+    assert calls[0].total_tokens_derived is None
 
 
 @pytest.mark.parametrize(
@@ -178,7 +181,10 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
                     }
                 },
             ),
-            {"input_tokens": 70, "output_tokens": 20, "total_tokens": 90, "cache_hit_tokens": 40},
+            {
+                "input_tokens": 70, "output_tokens": 20, "total_tokens": 90,
+                "cache_hit_tokens": 40, "total_tokens_derived": True,
+            },
         ),
         (
             SimpleNamespace(
@@ -191,7 +197,10 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
                     }
                 },
             ),
-            {"input_tokens": 50, "output_tokens": 25, "total_tokens": 75, "cache_hit_tokens": 32},
+            {
+                "input_tokens": 50, "output_tokens": 25, "total_tokens": 75,
+                "cache_hit_tokens": 32, "total_tokens_derived": True,
+            },
         ),
     ],
 )
@@ -222,6 +231,21 @@ async def test_tool_round_emits_paired_tool_events():
     assert "artifact_id" in started[0].args_summary
     assert finished[0].status == "ok"
     assert isinstance(events[-1], MessageDone) and events[-1].text == "产物已读取"
+
+
+def test_tool_summaries_use_allowlists_instead_of_raw_values():
+    """已知工具只留批准字段，未知工具和输出都不能保存敏感原文。"""
+    known = summarize_tool_args(
+        "update_artifact",
+        {"artifact_id": 7, "expected_version": 2, "content": "password=must-not-persist"},
+    )
+    unknown = summarize_tool_args("mcp_unknown", {"query": "api_key=must-not-persist"})
+    output = summarize_tool_output("Bearer must-not-persist")
+
+    assert "artifact_id" in known and "expected_version" in known
+    assert "content" not in known and "must-not-persist" not in known
+    assert "must-not-persist" not in unknown
+    assert "must-not-persist" not in output
 
 
 @pytest.mark.anyio

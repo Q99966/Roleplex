@@ -1,0 +1,212 @@
+# Roleplex 错误码设计与注册表
+
+| 元数据 | 值 |
+|---|---|
+| 受众 | 公开协议消费者、后端开发、测试与日志消费者 |
+| 状态 | 已建立注册表；含明确标注的预留/部分实现项 |
+| 协议版本 | 1 |
+| 维护者 | Roleplex 后端 |
+| 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py` |
+| 复核日期 | 2026-08-26 |
+
+本文是稳定 `error_code` 的跨领域权威注册表。各领域协议负责说明“哪个接口或事件会返回哪些错误码”；
+错误码本身的名称、含义、终态和重试语义只在本文定义，避免同一含义散落后漂移。
+
+## 一、适用边界
+
+`error_code` 用于机器可判断的稳定失败原因，可能出现在：
+
+- REST `error.code`；
+- WebSocket error frame；
+- `message_done.payload.error_code`；
+- `generations.error_code`；
+- Agent 领域 `ProviderError.code`；
+- 结构化日志中的 `error_code`。
+
+异常类名、异常消息、HTTP 状态、日志级别和 `status` 都不能替代 `error_code`。并非每个 ERROR 都必须
+有稳定错误码：没有业务语义的未知异常可以只记录 `error_type` 和 traceback，不能临时把异常文本加工成
+一个未登记的错误码。
+
+## 二、命名与兼容规则
+
+1. 错误码使用大写 ASCII snake case：`^[A-Z][A-Z0-9_]{2,63}$`。
+2. 前缀表达领域，如 `AUTH_`、`PASSWORD_`、`PROVIDER_`、`WORLD_`。
+3. 客户端只能比较完整错误码，不得根据前缀推断权限或重试策略。
+4. 已公开错误码不得改名或改变既有含义。需要新语义时新增错误码，并提供迁移/兼容说明。
+5. 新错误码必须先登记本文，再加入代码常量、领域协议和测试；禁止继续散落新的字符串字面量。
+6. 预留码不是当前可依赖行为；只有状态为“已实现”的错误码才能视为当前协议事实。
+
+## 三、错误信封
+
+REST 使用：
+
+```json
+{
+  "error": {
+    "code": "CONVERSATION_NOT_FOUND",
+    "message": "CONVERSATION_NOT_FOUND",
+    "request_id": "请求关联标识"
+  }
+}
+```
+
+当前 `message` 多数与 `code` 相同；消费者必须以 `code` 判断，不得比较 message。后续 message 可以本地化，
+不构成兼容性承诺。策略校验可以附带安全的 `details`，但 details 不得包含密码、Token、Key 或资源存在性。
+
+WebSocket error frame 使用：
+
+```json
+{"type":"error","payload":{"code":"CONVERSATION_NOT_FOUND"}}
+```
+
+生成终态使用：
+
+```json
+{"type":"message_done","payload":{"message":{},"error_code":"PROVIDER_TIMEOUT"}}
+```
+
+## 四、`status`、日志级别与重试
+
+错误码不直接等于日志 ERROR。日志 v2 的终态建议固定为：
+
+- `failed`：操作已失败；是否可重试见注册表。
+- `timeout`：超时终止，通常可以有限重试。
+- `rejected`：输入、权限、策略或当前状态拒绝；相同条件立即重试没有意义。
+- `cancelled`：用户或上游主动取消；通常不带 error_code，不记 ERROR。
+
+注册表的重试值：
+
+- `no`：相同请求立即重试不会成功。
+- `yes`：属于临时故障，可以在退避/限次约束下重试。
+- `conditional`：必须修改输入、权限、配置、软件版本或资源状态后再尝试。
+
+预期 4xx、策略拒绝和用户停止通常是 INFO/WARNING。只有未处理异常、系统不变量破坏或无法完成的内部
+故障进入 ERROR/CRITICAL；provider 返回业务失败可以是 WARNING，同时在 Agent 终态携带 error_code。
+
+## 五、通用、认证与账号错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `VALIDATION_ERROR` | 已实现 | REST | 422 | rejected | conditional | FastAPI/Pydantic 请求结构校验失败；details 为字段级原因 |
+| `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
+| `AUTH_REQUIRED` | 已实现 | REST | 401 | rejected | conditional | 缺少 Bearer 凭据 |
+| `AUTH_INVALID` | 已实现 | REST | 401 | rejected | conditional | 登录凭据、旧密码或 Token 签名无效 |
+| `AUTH_REVOKED` | 已实现 | REST | 401 | rejected | conditional | Token 版本与用户当前版本不一致，旧 Token 已失效 |
+| `OWNER_REQUIRED` | 已实现 | REST | 403 | rejected | conditional | 操作仅允许当前世界 Owner |
+| `PASSWORD_RESET_REQUIRED` | 已实现 | REST | 403 | rejected | conditional | 当前 Token 被标记为必须先修改弱密码 |
+| `PASSWORD_POLICY_VIOLATION` | 已实现 | REST | 422 | rejected | conditional | 新密码不满足统一策略；details 列出安全原因 |
+| `PASSWORD_UNCHANGED` | 已实现 | REST | 409 | rejected | conditional | 新密码与当前密码相同，不能完成强制重置 |
+| `USERNAME_TAKEN` | 已实现 | REST | 409 | rejected | conditional | 用户名已存在 |
+| `REGISTRATION_CONFLICT` | 已实现 | REST | 409 | failed | yes | 并发注册提交发生完整性冲突，可重新读取状态后有限重试 |
+
+认证领域的 endpoint 适用范围见 [REST 认证、密码策略与强制重置](public/rest/auth.md)。
+
+## 六、模型配置与角色错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `MODEL_CONFIG_NOT_FOUND` | 已实现 | REST | 404/422 | rejected | conditional | 模型配置不存在、不可见，或不属于当前 Owner；具体 HTTP 由调用接口决定 |
+| `MODEL_CONFIG_IN_USE` | 已实现 | REST | 409 | rejected | conditional | 模型配置仍被角色引用，删除被外键约束拒绝 |
+| `ROLE_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 角色不存在、已墓碑或不属于请求 Owner |
+| `ROLE_NOT_AVAILABLE` | 已实现 | REST | 422 | rejected | conditional | 创建会话引用了不存在、停用、墓碑或非当前 Owner 的角色 |
+| `ROLE_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 创建会话没有提供任何角色 |
+| `SINGLE_CHAT_REQUIRES_ONE_ROLE` | 已实现 | REST | 422 | rejected | conditional | 单聊必须且只能包含一个角色 |
+| `ORCHESTRATOR_MUST_BE_MEMBER` | 已实现 | REST | 422 | rejected | conditional | 编排角色不在会话角色成员中 |
+
+领域适用范围见 [角色管理与墓碑](public/rest/roles.md) 和
+[会话管理与回收站](public/rest/conversations.md)。
+
+## 七、会话、消息与 Artifact 错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `CONVERSATION_NOT_FOUND` | 已实现 | REST/WS | 404/— | rejected | conditional | 会话不存在、已进回收站或请求者不是成员；不得区分三种情况 |
+| `CONVERSATION_HAS_NO_ROLE` | 已实现 | REST/WS/生成 | 422/— | rejected | conditional | 会话没有存活且启用的可回复角色；墓碑会话只读 |
+| `TEXT_PART_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 当前消息发送接口要求至少一个非空 text part |
+| `ARTIFACT_NOT_FOUND` | 已实现（读取原型） | REST | 404 | rejected | conditional | Artifact、版本不存在或请求者不是会话成员；不得泄露差异 |
+
+`CONVERSATION_HAS_NO_ROLE` 在消息落库前的 REST 拒绝和生成期防御检查中复用同一语义。
+消息与 WS 适用范围见 [消息协议](public/messaging/messages.md) 与
+[WebSocket 会话事件流](public/websocket/conversation-stream.md)。
+
+## 八、Provider 与生成错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `PROVIDER_RATE_LIMITED` | 已实现 | Agent/WS/数据库/日志 | — | failed | yes | 厂商返回 429 或限流类异常，应退避后有限重试 |
+| `PROVIDER_AUTH_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商凭据无效或没有权限，必须修正模型配置 |
+| `PROVIDER_BAD_REQUEST` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商拒绝请求结构或参数，原请求不应原样重试 |
+| `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
+| `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
+
+Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime.md)。原始厂商错误不得回显给客户端，
+因为异常文本可能包含打码 Key、URL query 或 SDK 请求信息。
+
+## 九、世界错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `WORLD_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 目标世界不存在或元数据无效 |
+| `WORLD_ALREADY_ACTIVE` | 已实现 | REST | 409 | rejected | no | 目标就是当前世界，无需重启 |
+| `WORLD_SWITCH_REQUIRES_WRAPPER` | 已实现 | REST | 409 | rejected | conditional | 后端不是由世界包装器启动，不能安全退出并重启 |
+| `WORLD_REQUIRES_NEWER_ROLEPLEX` | 部分实现 | startup | — | rejected | conditional | 世界格式或 Alembic revision 更新；当前已有可读阻断异常，但尚未输出独立机器码字段 |
+
+世界目录、包装器和启动兼容规则见 [世界存档与切换](public/rest/worlds.md)。
+
+## 十、预留错误码
+
+以下名称存在于总体协议或后续里程碑计划，但当前没有完整服务端处理和客户端行为，不得当作已实现：
+
+| 错误码 | 目标领域 | 计划语义 | 当前状态 |
+|---|---|---|---|
+| `FORBIDDEN` | 通用授权 | 已认证但缺少某项资源权限的通用拒绝 | 预留；当前优先使用领域 404 或 `OWNER_REQUIRED` |
+| `INVITE_INVALID` | 邀请 | 邀请不存在、过期、撤销或用尽，且不泄露具体原因 | 预留（M6） |
+| `ARTIFACT_VERSION_CONFLICT` | Artifact | 更新时 expected_version 与当前版本不一致 | 预留（M3） |
+
+新增预留项不能仅靠计划文本进入“已实现”表，必须等路由、事件、客户端降级和测试全部存在。
+
+## 十一、日志 v2 使用规则
+
+日志设计稿见 [日志目录与字段规范 v2](../design/logging-v2.md)。日志中的 `error_code`：
+
+1. 必须来自本文已实现表，或来自未来登记为 internal 的稳定码。
+2. 必须保持与 REST/WS/数据库终态相同的大写值，不另造小写别名。
+3. 正常取消、用户停止、策略拒绝可以用 `status`/`reason` 表达，不应为了“字段非空”伪造 error_code。
+4. 未知异常只记录 `error_type`、脱敏 message 和 traceback；确认稳定语义后再登记新码。
+5. `errors.jsonl` 是原事件副本，保持同一 `event_id` 和 error_code。
+
+建议 status 示例：
+
+```json
+{"event":"generation.completed","status":"success"}
+{"event":"generation.failed","status":"failed","error_code":"PROVIDER_ERROR"}
+{"event":"generation.cancelled","status":"cancelled","reason":"user_stop"}
+{"event":"provider.call_failed","status":"timeout","error_code":"PROVIDER_TIMEOUT"}
+```
+
+## 十二、代码集中化要求（待实现）
+
+当前错误码仍以字符串分散在 router、security、Agent 和服务层。后续实现应增加单一代码注册入口，例如：
+
+```python
+from enum import StrEnum
+
+class ErrorCode(StrEnum):
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+```
+
+迁移要求：
+
+1. 先用源码扫描测试收集现有字符串，与本文“已实现”集合比对。
+2. 再逐模块替换为常量，不在同一改动中改变 HTTP 状态或公开 payload。
+3. 新错误码必须有领域测试，证明触发条件、状态码、信息隐藏与重试语义。
+4. CI/pytest 增加注册表一致性检查，防止未登记字符串重新进入代码。
+
+## 十三、当前已知缺口
+
+1. 尚无代码级 `ErrorCode`/registry，本文先统一协议语义。
+2. `MODEL_CONFIG_NOT_FOUND` 在不同 endpoint 使用 404/422；这是现状，是否统一需独立兼容评审。
+3. `WORLD_REQUIRES_NEWER_ROLEPLEX` 只有可读 startup 异常，缺少结构化机器码输出。
+4. `REQUEST_FAILED` 是宽泛兜底；已知业务分支继续使用它应视为缺陷。
+5. 部分领域文档仍复制错误码含义，后续应改为“适用范围 + 本文链接”，避免双重权威。

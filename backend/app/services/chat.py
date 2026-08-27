@@ -13,7 +13,7 @@ from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
 from ..config.logging import set_log_context
 from ..agent import providers
-from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
@@ -118,7 +118,7 @@ def start_generation(
     )
     _running[generation_id] = task
     logger.info(
-        "generation.task_created",
+        "generation.created",
         extra={"conversation_id": conversation_id, "generation_id": generation_id},
     )
 
@@ -130,8 +130,8 @@ def start_generation(
         error = done.exception()
         if error is not None:
             logger.error(
-                "generation.task_unhandled",
-                extra={"conversation_id": conversation_id, "generation_id": generation_id},
+                "generation.failed",
+                extra={"conversation_id": conversation_id, "generation_id": generation_id, "status": "failed"},
                 exc_info=(type(error), error, error.__traceback__),
             )
 
@@ -249,7 +249,6 @@ async def _run_generation(
         conversation_id=conversation_id,
         generation_id=generation_id,
     )
-    logger.info("generation.task_started")
     task_started = perf_counter()
     accumulated = ""
     delta_seq = 0
@@ -272,14 +271,18 @@ async def _run_generation(
             role = await resolve_reply_role(session, conversation_id)
             if role is None:
                 await _finalize(generation_id, "failed", "", error_code="CONVERSATION_HAS_NO_ROLE")
-                logger.warning("generation.role_unavailable", extra={"error_code": "CONVERSATION_HAS_NO_ROLE"})
+                logger.warning(
+                    "generation.role_unavailable",
+                    extra={"error_code": "CONVERSATION_HAS_NO_ROLE", "status": "rejected"},
+                )
                 return
             set_log_context(role_id=role.id)
             model, tools = await build_agent_inputs(session, role, prompt, allow_dangerous=allow_dangerous)
-            logger.info(
-                "generation.provider_ready",
-                extra={"provider_mode": "fake" if settings.agent_use_fake_provider else "real", "model": role.model_name},
-            )
+            if settings.agent_use_fake_provider:
+                logger.info(
+                    "provider.built",
+                    extra={"provider_mode": "fake", "model": role.model_name},
+                )
             assistant = Message(
                 conversation_id=conversation_id,
                 sender_type="role",
@@ -351,7 +354,7 @@ async def _run_generation(
             elif isinstance(event, ToolCallStarted):
                 tool_args[event.call_id] = event.args_summary
                 logger.info(
-                    "tool.started",
+                    "tool.call_started",
                     extra={
                         "conversation_id": conversation_id, "generation_id": generation_id,
                         "tool_name": event.tool_name, "tool_call_id": event.call_id,
@@ -364,11 +367,12 @@ async def _run_generation(
                     role_id=role_id, triggered_by_user_id=triggered_by_user_id,
                 )
                 logger.info(
-                    "tool.finished",
+                    "tool.call_completed",
                     extra={
                         "conversation_id": conversation_id, "generation_id": generation_id,
                         "tool_name": event.tool_name, "tool_call_id": event.call_id,
-                        "status": event.status, "duration_ms": event.duration_ms,
+                        "status": {"ok": "success", "error": "failed", "rejected": "rejected"}[event.status],
+                        "duration_ms": event.duration_ms,
                     },
                 )
             elif isinstance(event, ProviderCallCompleted):
@@ -387,6 +391,23 @@ async def _run_generation(
                         "output_tokens": event.output_tokens,
                         "total_tokens": event.total_tokens,
                         "cache_hit_tokens": event.cache_hit_tokens,
+                        "usage_source": "provider" if any(
+                            value is not None for value in (
+                                event.input_tokens, event.output_tokens,
+                                event.total_tokens, event.cache_hit_tokens,
+                            )
+                        ) else None,
+                        "total_tokens_derived": event.total_tokens_derived,
+                        "status": "success",
+                    },
+                )
+            elif isinstance(event, ProviderCallStarted):
+                logger.info(
+                    "provider.call_started",
+                    extra={
+                        "provider_call_index": event.call_index,
+                        "provider_mode": "fake" if settings.agent_use_fake_provider else "real",
+                        "model": role.model_name,
                     },
                 )
             elif isinstance(event, MessageDone):
@@ -402,6 +423,7 @@ async def _run_generation(
                     "conversation_id": conversation_id,
                     "generation_id": generation_id,
                     "error_code": failed_code,
+                    "status": "timeout" if failed_code == "PROVIDER_TIMEOUT" else "failed",
                     "provider_call_count": provider_call_count,
                     "ttft_ms": first_ttft_ms,
                     **usage_summary,
@@ -418,6 +440,7 @@ async def _run_generation(
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "delta_count": delta_seq,
+                "status": "success",
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
@@ -429,11 +452,13 @@ async def _run_generation(
         # 用户主动停止属于预期结果，按 stopped 落库而不是未处理异常。
         terminal = await _finalize(generation_id, "stopped", accumulated)
         logger.info(
-            "generation.stopped",
+            "generation.cancelled",
             extra={
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "delta_count": delta_seq,
+                "status": "cancelled",
+                "reason": "user_stop",
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
@@ -450,6 +475,7 @@ async def _run_generation(
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "error_code": "PROVIDER_ERROR",
+                "status": "failed",
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,

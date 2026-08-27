@@ -52,6 +52,9 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 
 ## 错误信封
 
+错误码名称、含义、终态和重试语义的权威注册表见 [错误码设计与注册表](protocol/error-codes.md)。
+本节只保留公开信封和 HTTP 分类总则，各领域接口返回范围见对应领域文档。
+
 所有错误使用稳定的机器可读错误码：
 
 ```json
@@ -61,7 +64,7 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 状态码约定：
 
 - `401`：`AUTH_REQUIRED`、`AUTH_INVALID`、`AUTH_REVOKED`
-- `403`：`OWNER_REQUIRED`、`FORBIDDEN`、`PASSWORD_RESET_REQUIRED`
+- `403`：`OWNER_REQUIRED`、`PASSWORD_RESET_REQUIRED`；`FORBIDDEN` 为后续通用授权预留码，当前未使用
 - `404`：资源不存在或请求者无权访问；不得通过响应泄露资源是否存在
 - `409`：重复、幂等冲突或版本冲突
 - `422`：请求参数无效；策略类拒绝使用各自的稳定错误码而不是笼统的 `VALIDATION_ERROR`

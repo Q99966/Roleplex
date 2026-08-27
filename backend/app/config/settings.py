@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     log_run_kind: Literal["runtime", "unit", "e2e-fake", "e2e-real"] = "runtime"
     log_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=10 * 1024 * 1024)
     log_max_seconds: int = Field(default=3600, gt=0, le=3600)
+    log_archive_enabled: bool = True
+    log_retention_days: int = Field(default=30, gt=0)
+    log_max_total_bytes: int = Field(default=1_073_741_824, gt=0)
+    log_archive_compresslevel: int = Field(default=6, ge=1, le=9)
     _world_managed: bool = PrivateAttr(default=True)
 
     @model_validator(mode="after")

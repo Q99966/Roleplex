@@ -93,10 +93,11 @@ def build_chat_model(role: Role, model_config: ModelConfig) -> BaseChatModel:
 
     # 只记录可公开的元数据；Key、Authorization 头和完整参数不进日志。
     logger.info(
-        "provider.build",
+        "provider.built",
         extra={
             "provider_type": model_config.provider_type,
-            "model_name": role.model_name,
+            "provider_mode": "real",
+            "model": role.model_name,
             "role_id": role.id,
             "param_keys": sorted(params),
         },

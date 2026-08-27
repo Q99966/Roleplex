@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { ensureE2ELogRun } from './tests/log-run'
 
 // 每轮端到端测试使用带时间戳的独立数据库：Owner 是实例级单例，
 // 复用开发数据库会让后注册账号变成 Guest 并在配置类接口上被拒绝。
@@ -15,6 +16,8 @@ process.env.ROLEPLEX_E2E_STAMP ||= [
 ].join('')
 const E2E_STAMP = process.env.ROLEPLEX_E2E_STAMP
 const E2E_DATABASE = `roleplex-e2e-${E2E_STAMP}.db`
+const LOG_RUN = ensureE2ELogRun('fake')
+process.env.ROLEPLEX_E2E_DATABASE = `data/${E2E_DATABASE}`
 
 // 端到端测试使用独立的前后端端口，避免与开发中的 vite / uvicorn 抢占 51173 与 8000；
 // 后端 CORS 允许来源必须同步为该前端端口，否则浏览器请求会被 CORS 拒绝而表现为 "Failed to fetch"。
@@ -37,12 +40,13 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   globalTeardown: './tests/global-teardown.ts',
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: [['list'], ['html', { open: 'never' }], ['./tests/log-reporter.ts', { mode: 'fake' }]],
   use: {
     // 端口与后端 CORS 允许来源保持一致，换端口会让浏览器请求被 CORS 拒绝。
     baseURL: E2E_WEB_ORIGIN,
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    // Trace 会记录认证输入和 DOM 状态，无法可靠脱敏，因此不持久化。
+    trace: 'off',
     video: 'off',
   },
   webServer: [
@@ -58,6 +62,8 @@ export default defineConfig({
         AGENT_USE_FAKE_PROVIDER: 'true',
         // 浏览器链路日志独立归档，不与 pytest 或正常运行日志混在一起。
         LOG_RUN_KIND: 'e2e-fake',
+        LOG_RUN_ID: LOG_RUN.runId,
+        LOG_RUN_STARTED_AT: LOG_RUN.startedAt,
       },
       url: `${E2E_API_ORIGIN}/api/health`,
       reuseExistingServer: false,

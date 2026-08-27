@@ -22,6 +22,7 @@
 | `TextDelta` | 模型输出的一段文本增量 | `text` |
 | `ToolCallStarted` | 一次工具调用开始 | `call_id`、`tool_name`、`args_summary` |
 | `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary` |
+| `ProviderCallStarted` | 一次模型 API 调用开始 | `call_index` |
 | `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存 token |
 | `MessageDone` | 本轮正常结束 | `text`（最终全文）、`usage` |
 | `ProviderError` | 本轮失败 | `code`（稳定错误码）、`message` |
