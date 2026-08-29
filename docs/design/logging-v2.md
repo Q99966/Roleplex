@@ -7,7 +7,7 @@
 | 设计版本 | 2 |
 | 当前实现 | [日志、请求关联与异步链路观测](../protocol/internal/observability.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-08-27 |
+| 复核日期 | 2026-08-29 |
 
 本文定义并约束当前日志 v2 的目录、文件职责、轮转方式和字段结构；现状摘要与事实来源见
 `docs/protocol/internal/observability.md`。该版本已于 2026-08-27 经用户人工验收，后续兼容变更必须同步
@@ -334,6 +334,10 @@ status 只用于终态或策略决策：`success | failed | cancelled | timeout 
 fake provider 或厂商未报告的 token 字段和 usage_source 省略，不得按字符数估算。生成完成/失败/停止
 事件额外包含 `provider_call_count`、`delta_count`、整轮 token 汇总、`duration_ms` 和稳定 error_code。
 
+ContextBuilder 的预算诊断使用独立字段 `estimated_context_tokens`、`input_budget_tokens` 和
+`estimator_kind`。它们是调用前的本地安全估算，只用于裁剪和解释 `CONTEXT_BUDGET_EXCEEDED`，不得汇总到
+Provider `input_tokens`，也不得设置 `usage_source=provider`。
+
 工具事件附加 `tool_name`、`status`、`duration_ms` 和白名单摘要。每类已知工具必须注册专用摘要器，只
 提取明确允许字段；未知、MCP 和高风险工具默认不保存参数值。路径只允许保存授权根目录下的相对形式。
 递归脱敏是第二道防线，不得先整体序列化原始参数/输出再依赖正则删除敏感内容。
@@ -597,6 +601,9 @@ WARNING。浏览器 pageerror、失败的 console.error 和 Playwright 断言失
 base URL query、请求 body 或完整模型回复。环境元数据只允许版本、操作系统、浏览器和 provider 公共
 标识；不保存完整环境变量或 pip/npm 依赖清单。
 
+真实 Provider 的显式数据库 smoke 与 real-world 测试都使用 `run_kind=e2e-real`；前者由 `database` 定位，
+后者由 `worlds` 定位。不能仅凭 real 分类推断它是否经过世界包装器。
+
 summary 启动时先原子写为 `status=running`，结束后用临时文件 + replace 更新为最终状态。进程异常结束而
 未完成更新时，保留 `running` 供人工识别中断，不写虚假的 passed/failed。
 
@@ -666,8 +673,10 @@ E2E summary 字段定义：
 
 ### 9.2 允许的 token 用量字段
 
-仅允许：`input_tokens`、`output_tokens`、`total_tokens`、`cache_hit_tokens`。其他包含 `token` 的键仍按
-凭据过滤。脱敏必须递归处理嵌套字典、数组、异常对象和 pytest captured 内容。
+Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`cache_hit_tokens`。ContextBuilder
+预算另外允许 `estimated_context_tokens`、`input_budget_tokens`、`safety_margin_tokens`，但不得设置
+`usage_source=provider`。除此之外，包含 `token` 的键仍按凭据过滤。脱敏必须递归处理嵌套字典、数组、
+异常对象和 pytest captured 内容。
 
 ### 9.3 文件权限
 

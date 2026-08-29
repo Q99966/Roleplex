@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 公开 |
 | 状态 | 已实现（单聊；群聊调度未实现） |
-| 协议版本 | 1 |
+| 协议版本 | 2（兼容新增上下文构建与预算失败语义） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
-| 关联测试 | `backend/tests/test_chat_flow.py`、`backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
-| 复核日期 | 2026-08-24 |
+| 关联测试 | `backend/tests/test_chat_flow.py`、`backend/tests/test_context_builder.py`、`backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
+| 复核日期 | 2026-08-29 |
 
 ## 范围
 
@@ -79,6 +79,22 @@ POST /api/conversations/{conversation_id}/stop
 ```
 
 `stopped: false` 表示没有正在运行的任务（包括已完成或已停止），按幂等成功处理。停止是取消语义而不是错误：已缓冲的内容会以 `stopped` 状态落库，并广播终态事件；上游模型请求和工具调用的实际中断属于尽力而为，不承诺计费立即停止。
+
+## 模型历史与上下文预算
+
+生成统一通过内部 ContextBuilder 读取当前消息之前的终态历史：目标角色自己的 `done` 回复作为 assistant，
+其他真人/角色消息带稳定身份作为 user；非空 `stopped` 回复带停止标记，`error/interrupted` 不进入模型历史。
+当前消息单独作为本轮输入，不会在 history 中重复出现。
+
+ContextBuilder 按角色 `context_window_tokens` 和输出预留裁剪最旧历史。如果历史全部移除后，必要角色规则、
+当前可见工具、当前消息和输出预留仍无法放入有效窗口，已经接受的生成以 `message_done` 失败终态返回：
+
+```json
+{"error_code":"CONTEXT_BUDGET_EXCEEDED"}
+```
+
+该路径不调用 Provider、不截断当前消息。Owner 可以调整消息、角色提示词、工具、上下文窗口或最大输出；
+Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 ## 消息结构与状态
 

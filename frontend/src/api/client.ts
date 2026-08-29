@@ -22,13 +22,14 @@ export type RoleInput = {
   system_prompt: string
   model_config_id: number
   model_name: string
+  context_window_tokens: number
   params: Record<string, unknown>
   skills: Record<string, unknown>[]
   builtin_tools: string[]
   mcp_servers: Record<string, unknown>[]
 }
 /** Agent 角色定义；`deleted_at` 非空表示墓碑，配置已清空，仅保留身份供历史消息展示。 */
-export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number | null; model_name: string; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
+export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; role_ids: number[]; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; [key: string]: unknown }

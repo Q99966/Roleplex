@@ -12,6 +12,8 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
 from ..config.logging import set_log_context
+from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
+from ..context.domain import ContextBuildError
 from ..agent import providers
 from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
@@ -96,7 +98,7 @@ async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerou
 def start_generation(
     generation_id: int,
     conversation_id: int,
-    prompt: str,
+    current_message_id: int,
     *,
     triggered_by_user_id: int,
     allow_dangerous: bool,
@@ -106,13 +108,13 @@ def start_generation(
     Args:
         generation_id：生成记录标识，同时用于停止生成。
         conversation_id：所属会话。
-        prompt：触发本次生成的用户文本。
+        current_message_id：触发本次生成的已落库用户消息；ContextBuilder 以它作为历史截止边界。
         triggered_by_user_id：触发本次链路的真人，用于工具审计与权限判定。
         allow_dangerous：该触发者是否可以执行 dangerous 工具。
     """
     task = asyncio.create_task(
         _run_generation(
-            generation_id, conversation_id, prompt,
+            generation_id, conversation_id, current_message_id,
             triggered_by_user_id=triggered_by_user_id, allow_dangerous=allow_dangerous,
         )
     )
@@ -227,7 +229,7 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
 async def _run_generation(
     generation_id: int,
     conversation_id: int,
-    prompt: str,
+    current_message_id: int,
     *,
     triggered_by_user_id: int | None = None,
     allow_dangerous: bool = False,
@@ -240,7 +242,7 @@ async def _run_generation(
     Args:
         generation_id：生成记录标识，同时用于停止生成。
         conversation_id：所属会话。
-        prompt：触发本次生成的用户文本。
+        current_message_id：当前用户消息 ID；不接收旁路文本，避免当前消息与数据库历史漂移。
         triggered_by_user_id：触发者，写入工具审计。
         allow_dangerous：触发者是否可以执行 dangerous 工具。
     """
@@ -277,12 +279,6 @@ async def _run_generation(
                 )
                 return
             set_log_context(role_id=role.id)
-            model, tools = await build_agent_inputs(session, role, prompt, allow_dangerous=allow_dangerous)
-            if settings.agent_use_fake_provider:
-                logger.info(
-                    "provider.built",
-                    extra={"provider_mode": "fake", "model": role.model_name},
-                )
             assistant = Message(
                 conversation_id=conversation_id,
                 sender_type="role",
@@ -309,7 +305,6 @@ async def _run_generation(
             assistant_id = assistant.id
             set_log_context(message_id=assistant_id)
             role_id = role.id
-            system_prompt = role.system_prompt
         await event_store.publish_events(created_event)
         logger.info(
             "generation.started",
@@ -324,9 +319,39 @@ async def _run_generation(
             },
         )
 
+        # ContextBuilder 在用户消息与角色占位消息都已落库后读取，但以 current_message_id 为严格截止点，
+        # 因此不会把当前消息重复放进 history，也不会读取正在生成的空 assistant 占位。
+        async with SessionLocal() as session:
+            context = await build_context(
+                session,
+                ContextBuildRequest(
+                    role_id=role_id,
+                    conversation_id=conversation_id,
+                    current_message_id=current_message_id,
+                    triggered_by_user_id=triggered_by_user_id,
+                ),
+            )
+            role = await session.get(Role, role_id)
+            if role is None:
+                raise ValueError("ROLE_NOT_AVAILABLE")
+            model, tools = await build_agent_inputs(
+                session, role, context.current_message, allow_dangerous=allow_dangerous,
+            )
+        if settings.agent_use_fake_provider:
+            logger.info(
+                "provider.built",
+                extra={"provider_mode": "fake", "model": role.model_name},
+            )
+
         last_persist = asyncio.get_running_loop().time()
         failed_code: str | None = None
-        async for event in run_agent(model=model, tools=tools, prompt=prompt, system_prompt=system_prompt):
+        async for event in run_agent(
+            model=model,
+            tools=tools,
+            prompt=context.current_message,
+            system_prompt=context.system_prompt,
+            history=context.history,
+        ):
             if isinstance(event, TextDelta):
                 accumulated += event.text
                 delta_seq += 1
@@ -448,6 +473,44 @@ async def _run_generation(
                 **terminal,
             },
         )
+    except ContextBudgetExceeded as exc:
+        terminal = await _finalize(generation_id, "failed", "", error_code=exc.error_code)
+        logger.warning(
+            "generation.failed",
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "error_code": exc.error_code,
+                "status": "rejected",
+                "provider_call_count": 0,
+                "estimated_context_tokens": exc.estimated_tokens,
+                "safety_margin_tokens": exc.safety_margin_tokens,
+                "input_budget_tokens": exc.input_budget_tokens,
+                "estimator_kind": exc.estimator_kind,
+                "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **terminal,
+            },
+        )
+        return
+    except ContextBuildError as exc:
+        reported = str(exc)
+        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED"}
+        error_code = reported if reported in expected_codes else "REQUEST_FAILED"
+        terminal = await _finalize(generation_id, "failed", "", error_code=error_code)
+        log_method = logger.warning if error_code in expected_codes else logger.exception
+        log_method(
+            "generation.failed",
+            extra={
+                "conversation_id": conversation_id,
+                "generation_id": generation_id,
+                "error_code": error_code,
+                "status": "rejected" if error_code in expected_codes else "failed",
+                "provider_call_count": 0,
+                "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **terminal,
+            },
+        )
+        return
     except asyncio.CancelledError:
         # 用户主动停止属于预期结果，按 stopped 落库而不是未处理异常。
         terminal = await _finalize(generation_id, "stopped", accumulated)

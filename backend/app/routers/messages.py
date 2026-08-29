@@ -139,7 +139,7 @@ async def send_message(
     )
 
     chat.start_generation(
-        generation.id, conversation_id, text,
+        generation.id, conversation_id, message.id,
         # Owner 是本机可信主体，Guest 触发的链路在工具执行层拒绝 dangerous 调用。
         triggered_by_user_id=user.id, allow_dangerous=user.is_owner,
     )

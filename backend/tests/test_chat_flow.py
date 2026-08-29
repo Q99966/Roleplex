@@ -5,31 +5,64 @@ import logging
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from langchain_core.messages import AIMessage, HumanMessage
 
 from accounts import TEST_PASSWORD, ensure_owner_async, guest_username
 
 
-async def _bootstrap(client: AsyncClient) -> dict:
+async def _bootstrap(
+    client: AsyncClient,
+    suffix: str = "",
+    *,
+    context_window_tokens: int = 200_000,
+    system_prompt: str = "你是测试助手",
+) -> dict:
     """确保 Owner 存在，并创建模型配置、角色和单聊会话，返回测试所需上下文。"""
     token = (await ensure_owner_async(client))["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     config = await client.post("/api/model-configs", headers=headers, json={
-        "name": "fake", "provider_type": "openai_compatible", "api_key": "sk-test-placeholder",
+        "name": f"fake{suffix}", "provider_type": "openai_compatible", "api_key": "sk-test-placeholder",
     })
     assert config.status_code == 201, config.text
 
     role = await client.post("/api/roles", headers=headers, json={
-        "name": "助手", "system_prompt": "你是测试助手", "model_config_id": config.json()["id"],
-        "model_name": "fake-model",
+        "name": f"助手{suffix}", "system_prompt": system_prompt, "model_config_id": config.json()["id"],
+        "model_name": "fake-model", "context_window_tokens": context_window_tokens,
     })
     assert role.status_code == 201, role.text
+    assert role.json()["context_window_tokens"] == context_window_tokens
+    assert role.json()["context_window_ceiling_tokens"] == 2_000_000
+    assert role.json()["effective_context_window_tokens"] == context_window_tokens
 
     conversation = await client.post("/api/conversations", headers=headers, json={
-        "type": "single", "title": "单聊测试", "role_ids": [role.json()["id"]],
+        "type": "single", "title": f"单聊测试{suffix}", "role_ids": [role.json()["id"]],
     })
     assert conversation.status_code == 201, conversation.text
     return {"headers": headers, "conversation_id": conversation.json()["id"], "role_id": role.json()["id"]}
+
+
+async def _wait_for_role_status(
+    client: AsyncClient,
+    headers: dict[str, str],
+    conversation_id: int,
+    status: str,
+) -> list[dict]:
+    """轮询直到会话出现指定角色消息终态。
+
+    Args:
+        client：测试 HTTP 客户端。
+        headers：Owner 认证头。
+        conversation_id：目标会话。
+        status：等待的角色消息状态。
+    """
+    for _ in range(100):
+        await asyncio.sleep(0.05)
+        history = await client.get(f"/api/conversations/{conversation_id}/messages", headers=headers)
+        items = history.json()["items"]
+        if any(message["sender_type"] == "role" and message["status"] == status for message in items):
+            return items
+    pytest.fail(f"角色消息没有在预期时间内进入 {status} 状态")
 
 
 @pytest.mark.anyio
@@ -139,4 +172,129 @@ async def test_unauthorized_and_foreign_conversation_are_hidden():
             denied = await client.get("/api/model-configs", headers=guest_headers)
             assert denied.status_code == 403
 
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_second_turn_receives_first_terminal_turn_as_history(monkeypatch: pytest.MonkeyPatch):
+    """第二轮必须看到第一轮用户消息和角色终态，且当前消息不能重复进入 history。"""
+    from app.agent.domain import MessageDone, TextDelta
+    from app.main import app
+    from app.db import engine
+    from app.services import chat
+
+    observed_histories: list[list] = []
+    observed_system_prompts: list[str] = []
+
+    async def history_aware_agent(**kwargs):
+        """记录业务层传入的 history，并产出确定性终态。
+
+        Args:
+            **kwargs：生成服务传给 Agent 防腐层的本轮输入。
+        """
+        history = list(kwargs["history"])
+        observed_histories.append(history)
+        observed_system_prompts.append(kwargs["system_prompt"])
+        reply = f"已处理：{kwargs['prompt']}"
+        yield TextDelta(text=reply)
+        yield MessageDone(text=reply)
+
+    monkeypatch.setattr(chat, "run_agent", history_aware_agent)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ctx = await _bootstrap(client, "历史")
+            first = await client.post(
+                f"/api/conversations/{ctx['conversation_id']}/messages",
+                headers=ctx["headers"],
+                json={"parts": [{"type": "text", "text": "第一轮问题"}], "client_message_id": "history-1"},
+            )
+            assert first.status_code == 202, first.text
+            await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
+
+            second = await client.post(
+                f"/api/conversations/{ctx['conversation_id']}/messages",
+                headers=ctx["headers"],
+                json={"parts": [{"type": "text", "text": "第二轮问题"}], "client_message_id": "history-2"},
+            )
+            assert second.status_code == 202, second.text
+            await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
+
+    assert observed_histories[0] == []
+    assert observed_system_prompts[0] == observed_system_prompts[1]
+    second_history = observed_histories[1]
+    assert any(isinstance(message, HumanMessage) and "第一轮问题" in str(message.content) for message in second_history)
+    assert any(isinstance(message, AIMessage) and "已处理：第一轮问题" in str(message.content) for message in second_history)
+    assert all("第二轮问题" not in str(message.content) for message in second_history)
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_untrimmable_context_budget_fails_before_provider(monkeypatch: pytest.MonkeyPatch):
+    """必要上下文超过角色窗口时必须拒绝，不能截断当前消息或调用 Provider。"""
+    from app.main import app
+    from app.db import SessionLocal, engine
+    from app.models import Generation
+    from app.services import chat
+
+    provider_called = False
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        """收集预算终态记录，不依赖 pytest root logger handler。"""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            """保存一条 chat logger 记录。
+
+            Args:
+                record：生成链路写出的日志记录。
+            """
+            records.append(record)
+
+    async def forbidden_agent(**_kwargs):
+        """标记任何越过预算防线的 Agent 调用。
+
+        Args:
+            **_kwargs：本用例不应收到的 Agent 输入。
+        """
+        nonlocal provider_called
+        provider_called = True
+        if False:
+            yield None
+
+    monkeypatch.setattr(chat, "run_agent", forbidden_agent)
+    handler = Capture()
+    chat.logger.addHandler(handler)
+    try:
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                ctx = await _bootstrap(
+                    client,
+                    "预算",
+                    context_window_tokens=4096,
+                    system_prompt="必须遵守的角色约束" * 1200,
+                )
+                sent = await client.post(
+                    f"/api/conversations/{ctx['conversation_id']}/messages",
+                    headers=ctx["headers"],
+                    json={"parts": [{"type": "text", "text": "不能被静默截断的当前消息"}]},
+                )
+                assert sent.status_code == 202, sent.text
+                await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "error")
+                async with SessionLocal() as session:
+                    generation = await session.get(Generation, sent.json()["generation_id"])
+                    assert generation is not None
+                    assert generation.error_code == "CONTEXT_BUDGET_EXCEEDED"
+    finally:
+        chat.logger.removeHandler(handler)
+
+    assert provider_called is False
+    failed = next(
+        record
+        for record in records
+        if record.name == "roleplex.chat"
+        and record.getMessage() == "generation.failed"
+        and getattr(record, "error_code", None) == "CONTEXT_BUDGET_EXCEEDED"
+    )
+    assert failed.estimated_context_tokens + failed.safety_margin_tokens > failed.input_budget_tokens
+    assert failed.estimator_kind == "conservative_utf8_v1"
     await engine.dispose()

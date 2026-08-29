@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 公开 |
 | 状态 | 已实现 |
-| 协议版本 | 1 |
+| 协议版本 | 2（兼容新增上下文窗口字段） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/roles.py`、`backend/app/schemas.py`、`backend/app/models.py` |
 | 关联测试 | `backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
-| 复核日期 | 2026-08-20 |
+| 复核日期 | 2026-08-29 |
 
 ## 范围
 
@@ -33,6 +33,9 @@ Agent 角色的增删改查，以及删除后的墓碑语义。角色在会话�
   "system_prompt": "占位提示词",
   "model_config_id": 1,
   "model_name": "占位模型名",
+  "context_window_tokens": 200000,
+  "context_window_ceiling_tokens": 2000000,
+  "effective_context_window_tokens": 200000,
   "params": {},
   "skills": [],
   "builtin_tools": [],
@@ -45,6 +48,10 @@ Agent 角色的增删改查，以及删除后的墓碑语义。角色在会话�
 ```
 
 写入请求体（创建与修改）只接受配置字段，不接受 `active`、`deleted_at` 等由服务端管理的状态。
+`context_window_tokens` 是 Owner 配置的模型输入+输出总窗口，默认 200K，允许 4K～2M；
+`context_window_ceiling_tokens` 是服务端部署安全上限，`effective_context_window_tokens` 是两者较小值，
+均只读。`params.max_tokens` 必须小于配置窗口，否则请求校验失败。设置过大可能仍被实际 Provider 拒绝，
+设置过小只会让历史更早裁剪。
 
 ## 列表与读取
 

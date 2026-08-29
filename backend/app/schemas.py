@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -91,10 +91,19 @@ class RoleCreate(BaseModel):
     system_prompt: str = Field(min_length=1, max_length=100_000)
     model_config_id: int
     model_name: str = Field(min_length=1, max_length=128)
+    context_window_tokens: int = Field(default=200_000, ge=4_096, le=2_000_000)
     params: dict[str, Any] = Field(default_factory=dict)
     skills: list[dict[str, str]] = Field(default_factory=list)
     builtin_tools: list[str] = Field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def output_must_fit_context_window(self) -> "RoleCreate":
+        """拒绝最大输出已经占满整个上下文窗口的角色配置。"""
+        max_tokens = self.params.get("max_tokens")
+        if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) and max_tokens >= self.context_window_tokens:
+            raise ValueError("max_tokens 必须小于 context_window_tokens")
+        return self
 
 
 class RoleResponse(BaseModel):
@@ -113,6 +122,9 @@ class RoleResponse(BaseModel):
     system_prompt: str
     model_config_id: int | None
     model_name: str
+    context_window_tokens: int
+    context_window_ceiling_tokens: int
+    effective_context_window_tokens: int
     params: dict[str, Any]
     skills: list[dict[str, Any]]
     builtin_tools: list[str]

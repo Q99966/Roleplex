@@ -4,9 +4,18 @@ import { ensureOwnerSession } from './owner'
 // 后端地址由 playwright.config.ts 统一下发，端口常量不在测试里重复维护。
 const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8001'
 
-/** 通过 API 准备一个可用于单聊的模型配置、角色和会话。 */
-async function seedConversation(page: Page, title: string): Promise<number> {
-  return page.evaluate(async ({ base, convTitle, suffix }) => {
+/**
+ * 通过 API 准备一个可用于单聊的模型配置、角色和会话。
+ * @param page 当前浏览器页面。
+ * @param title 会话标题。
+ * @param options 可选角色 system 与上下文窗口。
+ */
+async function seedConversation(
+  page: Page,
+  title: string,
+  options: { systemPrompt?: string; contextWindowTokens?: number } = {},
+): Promise<number> {
+  return page.evaluate(async ({ base, convTitle, suffix, systemPrompt, contextWindowTokens }) => {
     const token = localStorage.getItem('roleplex_token')
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     const post = async (path: string, body: unknown) => {
@@ -19,13 +28,23 @@ async function seedConversation(page: Page, title: string): Promise<number> {
     })
     // 角色名在同一 Owner 下唯一，因此按调用附加后缀。
     const role = await post('/api/roles', {
-      name: `E2E 助手 ${suffix}`, system_prompt: '你是端到端测试助手', model_config_id: config.id, model_name: 'fake-model',
+      name: `E2E 助手 ${suffix}`,
+      system_prompt: systemPrompt,
+      model_config_id: config.id,
+      model_name: 'fake-model',
+      context_window_tokens: contextWindowTokens,
     })
     const conversation = await post('/api/conversations', {
       type: 'single', title: convTitle, role_ids: [role.id],
     })
     return conversation.id as number
-  }, { base: backend, convTitle: title, suffix: `${Date.now()}` })
+  }, {
+    base: backend,
+    convTitle: title,
+    suffix: `${Date.now()}`,
+    systemPrompt: options.systemPrompt ?? '你是端到端测试助手',
+    contextWindowTokens: options.contextWindowTokens ?? 200_000,
+  })
 }
 
 test.describe('M2 single chat', () => {
@@ -98,5 +117,48 @@ test.describe('M2 single chat', () => {
     })
     expect(response.status()).toBe(401)
     expect((await response.json()).error.code).toBe('AUTH_REQUIRED')
+  })
+
+  test('configures a 200K role context window with presets', async ({ page }) => {
+    await ensureOwnerSession(page)
+    await page.evaluate(async ({ base, suffix }) => {
+      const token = localStorage.getItem('roleplex_token')
+      const response = await fetch(`${base}/api/model-configs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: `context-ui-${suffix}`,
+          provider_type: 'openai_compatible',
+          api_key: 'sk-e2e-placeholder',
+        }),
+      })
+      if (!response.ok) throw new Error(`model config failed: ${response.status}`)
+    }, { base: backend, suffix: `${Date.now()}` })
+    await page.reload()
+
+    await page.getByTitle('定制 Agent 角色').click()
+    const contextInput = page.getByLabel('上下文窗口 tokens')
+    await expect(contextInput).toHaveValue('200000')
+    const oneMillion = page.getByRole('button', { name: '1M', exact: true })
+    await oneMillion.click()
+    await expect(contextInput).toHaveValue('1000000')
+    await expect(oneMillion).toHaveClass(/bg-indigo-600/)
+    await expect(page.getByText(/服务上限 2,000,000 · 有效 1,000,000/)).toBeVisible()
+    await page.screenshot({ path: 'test-results/context-window-role-modal.png', fullPage: true })
+  })
+
+  test('shows an Owner-safe message when minimum context exceeds the window', async ({ page }) => {
+    await ensureOwnerSession(page)
+    await seedConversation(page, '上下文预算测试', {
+      contextWindowTokens: 4096,
+      systemPrompt: '必须遵守的角色约束'.repeat(1200),
+    })
+    await page.reload()
+
+    await page.getByText('上下文预算测试').first().click()
+    await page.getByLabel('消息输入框').fill('不能被静默截断的当前消息')
+    await page.getByLabel('发送消息').click()
+    await expect(page.getByText(/当前消息与角色基础配置超过模型上下文上限/)).toBeVisible({ timeout: 20_000 })
+    await page.screenshot({ path: 'test-results/context-budget-error.png', fullPage: true })
   })
 })

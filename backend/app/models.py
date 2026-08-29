@@ -77,6 +77,8 @@ class Role(Base):
     # 墓碑需要清除模型绑定，因此允许为空；仍在使用的角色由服务层保证非空。
     model_config_id: Mapped[int | None] = mapped_column(ForeignKey("model_configs.id", ondelete="RESTRICT"))
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 属于角色实际选择的模型，不放入会透传给 Provider 的 params_json。
+    context_window_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=200_000)
     params_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=json_dict, nullable=False)
     skills_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=json_list, nullable=False)
     builtin_tools_json: Mapped[list[str]] = mapped_column(JSON, default=json_list, nullable=False)

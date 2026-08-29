@@ -5,9 +5,9 @@
 | 受众 | 内部（不承诺客户端兼容性） |
 | 状态 | 原型（M0 风险验证结论，产品接入见后续里程碑） |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/agent/`、`backend/app/mcp/manager.py` |
-| 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-08-24 |
+| 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/mcp/manager.py` |
+| 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_mcp_manager.py`、`tests/contract/` |
+| 复核日期 | 2026-08-29 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -32,6 +32,15 @@
 
 `ToolCallFinished.status` 取值：`ok`（正常返回）、`rejected`（危险级别在执行层被拒绝）、
 `error`（工具自身抛错）。被拒绝属于正常结束路径，本轮生成仍应完成。
+
+## ContextBuilder 边界
+
+单聊、后续群聊角色和 Orchestrator 必须通过 `app/context/` 构造模型输入。当前实现以已落库用户消息 ID
+作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
+revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。
+
+角色上下文窗口默认 200K，并受部署 ceiling 约束。未知 tokenizer 使用明确标记的保守 UTF-8 估算，不能
+冒充 Provider usage。预算不足时产生 `CONTEXT_BUDGET_EXCEEDED`，在调用模型前失败。
 
 ## 防腐层边界与实测结论
 
@@ -91,6 +100,14 @@ trace/video，具体运行与留存约定见 README。
   产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
 - **厂商错误信息本身可能带打码后的 Key 片段**，所以错误信息只能按稳定错误码消费，
   不得原样回显给客户端，日志侧也保留脱敏处理。
+- **两轮真实历史与缓存复核（2026-08-28）**：浏览器第一轮要求模型记住随机验证码，第二轮能准确回显，
+  证明业务生成链路确实传入 ContextBuilder 历史而非测试旁路。DeepSeek V4 Flash 本次观测为第一轮
+  input/cache=`229/0`、第二轮=`267/128`，第二轮 TTFT 从 396ms 降至 122ms；数字只是一轮样本，不能作为
+  Provider 命中率或时延承诺。
+- **正常世界 real-world 复核（2026-08-29）**：临时世界通过 `run_world_server.py` 启动，健康检查确认
+  `world_managed=true`，真实 Key 使用世界独立加密密钥落库；相同两轮验证码对话通过。本轮两次
+  input/cache 为 `229/128`、`264/128`，证明真实世界路径与兼容数据库 smoke 使用同一 ContextBuilder，
+  但缓存数字仍只属于该次 Provider 观测。
 
 ## 工具危险分级与审计
 

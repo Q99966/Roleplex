@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { 
   Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users 
 } from 'lucide-react'
@@ -195,12 +195,23 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
     system_prompt: '',
     model_config_id: 0,
     model_name: '',
+    context_window_tokens: 200_000,
     params: '{}',
     builtin_tools: [] as string[]
   })
   
   const [busy, setBusy] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const maxOutputTokens = useMemo(() => {
+    try {
+      const value = (JSON.parse(form.params || '{}') as { max_tokens?: unknown }).max_tokens
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1024
+    } catch {
+      return 1024
+    }
+  }, [form.params])
+  const contextCeiling = role?.context_window_ceiling_tokens ?? 2_000_000
+  const effectiveContextWindow = Math.min(form.context_window_tokens, contextCeiling)
 
   useEffect(() => {
     if (role) {
@@ -214,6 +225,7 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
         // 表单状态保持非空数字，提交前仍会校验必须选中一个模型配置。
         model_config_id: role.model_config_id ?? 0,
         model_name: role.model_name,
+        context_window_tokens: role.context_window_tokens,
         params: JSON.stringify(role.params || {}, null, 2),
         builtin_tools: role.builtin_tools || []
       })
@@ -246,6 +258,13 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       return
     }
 
+    const submittedMaxOutput = (parsedParams as { max_tokens?: unknown }).max_tokens
+    if (typeof submittedMaxOutput === 'number' && submittedMaxOutput >= form.context_window_tokens) {
+      setErrorMsg('模型 max_tokens 必须小于上下文窗口')
+      setBusy(false)
+      return
+    }
+
     if (form.avatar) {
       const trimmed = form.avatar.trim()
       const isLocalPath = /^[a-zA-Z]:\\/i.test(trimmed) || 
@@ -268,6 +287,7 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       system_prompt: form.system_prompt,
       model_config_id: form.model_config_id,
       model_name: form.model_name || 'gpt-4o',
+      context_window_tokens: form.context_window_tokens,
       params: parsedParams,
       skills: [],
       builtin_tools: form.builtin_tools,
@@ -432,6 +452,47 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
               className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono text-[11px] leading-relaxed" 
             />
           </label>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-slate-300 font-medium">上下文窗口（tokens）</p>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  填写模型 API 实际支持的输入与输出总窗口；设置过大可能被厂商拒绝。
+                </p>
+              </div>
+              <input
+                type="number"
+                aria-label="上下文窗口 tokens"
+                min={4096}
+                max={2_000_000}
+                step={1024}
+                value={form.context_window_tokens}
+                onChange={e => setForm({...form, context_window_tokens: Number(e.target.value)})}
+                className="w-36 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[128_000, 200_000, 1_000_000].map(value => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setForm({...form, context_window_tokens: value})}
+                  className={`px-3 py-1.5 rounded-lg border text-[10px] transition ${
+                    form.context_window_tokens === value
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {value === 1_000_000 ? '1M' : `${Math.round(value / 1000)}K`}
+                </button>
+              ))}
+              <span className="self-center text-[10px] text-slate-500">
+                服务上限 {contextCeiling.toLocaleString()} · 有效 {effectiveContextWindow.toLocaleString()} ·
+                输出预留 {maxOutputTokens.toLocaleString()} · 可用输入约 {Math.max(0, effectiveContextWindow - maxOutputTokens).toLocaleString()}
+              </span>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="block">

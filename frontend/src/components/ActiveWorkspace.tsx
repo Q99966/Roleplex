@@ -21,6 +21,20 @@ function unknownPartTypes(parts: Part[]): string[] {
   return Array.from(new Set(parts.filter((part) => part.type !== 'text').map((part) => part.type)))
 }
 
+/**
+ * 把稳定错误码转换为不泄露 Owner 私有配置的用户提示。
+ * @param code 服务端 message_done 返回的稳定错误码或普通错误文本。
+ * @param isOwner 当前登录者是否为本世界 Owner。
+ */
+function chatErrorMessage(code: string, isOwner: boolean): string {
+  if (code === 'CONTEXT_BUDGET_EXCEEDED') {
+    return isOwner
+      ? '当前消息与角色基础配置超过模型上下文上限。请缩短消息，或调整角色提示词、工具配置、上下文窗口或最大输出长度后重试。'
+      : '本次请求超过模型可处理的上下文上限。请缩短消息后重试，或联系 Owner 调整角色配置。'
+  }
+  return code
+}
+
 /** 渲染真实单聊工作台：历史消息、流式回复、停止生成与会话成员面板。 */
 export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveWorkspaceProps) {
   const { conversations, activeConversationId, roles, roleDirectory, user } = useAppStore()
@@ -188,7 +202,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
           {error && (
             <div className="flex items-start gap-2 rounded-xl bg-red-950/30 border border-red-900/40 px-4 py-3 text-xs text-red-300">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
-              <span>{error}</span>
+              <span>{chatErrorMessage(error, Boolean(user?.is_owner))}</span>
             </div>
           )}
         </div>

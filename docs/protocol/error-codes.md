@@ -7,7 +7,7 @@
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py` |
-| 复核日期 | 2026-08-26 |
+| 复核日期 | 2026-08-29 |
 
 本文是稳定 `error_code` 的跨领域权威注册表。各领域协议负责说明“哪个接口或事件会返回哪些错误码”；
 错误码本身的名称、含义、终态和重试语义只在本文定义，避免同一含义散落后漂移。
@@ -138,6 +138,7 @@ WebSocket error frame 使用：
 | `PROVIDER_BAD_REQUEST` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商拒绝请求结构或参数，原请求不应原样重试 |
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
 | `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
+| `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 可裁剪历史全部移除后，必要规则、当前可见工具、当前消息与输出预留仍超过角色有效窗口；不调用 Provider |
 
 Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime.md)。原始厂商错误不得回显给客户端，
 因为异常文本可能包含打码 Key、URL query 或 SDK 请求信息。

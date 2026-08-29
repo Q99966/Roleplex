@@ -27,7 +27,11 @@ _context_fields = frozenset({
     "ws_connection_id",
 })
 _sensitive_fragments = ("password", "passwd", "secret", "token", "authorization", "api_key", "apikey", "cookie")
-_usage_token_fields = frozenset({"input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens"})
+_usage_token_fields = frozenset({
+    "input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens",
+    # ContextBuilder 的本地预算估算不是凭据，也不冒充 Provider usage；字段名必须显式登记才可落盘。
+    "estimated_context_tokens", "input_budget_tokens", "safety_margin_tokens",
+})
 _standard_record_fields = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 _ignored_record_fields = frozenset({"color_message", "websocket"})
 _run_kinds = frozenset({"runtime", "unit", "e2e-fake", "e2e-real"})

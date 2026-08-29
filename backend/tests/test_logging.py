@@ -66,6 +66,9 @@ def test_json_formatter_assigns_identity_order_category_and_omits_empty_context(
                 "output_tokens": 30,
                 "total_tokens": 150,
                 "cache_hit_tokens": 80,
+                "estimated_context_tokens": 1800,
+                "input_budget_tokens": 4096,
+                "safety_margin_tokens": 128,
                 "color_message": "internal-colored-template",
                 "metadata": {
                     "safe": "visible",
@@ -95,6 +98,9 @@ def test_json_formatter_assigns_identity_order_category_and_omits_empty_context(
     assert payload["output_tokens"] == 30
     assert payload["total_tokens"] == 150
     assert payload["cache_hit_tokens"] == 80
+    assert payload["estimated_context_tokens"] == 1800
+    assert payload["input_budget_tokens"] == 4096
+    assert payload["safety_margin_tokens"] == 128
     assert payload["metadata"] == {"safe": "visible"}
     assert "user_id" not in payload
     assert "generation_id" not in payload

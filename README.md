@@ -13,6 +13,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 用户认证、模型配置 CRUD、角色 CRUD、会话创建/列表/个人置顶归档
 - 角色删除保留墓碑（历史消息仍显示原发送者），会话删除进回收站并可在 7 天内恢复
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
+- 单聊通过统一 ContextBuilder 读取终态历史；角色上下文窗口默认 200K 并可由 Owner 配置
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
 - 多世界物理存档、CLI 一致性备份与包装器热切换；每个世界独立数据库和密钥
@@ -24,6 +25,8 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
 富媒体产物、群聊调度、Orchestrator 与 MCP 产品接入将在后续里程碑完成。
+
+完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 
 ### 模型 provider 开关与契约测试
 
@@ -71,6 +74,18 @@ npm run test:e2e:real
 产品加密边界，不传给浏览器；真实测试关闭 trace/video。每轮使用并保留独立数据库
 `data/roleplex-real-e2e-<时间戳>.db`，最近 5 轮之外的旧库在下一轮结束时清理。
 
+上述命令有意使用显式数据库兼容模式，便于把 Provider/Context 问题与世界包装器问题分开定位。需要验证
+“正常世界包装器 → 世界独立双密钥 → 真实前后端 → 真实 Provider”的完整产品路径时，显式运行：
+
+```bash
+cd frontend
+npm run test:e2e:real-world
+```
+
+它会创建 `data/roleplex-real-world-e2e-<时间戳>/default/`，包含完整世界元数据、数据库、JWT/API Key
+双密钥和 files 目录，并保留最近 5 轮。该命令同样联网计费、关闭 trace/video，但不测试世界切换；世界
+切换仍由 fake Provider 的 `test:e2e:worlds` 确定性覆盖。
+
 真实 E2E 的 Owner 为 `realtest<时间戳>`，密码固定为 `Roleplex-Real-E2E-1`。数据库包含加密后的
 真实 Key，只能用于本机核对，不要分享或提交；离开当前实例密钥后其中的模型配置无法解密。
 
@@ -81,6 +96,7 @@ npm run test:e2e:real
 - 后端：`data/roleplex-test-<时间戳>.db`（pytest 结束时会打印本轮路径）
 - 端到端：`data/roleplex-e2e-<时间戳>.db`
 - 真实 API 端到端：`data/roleplex-real-e2e-<时间戳>.db`（仅显式运行 `test:e2e:real` 时产生）
+- 真实 API 世界端到端：`data/roleplex-real-world-e2e-<时间戳>/default/`（仅运行 `test:e2e:real-world`）
 
 测试账号与本轮数据库同名可追溯：Owner 为 `test<时间戳>`，Guest 为 `test<时间戳>_<用途>`，
 密码统一是 `Roleplex-Test-1234`。想查看某轮测试产生的数据，可以让后端显式连接那一个数据库：
@@ -144,9 +160,10 @@ python scripts/run_world_server.py --world default --host 0.0.0.0 --port 8000
 清除旧 Token 并要求重新登录。`ROLEPLEX_WORLD` 可指定启动世界，`WORLDS_DIR` 可覆盖世界根目录。
 显式 `DATABASE_URL` 的优先级最高，会进入兼容模式，pytest、普通 E2E 和人工检查测试库的命令不变。
 
-普通 pytest、普通 E2E 和真实 API E2E 继续使用显式的独立数据库，避免短生命周期测试数据出现在正式
-世界列表中。专门验证 A1 切换链路的 `npm run test:e2e:worlds` 会创建真正的 alpha/beta 物理世界，
-但放在带时间戳的 `data/roleplex-world-e2e-*/` 隔离目录中并只保留最近五轮，不写入正式 `worlds/`。
+普通 pytest、普通 E2E 和真实 API smoke 继续使用显式的独立数据库，避免短生命周期测试数据出现在正式
+世界列表中。`test:e2e:worlds` 与 `test:e2e:real-world` 才创建物理世界，且都放在带时间戳的 `data/`
+隔离目录，不写入正式 `worlds/`。其中世界切换测试创建 alpha/beta，并把最近五轮保存在
+`data/roleplex-world-e2e-*/`。
 要人工查看其中一轮，在 `backend` 目录把包装器的世界根目录指向该轮目录即可：
 
 ```bash

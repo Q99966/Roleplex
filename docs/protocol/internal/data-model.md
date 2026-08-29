@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-08-17 |
+| 复核日期 | 2026-08-29 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -103,6 +103,7 @@ Agent 角色定义，是"联系人"的数据来源。
 | `system_prompt` | 角色的 System Prompt；墓碑清空 |
 | `model_config_id` | 使用哪份厂商配置；保存时校验属于同一 Owner。**可空**：墓碑要清除模型绑定 |
 | `model_name` | 具体模型名，如占位的 `fake-model`；墓碑清空 |
+| `context_window_tokens` | Owner 为角色所选模型配置的输入+输出总窗口，默认 200K；墓碑重置为默认值 |
 | `params_json` | 采样参数（temperature、max_tokens 等）。运行时按模型能力剔除不兼容项；墓碑清空 |
 | `skills_json` | 追加到 System Prompt 的技能片段；墓碑清空 |
 | `builtin_tools_json` | 启用的内置工具名列表；墓碑清空 |

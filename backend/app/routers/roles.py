@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
+from ..config import settings
 from ..models import ModelConfig, Role, User
 from ..schemas import RoleCreate, RoleResponse
 from ..security.tokens import get_current_user, require_owner
@@ -25,6 +26,9 @@ def to_response(role: Role) -> RoleResponse:
         id=role.id, name=role.name, avatar=role.avatar, description=role.description,
         tags=role.tags_json or [], system_prompt=role.system_prompt,
         model_config_id=role.model_config_id, model_name=role.model_name,
+        context_window_tokens=role.context_window_tokens,
+        context_window_ceiling_tokens=settings.max_context_tokens,
+        effective_context_window_tokens=min(role.context_window_tokens, settings.max_context_tokens),
         params=role.params_json or {}, skills=role.skills_json or [],
         builtin_tools=role.builtin_tools_json or [], mcp_servers=role.mcp_servers_json or [],
         active=role.active, deleted_at=role.deleted_at,
@@ -74,7 +78,8 @@ async def create_role(payload: RoleCreate, user: Annotated[User, Depends(require
     role = Role(
         created_by=user.id, name=payload.name, avatar=payload.avatar, description=payload.description,
         tags_json=payload.tags, system_prompt=payload.system_prompt, model_config_id=payload.model_config_id,
-        model_name=payload.model_name, params_json=payload.params, skills_json=payload.skills,
+        model_name=payload.model_name, context_window_tokens=payload.context_window_tokens,
+        params_json=payload.params, skills_json=payload.skills,
         builtin_tools_json=payload.builtin_tools, mcp_servers_json=payload.mcp_servers,
         mcp_tools_cache_json=[], active=True, created_at=now, updated_at=now,
     )
@@ -105,6 +110,7 @@ async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, D
     role.system_prompt = payload.system_prompt
     role.model_config_id = payload.model_config_id
     role.model_name = payload.model_name
+    role.context_window_tokens = payload.context_window_tokens
     role.params_json = payload.params
     role.skills_json = payload.skills
     role.builtin_tools_json = payload.builtin_tools
@@ -134,6 +140,7 @@ async def delete_role(role_id: int, user: Annotated[User, Depends(require_owner)
     role.system_prompt = ""
     role.model_config_id = None
     role.model_name = ""
+    role.context_window_tokens = 200_000
     role.description = None
     role.tags_json = []
     role.params_json = {}

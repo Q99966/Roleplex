@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     # 保证自动化回归稳定、离线且不产生模型费用。
     agent_use_fake_provider: bool = False
     pin_budget_ratio: float = 0.30
-    max_context_tokens: int = 100_000
+    # 部署安全 ceiling；每个角色默认 200K，并可在此绝对上限内单独配置。
+    max_context_tokens: int = Field(default=2_000_000, ge=4_096, le=2_000_000)
     max_upload_bytes: int = 10 * 1024 * 1024
     log_dir: str = str(LOG_DIR)
     log_level: str = "INFO"
