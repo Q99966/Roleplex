@@ -138,10 +138,37 @@ async def test_single_chat_streams_and_persists():
     assert provider_call.output_tokens is None
     assert provider_call.total_tokens is None
     assert provider_call.cache_hit_tokens is None
+    assert provider_call.cache_write_tokens is None
+    assert provider_call.cache_hit_ratio is None
+
+    loaded = next(record for record in records if record.getMessage() == "context.loaded")
+    assert loaded.context_schema_version == 1
+    assert len(loaded.runtime_prefix_hash) == 64
+    assert len(loaded.role_prefix_hash) == 64
+    assert len(loaded.conversation_prefix_hash) == 64
+    assert len(loaded.tool_policy_hash) == 64
+    assert loaded.context_message_count == 0
+    assert loaded.context_truncated_message_count == 0
+    assert loaded.estimated_context_tokens > 0
+    assert loaded.estimator_kind == "conservative_utf8_v1"
+    assert not hasattr(loaded, "checkpoint_hash")
+
+    for field in (
+        "context_schema_version", "runtime_prefix_hash", "role_prefix_hash",
+        "conversation_prefix_hash", "tool_policy_hash", "context_message_count",
+        "context_truncated_message_count", "estimated_context_tokens",
+    ):
+        assert getattr(provider_call, field) == getattr(loaded, field)
+    provider_started = next(record for record in records if record.getMessage() == "provider.call_started")
+    assert provider_started.tool_policy_hash == loaded.tool_policy_hash
+    assert not hasattr(provider_started, "checkpoint_hash")
+    assert not hasattr(loaded, "system_prompt")
+    assert not hasattr(loaded, "current_message")
 
     completed = next(record for record in records if record.getMessage() == "generation.completed")
     assert completed.provider_call_count == 1
     assert completed.total_tokens is None
+    assert completed.runtime_prefix_hash == loaded.runtime_prefix_hash
     await engine.dispose()
 
 
@@ -185,6 +212,18 @@ async def test_second_turn_receives_first_terminal_turn_as_history(monkeypatch: 
 
     observed_histories: list[list] = []
     observed_system_prompts: list[str] = []
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        """收集两轮生成的上下文诊断事件。"""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            """保存一条 chat logger 记录。
+
+            Args:
+                record：生成链路写出的日志记录。
+            """
+            records.append(record)
 
     async def history_aware_agent(**kwargs):
         """记录业务层传入的 history，并产出确定性终态。
@@ -200,24 +239,29 @@ async def test_second_turn_receives_first_terminal_turn_as_history(monkeypatch: 
         yield MessageDone(text=reply)
 
     monkeypatch.setattr(chat, "run_agent", history_aware_agent)
-    async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            ctx = await _bootstrap(client, "历史")
-            first = await client.post(
-                f"/api/conversations/{ctx['conversation_id']}/messages",
-                headers=ctx["headers"],
-                json={"parts": [{"type": "text", "text": "第一轮问题"}], "client_message_id": "history-1"},
-            )
-            assert first.status_code == 202, first.text
-            await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
+    handler = Capture()
+    chat.logger.addHandler(handler)
+    try:
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                ctx = await _bootstrap(client, "历史")
+                first = await client.post(
+                    f"/api/conversations/{ctx['conversation_id']}/messages",
+                    headers=ctx["headers"],
+                    json={"parts": [{"type": "text", "text": "第一轮问题"}], "client_message_id": "history-1"},
+                )
+                assert first.status_code == 202, first.text
+                await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
 
-            second = await client.post(
-                f"/api/conversations/{ctx['conversation_id']}/messages",
-                headers=ctx["headers"],
-                json={"parts": [{"type": "text", "text": "第二轮问题"}], "client_message_id": "history-2"},
-            )
-            assert second.status_code == 202, second.text
-            await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
+                second = await client.post(
+                    f"/api/conversations/{ctx['conversation_id']}/messages",
+                    headers=ctx["headers"],
+                    json={"parts": [{"type": "text", "text": "第二轮问题"}], "client_message_id": "history-2"},
+                )
+                assert second.status_code == 202, second.text
+                await _wait_for_role_status(client, ctx["headers"], ctx["conversation_id"], "done")
+    finally:
+        chat.logger.removeHandler(handler)
 
     assert observed_histories[0] == []
     assert observed_system_prompts[0] == observed_system_prompts[1]
@@ -225,6 +269,14 @@ async def test_second_turn_receives_first_terminal_turn_as_history(monkeypatch: 
     assert any(isinstance(message, HumanMessage) and "第一轮问题" in str(message.content) for message in second_history)
     assert any(isinstance(message, AIMessage) and "已处理：第一轮问题" in str(message.content) for message in second_history)
     assert all("第二轮问题" not in str(message.content) for message in second_history)
+    loaded = [record for record in records if record.getMessage() == "context.loaded"]
+    assert len(loaded) == 2
+    for field in (
+        "context_schema_version", "runtime_prefix_hash", "role_prefix_hash",
+        "conversation_prefix_hash", "tool_policy_hash",
+    ):
+        assert getattr(loaded[0], field) == getattr(loaded[1], field)
+    assert [record.context_message_count for record in loaded] == [0, 2]
     await engine.dispose()
 
 

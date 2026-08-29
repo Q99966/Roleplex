@@ -71,6 +71,8 @@ class ProviderCallCompleted:
     output_tokens: int | None
     total_tokens: int | None
     cache_hit_tokens: int | None
+    cache_write_tokens: int | None
+    cache_hit_ratio: float | None
     total_tokens_derived: bool | None = None
 
 

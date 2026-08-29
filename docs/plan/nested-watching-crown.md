@@ -1,6 +1,6 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
-## 当前追加任务：上下文、Prompt Cache、群聊与 Orchestrator（C0/C1 已实现，待人工验收）
+## 当前追加任务：上下文、Prompt Cache、群聊与 Orchestrator（C0-C2 已完成，等待 M4a 指令）
 
 用户于 2026-08-28 决定延期工作项四“会话导出与导入”：必须先补齐统一历史上下文、优化 Prompt Prefix
 Cache、实现群聊串行调度和 Orchestrator，并完成阶段式 Checkpoint 与真实缓存验收，再冻结导出格式。
@@ -22,7 +22,14 @@ Shared Memory 不作为主线前置。未来 Memory v0 只从普通 ORM + Owner 
 
 C0/C1 已于 2026-08-29 实现：ContextBuilder 终态历史、角色视角投影、硬预算、稳定 hash、Role 上下文
 窗口配置、迁移和预算拒绝均已落地。后端 85 passed、普通 E2E 17 passed、世界 E2E 1 passed、真实
-DeepSeek 显式数据库与正常世界两轮历史/缓存验证、前端 build 均通过；当前等待人工验收，C2 尚未开始。
+DeepSeek 显式数据库与正常世界两轮历史/缓存验证、前端 build 均通过；已于 2026-08-29 经用户人工验收并
+提交 `4ea6312`。
+
+C2 已于 2026-08-29 实现：ContextBuilder schema、稳定层/tool policy hash、历史/裁剪计数和预算诊断已绑定
+到 `context.loaded`、Provider 与 generation 日志；Provider usage 支持 cache write 和命中比，fake 不伪造
+usage。后端 86 passed、普通 fake E2E 17 passed、fake managed-world E2E 1 passed、真实 DeepSeek
+managed-world E2E 1 passed、前端 build 通过。fake 与真实测试都在独立世界目录中完成两轮对话并自动核对
+稳定 hash、history `0→2`、usage 和 Prompt 不落日志；已于 2026-08-30 经用户人工验收，M4a 尚未开始。
 
 ## 当前追加任务：日志与测试报告 v2（已完成，经人工验收）
 

@@ -138,6 +138,8 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
     assert calls[0].output_tokens is None
     assert calls[0].total_tokens is None
     assert calls[0].cache_hit_tokens is None
+    assert calls[0].cache_write_tokens is None
+    assert calls[0].cache_hit_ratio is None
     assert calls[0].total_tokens_derived is None
 
 
@@ -150,11 +152,14 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
                     "input_tokens": 120,
                     "output_tokens": 30,
                     "total_tokens": 150,
-                    "input_token_details": {"cache_read": 80},
+                    "input_token_details": {"cache_read": 80, "cache_creation": 16},
                 },
                 response_metadata={},
             ),
-            {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150, "cache_hit_tokens": 80},
+            {
+                "input_tokens": 120, "output_tokens": 30, "total_tokens": 150,
+                "cache_hit_tokens": 80, "cache_write_tokens": 16, "cache_hit_ratio": 80 / 120,
+            },
         ),
         (
             SimpleNamespace(
@@ -168,7 +173,10 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
                     }
                 },
             ),
-            {"input_tokens": 90, "output_tokens": 10, "total_tokens": 100, "cache_hit_tokens": 60},
+            {
+                "input_tokens": 90, "output_tokens": 10, "total_tokens": 100,
+                "cache_hit_tokens": 60, "cache_hit_ratio": 60 / 90,
+            },
         ),
         (
             SimpleNamespace(
@@ -178,12 +186,14 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
                         "input_tokens": 70,
                         "output_tokens": 20,
                         "cache_read_input_tokens": 40,
+                        "cache_creation_input_tokens": 10,
                     }
                 },
             ),
             {
-                "input_tokens": 70, "output_tokens": 20, "total_tokens": 90,
-                "cache_hit_tokens": 40, "total_tokens_derived": True,
+                "input_tokens": 120, "output_tokens": 20, "total_tokens": 140,
+                "cache_hit_tokens": 40, "cache_write_tokens": 10,
+                "cache_hit_ratio": 40 / 120, "total_tokens_derived": True,
             },
         ),
         (
@@ -199,14 +209,33 @@ async def test_provider_call_reports_deterministic_ttft_and_duration():
             ),
             {
                 "input_tokens": 50, "output_tokens": 25, "total_tokens": 75,
-                "cache_hit_tokens": 32, "total_tokens_derived": True,
+                "cache_hit_tokens": 32, "cache_hit_ratio": 32 / 50,
+                "total_tokens_derived": True,
             },
         ),
     ],
 )
-def test_provider_usage_is_normalized_across_vendor_shapes(output: Any, expected: dict[str, int]):
+def test_provider_usage_is_normalized_across_vendor_shapes(output: Any, expected: dict[str, int | float]):
     """LangChain、DeepSeek、Anthropic 与 OpenAI usage 字段归一为稳定日志字段。"""
     assert normalize_provider_usage(output) == expected
+
+
+def test_deepseek_cache_miss_is_not_reported_as_cache_write():
+    """DeepSeek miss 只表示未命中，不能冒充厂商没有报告的缓存写入。"""
+    output = SimpleNamespace(
+        usage_metadata=None,
+        response_metadata={"token_usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_cache_hit_tokens": 40,
+            "prompt_cache_miss_tokens": 60,
+        }},
+    )
+
+    usage = normalize_provider_usage(output)
+
+    assert usage["cache_hit_ratio"] == 0.4
+    assert "cache_write_tokens" not in usage
 
 
 @pytest.mark.anyio

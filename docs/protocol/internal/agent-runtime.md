@@ -23,7 +23,7 @@
 | `ToolCallStarted` | 一次工具调用开始 | `call_id`、`tool_name`、`args_summary` |
 | `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary` |
 | `ProviderCallStarted` | 一次模型 API 调用开始 | `call_index` |
-| `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存 token |
+| `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存读写 token 与可选命中比 |
 | `MessageDone` | 本轮正常结束 | `text`（最终全文）、`usage` |
 | `ProviderError` | 本轮失败 | `code`（稳定错误码）、`message` |
 
@@ -96,8 +96,10 @@ trace/video，具体运行与留存约定见 README。
 
 - **用量口径在防腐层统一**：优先读取 LangChain `usage_metadata`，并兼容 OpenAI-compatible、
   DeepSeek 和 Anthropic 的原始 usage 形态，统一为 `input_tokens`、`output_tokens`、`total_tokens`、
-  `cache_hit_tokens`。厂商未报告的字段保持为空，不按字符数估算。多轮工具调用会为每次模型请求
-  产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
+  `cache_hit_tokens`、`cache_write_tokens` 和可选 `cache_hit_ratio`。Anthropic 原始 `input_tokens` 不含
+  cache read/create，防腐层恢复为完整输入口径；DeepSeek 的 `prompt_cache_miss_tokens` 只表示未命中，
+  不冒充厂商没有报告的缓存写入。厂商未报告的字段保持为空，不按字符数估算。多轮工具调用会为每次模型
+  请求产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
 - **厂商错误信息本身可能带打码后的 Key 片段**，所以错误信息只能按稳定错误码消费，
   不得原样回显给客户端，日志侧也保留脱敏处理。
 - **两轮真实历史与缓存复核（2026-08-28）**：浏览器第一轮要求模型记住随机验证码，第二轮能准确回显，

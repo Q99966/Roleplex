@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 内部开发、测试与本机运维 |
 | 状态 | 已实现（日志 schema v2） |
-| 协议版本 | 5 |
+| 协议版本 | 6 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
 | 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
-| 复核日期 | 2026-08-27 |
+| 复核日期 | 2026-08-29 |
 
 本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
 统一引用详细规范，不在本文复制第二份权威定义。
@@ -49,7 +49,16 @@ WebSocket/流式事件继续关联 stream epoch、event seq、message revision�
 ## Provider usage
 
 每次模型调用记录 provider mode/type、模型、首分片耗时、总耗时和厂商报告的输入/输出/总量/缓存命中
-token。至少一个 usage 字段存在时标记来源为 provider；fake 或厂商未报告时省略，不做字符数估算。
+与缓存写入 token。仅当同次调用有正数 input 和非负 cache hit 时计算命中比；至少一个 usage 字段存在时
+标记来源为 provider。fake 或厂商未报告时省略，不做字符数估算。多次模型调用的 generation 汇总只有在
+每次调用都报告对应字段时才生成，避免用部分数据冒充整轮事实。
+
+## Context 与缓存诊断
+
+ContextBuilder 成功后写 `context.loaded`，并把同一快照的 schema version、L0/L1/L2/tool policy SHA-256、
+实际历史消息数、裁剪数、本地估算器身份与预算绑定到本轮 Provider 和 generation 事件。C3 前不伪造
+checkpoint hash；完整 Prompt、层内容、用户输入和模型输出仍不落盘。缓存 token 和命中比只使用厂商数据，
+本地估算字段保持 `estimated_*`/`estimator_*` 命名，不进入 Provider usage 汇总。
 
 ## 测试报告
 

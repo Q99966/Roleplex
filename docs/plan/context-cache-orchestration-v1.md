@@ -3,20 +3,21 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | 已批准；待用户指令后分阶段实施 |
+| 状态 | 已批准；C0-C2 已完成，等待 M4a 实施指令 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-08-29 |
+| 复核日期 | 2026-08-30 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
 思路，不直接授权其中的 Workspace、FTS5、sqlite-vec、Embedding 或自动长期记忆能力。
 
-## 当前实施进度（2026-08-29）
+## 当前实施进度（2026-08-30）
 
-- C0/C1 已实现，等待用户人工验收；C2、M4a 及后续阶段尚未开始。
+- C0/C1 已实现并于 2026-08-29 经用户人工验收，提交 `4ea6312`；C2 已于 2026-08-30 经用户人工验收；
+  M4a 及后续阶段尚未开始。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -29,11 +30,22 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
   第二轮=267/128。该数据仅为一次观测，不是性能承诺。
 - 新增 `test:e2e:real-world`：临时 `default` 世界使用独立数据库和双密钥，经正常世界包装器运行相同两轮
   真实契约；与显式数据库 `test:e2e:real` 分层保留，便于定位 Provider 与世界基础设施问题。
+- C2 新增 `context.loaded`，并把同一 ContextBuilder 快照的 schema、L0/L1/L2/tool policy SHA-256、历史
+  计数、裁剪数和本地预算绑定到 Provider 与 generation 日志；C3 前不伪造 checkpoint hash，日志不保存
+  Prompt 原文。
+- Provider usage 新增厂商报告的 cache write 与命中比；Anthropic 原始输入恢复为包含 cache read/create
+  的完整口径，DeepSeek cache miss 不冒充 cache write；fake usage 继续为空。
+- C2 自动验证：后端 86 passed、3 skipped；普通 E2E 17 passed；fake managed-world E2E 1 passed；真实
+  DeepSeek managed-world E2E 1 passed；前端 build 通过。验证中修正普通 Playwright 配置误收集独立
+  real-world 用例的问题，默认回归重新固定为 fake 且不联网。
+- fake managed-world 在独立 `alpha/beta` 世界中先完成两轮消息与 C2 日志断言，再切换世界；真实测试在
+  独立 `default` 世界中完成相同两轮历史与日志安全断言。本轮 DeepSeek 第一轮 input/cache=`229/128`、
+  ratio=`0.5589519651`，第二轮=`264/128`、ratio=`0.4848484848`；数字仍只属于本轮观测。
 
 ## 一、为什么先暂停会话导出/导入
 
-当前单聊链路已经能持久化消息并流式回复，但业务层调用 `run_agent()` 时只传入当前消息和角色系统提示，
-尚未把数据库历史投影为模型上下文。群聊调度和 Orchestrator 也尚未落地。如果现在冻结导出格式，会遗漏
+本计划获批时，单聊链路虽然已经能持久化消息并流式回复，但尚未把数据库历史投影为模型上下文；该缺口
+现已由 C1 修复。群聊调度和 Orchestrator 仍未落地。如果现在冻结导出格式，会遗漏
 或过早决定以下语义：
 
 - 群聊成员、mentions、串行回复顺序和同一 chain 的停止边界；
@@ -51,10 +63,10 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
 
 - 一个世界是一个物理目录和数据库，不存在额外的 Workspace 表或 `workspace_id`。
 - 默认部署继续使用 SQLite、单进程、单 worker；不为了缓存或记忆引入外部数据库服务。
-- `run_agent()` 已支持 `history`，但当前生成服务没有传入历史。
+- 当前生成服务已通过唯一 ContextBuilder 向 `run_agent()` 传入终态历史和预算诊断。
 - `messages` 已有 sender、reply、mentions、parts、status、revision、chain 和 meta 字段。
 - `conversations` 已预留 group、Orchestrator 开关和角色字段，但行为仍属预留。
-- Provider usage 已统一读取输入、输出、总量和缓存命中 token；fake 不伪造 usage。
+- Provider usage 已统一读取输入、输出、总量、缓存命中和缓存写入 token，并计算可追溯命中比；fake 不伪造 usage。
 - 工具执行已有默认封闭、Owner/Guest 危险级别拦截和审计基础。
 
 ### 2.2 参考设计到 Roleplex 的映射
@@ -569,7 +581,8 @@ created_at
 
 ### 12.2 真实 Provider 验收
 
-真实测试独立、显式运行并可能计费：
+真实测试使用独立命令显式运行并可能计费。“显式”表示不得混入普通回归或 CI，不表示等待用户亲自执行；
+用户指令要求推进到本阶段时，Agent 应先说明联网计费，再主动运行对应真实测试：
 
 - 同一角色/会话连续请求，记录真实 input/cache read/cache write token；
 - 单聊、M4a 串行群聊、M4b 并行编排分别留一组样本；
@@ -672,18 +685,26 @@ Memory ID。
 
 ## 十六、分阶段验收与提交边界
 
-### C1 验收（自动验证已通过，待人工验收）
+### C1 验收（已完成，提交 `4ea6312`）
 
 - 第二轮 Agent 能看到第一轮终态历史；
 - 相同快照产生完全相同消息序列和 hash；
 - 不完整生成和当前消息不重复进入 history；
 - 全量普通测试、真实页面单聊和可选真实 Provider smoke 通过。
 
-### C2 验收
+自动验证和用户人工验收均已通过；后续变更不得在 C2 中顺带改变上述历史投影、预算拒绝或 Role 上下文
+窗口语义。如确需改变，必须先回到 C1 契约更新计划与回归测试。
+
+### C2 验收（已完成，2026-08-30 经用户人工验收）
 
 - 日志能定位具体 context/tool 层变化；
 - 不保存 Prompt 原文；
 - fake usage 为空，真实 Provider usage 口径可追溯。
+
+实现已生成可检索的 `context.loaded`、Provider 和 generation 日志。fake 与真实 Provider 均在正常世界
+包装器和独立世界目录中完成两轮浏览器验证，自动断言稳定层跨轮保持、历史计数变化、Prompt 原文不落日志、
+fake usage 为空以及真实 input/cache/ratio 可追溯。自动验证和用户人工验收均已通过；后续变更不得在 M4a
+中顺带改变上述日志字段或 usage 口径，如确需改变必须先更新日志设计、内部协议与回归测试。
 
 ### M4a 验收
 

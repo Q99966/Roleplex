@@ -1,8 +1,82 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { ensureOwnerSession } from '../owner'
+import {
+  expectManagedWorldLayout,
+  expectStableTwoTurnContext,
+  readRunEvents,
+  waitForRunEvents,
+} from '../e2e-log-assertions'
 
-test('switches physical worlds, restarts the backend, and requires a new login', async ({ page }) => {
+const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8003'
+
+/**
+ * 在当前受托管世界中创建 fake 角色和单聊会话。
+ * @param page 当前浏览器页面。
+ * @param title 测试会话标题。
+ */
+async function seedFakeConversation(page: Page, title: string): Promise<number> {
+  return page.evaluate(async ({ base, conversationTitle, suffix }) => {
+    const token = localStorage.getItem('roleplex_token')
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    const post = async (route: string, body: unknown) => {
+      const response = await fetch(`${base}${route}`, { method: 'POST', headers, body: JSON.stringify(body) })
+      if (!response.ok) throw new Error(`${route} failed: ${response.status}`)
+      return response.json()
+    }
+    const config = await post('/api/model-configs', {
+      name: `world-fake-${suffix}`, provider_type: 'openai_compatible', api_key: 'sk-e2e-placeholder',
+    })
+    const role = await post('/api/roles', {
+      name: `世界 Fake 助手 ${suffix}`,
+      system_prompt: '你是世界模式下的确定性测试助手',
+      model_config_id: config.id,
+      model_name: 'fake-model',
+    })
+    const conversation = await post('/api/conversations', {
+      type: 'single', title: conversationTitle, role_ids: [role.id],
+    })
+    return conversation.id as number
+  }, { base: backend, conversationTitle: title, suffix: `${Date.now()}` })
+}
+
+test('runs C2 in a fake physical world, then switches worlds and requires a new login', async ({ page }) => {
   await ensureOwnerSession(page)
+
+  const healthBefore = await page.evaluate(async (base) => (await fetch(`${base}/api/health`)).json(), backend)
+  expect(healthBefore.world_managed).toBe(true)
+  expect(healthBefore.world_name).toBe('alpha')
+  await expectManagedWorldLayout((process.env.ROLEPLEX_E2E_WORLDS ?? '').split(',')[0])
+
+  const conversationId = await seedFakeConversation(page, 'Fake 世界 C2 验证')
+  await page.reload()
+  await page.getByText('Fake 世界 C2 验证').first().click()
+  await expect(page.getByLabel('消息输入框')).toBeEnabled()
+
+  const prompts = ['Fake 世界第一轮', 'Fake 世界第二轮']
+  for (const prompt of prompts) {
+    await page.getByLabel('消息输入框').fill(prompt)
+    await page.getByLabel('发送消息').click()
+    await expect(page.getByText(`已收到你的消息：${prompt}`)).toBeVisible({ timeout: 20_000 })
+  }
+
+  const contexts = await waitForRunEvents(
+    (event) => event.event === 'context.loaded' && event.conversation_id === conversationId,
+    2,
+  )
+  expectStableTwoTurnContext(contexts.slice(-2))
+  const providerCalls = await waitForRunEvents(
+    (event) => event.event === 'provider.call_completed' && event.conversation_id === conversationId,
+    2,
+  )
+  for (const event of providerCalls.slice(-2)) {
+    expect(event.provider_mode).toBe('fake')
+    for (const field of [
+      'input_tokens', 'output_tokens', 'total_tokens',
+      'cache_hit_tokens', 'cache_write_tokens', 'cache_hit_ratio', 'usage_source',
+    ]) expect(event[field]).toBeUndefined()
+  }
+  const serialized = JSON.stringify(await readRunEvents())
+  for (const prompt of prompts) expect(serialized).not.toContain(prompt)
 
   const selector = page.getByLabel('切换世界')
   await expect(selector).toBeEnabled()

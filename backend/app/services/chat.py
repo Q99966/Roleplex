@@ -13,7 +13,7 @@ from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
 from ..config.logging import set_log_context
 from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
-from ..context.domain import ContextBuildError
+from ..context.domain import ContextBuildError, ContextBuildResult
 from ..agent import providers
 from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
@@ -28,6 +28,35 @@ _running: dict[int, asyncio.Task[None]] = {}
 
 # 流式内容先保存在内存，按节流间隔落库，避免逐片段写事务。
 _PERSIST_INTERVAL_SECONDS = 1.0
+
+
+def _context_log_fields(context: ContextBuildResult) -> dict[str, object]:
+    """提取允许进入日志的 ContextBuilder 诊断字段。
+
+    Args:
+        context：本轮唯一 ContextBuilder 结果；不得从 Prompt 原文重新计算诊断值。
+
+    Returns:
+        只含版本、不可逆 hash、计数和本地预算元数据的安全字段。
+    """
+    estimate = context.budget.estimate
+    fingerprints = context.fingerprints
+    return {
+        "context_schema_version": context.context_schema_version,
+        "runtime_prefix_hash": fingerprints.runtime_prefix_hash,
+        "role_prefix_hash": fingerprints.role_prefix_hash,
+        "conversation_prefix_hash": fingerprints.conversation_prefix_hash,
+        # Checkpoint 在 C3 前不存在；无值字段必须省略，不能用空串伪造一个版本。
+        "tool_policy_hash": fingerprints.tool_policy_hash,
+        "context_message_count": context.budget.included_message_count,
+        "context_truncated_message_count": context.budget.truncated_message_count,
+        "estimated_context_tokens": estimate.estimated_tokens,
+        "input_budget_tokens": context.budget.input_budget_tokens,
+        "estimator_kind": estimate.estimator_kind,
+        "estimator_version": estimate.estimator_version,
+        "estimator_is_provider_exact": estimate.is_provider_exact,
+        "safety_margin_tokens": estimate.safety_margin_tokens,
+    }
 
 
 def message_payload(message: Message) -> dict:
@@ -257,12 +286,15 @@ async def _run_generation(
     tool_args: dict[str, str] = {}
     provider_call_count = 0
     first_ttft_ms: int | None = None
-    usage_summary: dict[str, int | None] = {
+    usage_summary: dict[str, int | float | None] = {
         "input_tokens": None,
         "output_tokens": None,
         "total_tokens": None,
         "cache_hit_tokens": None,
+        "cache_write_tokens": None,
+        "cache_hit_ratio": None,
     }
+    context_fields: dict[str, object] = {}
     try:
         async with SessionLocal() as session:
             generation = await session.get(Generation, generation_id)
@@ -331,6 +363,9 @@ async def _run_generation(
                     triggered_by_user_id=triggered_by_user_id,
                 ),
             )
+            context_fields = _context_log_fields(context)
+            set_log_context(**context_fields)
+            logger.info("context.loaded", extra=context_fields)
             role = await session.get(Role, role_id)
             if role is None:
                 raise ValueError("ROLE_NOT_AVAILABLE")
@@ -416,14 +451,17 @@ async def _run_generation(
                         "output_tokens": event.output_tokens,
                         "total_tokens": event.total_tokens,
                         "cache_hit_tokens": event.cache_hit_tokens,
+                        "cache_write_tokens": event.cache_write_tokens,
+                        "cache_hit_ratio": event.cache_hit_ratio,
                         "usage_source": "provider" if any(
                             value is not None for value in (
                                 event.input_tokens, event.output_tokens,
-                                event.total_tokens, event.cache_hit_tokens,
+                                event.total_tokens, event.cache_hit_tokens, event.cache_write_tokens,
                             )
                         ) else None,
                         "total_tokens_derived": event.total_tokens_derived,
                         "status": "success",
+                        **context_fields,
                     },
                 )
             elif isinstance(event, ProviderCallStarted):
@@ -433,6 +471,7 @@ async def _run_generation(
                         "provider_call_index": event.call_index,
                         "provider_mode": "fake" if settings.agent_use_fake_provider else "real",
                         "model": role.model_name,
+                        **context_fields,
                     },
                 )
             elif isinstance(event, MessageDone):
@@ -453,6 +492,7 @@ async def _run_generation(
                     "ttft_ms": first_ttft_ms,
                     **usage_summary,
                     "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                    **context_fields,
                     **terminal,
                 },
             )
@@ -470,6 +510,7 @@ async def _run_generation(
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **context_fields,
                 **terminal,
             },
         )
@@ -488,6 +529,7 @@ async def _run_generation(
                 "input_budget_tokens": exc.input_budget_tokens,
                 "estimator_kind": exc.estimator_kind,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **context_fields,
                 **terminal,
             },
         )
@@ -507,6 +549,7 @@ async def _run_generation(
                 "status": "rejected" if error_code in expected_codes else "failed",
                 "provider_call_count": 0,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **context_fields,
                 **terminal,
             },
         )
@@ -526,6 +569,7 @@ async def _run_generation(
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **context_fields,
                 **terminal,
             },
         )
@@ -543,6 +587,7 @@ async def _run_generation(
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
                 "duration_ms": round((perf_counter() - task_started) * 1000, 2),
+                **context_fields,
                 **terminal,
             },
         )

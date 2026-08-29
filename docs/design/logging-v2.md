@@ -328,15 +328,36 @@ status 只用于终态或策略决策：`success | failed | cancelled | timeout 
 | `output_tokens` | integer（可选） | 厂商报告的输出 token |
 | `total_tokens` | integer（可选） | 厂商报告或由已报告输入+输出相加 |
 | `cache_hit_tokens` | integer（可选） | 厂商报告的缓存命中 token |
+| `cache_write_tokens` | integer（可选） | 厂商报告的缓存写入 token |
+| `cache_hit_ratio` | number（可选） | 同次调用报告正数 input 与非负 cache hit 时计算的 `cache_hit_tokens / input_tokens` |
 | `usage_source` | string（可选） | 至少一个 usage 字段由厂商报告时固定为 `provider` |
 | `total_tokens_derived` | boolean | total 由厂商 input+output 相加时为 true；厂商直接报告时省略 |
 
 fake provider 或厂商未报告的 token 字段和 usage_source 省略，不得按字符数估算。生成完成/失败/停止
 事件额外包含 `provider_call_count`、`delta_count`、整轮 token 汇总、`duration_ms` 和稳定 error_code。
 
-ContextBuilder 的预算诊断使用独立字段 `estimated_context_tokens`、`input_budget_tokens` 和
-`estimator_kind`。它们是调用前的本地安全估算，只用于裁剪和解释 `CONTEXT_BUDGET_EXCEEDED`，不得汇总到
-Provider `input_tokens`，也不得设置 `usage_source=provider`。
+ContextBuilder 成功后记录一次 `context.loaded`，并把同一组诊断字段绑定到本轮后续的
+`provider.call_started/completed/failed` 与 generation 终态。字段包括：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `context_schema_version` | integer | 确定性上下文序列化版本 |
+| `runtime_prefix_hash` | string | L0 最终规范化内容的 SHA-256 |
+| `role_prefix_hash` | string | L1 最终规范化内容的 SHA-256 |
+| `conversation_prefix_hash` | string | L2 最终规范化内容的 SHA-256 |
+| `checkpoint_hash` | string（可选） | C3 后实际注入 checkpoint 的内容 SHA-256；C3 前省略 |
+| `tool_policy_hash` | string | 本轮可见工具策略的 SHA-256 |
+| `context_message_count` | integer | 实际进入历史的终态消息数，不含当前消息 |
+| `context_truncated_message_count` | integer | 因预算从历史中裁剪的消息数 |
+| `estimated_context_tokens` | integer | 本地估算的完整输入 token，不含安全余量 |
+| `input_budget_tokens` | integer | 扣除输出预留后的输入预算 |
+| `estimator_kind` / `estimator_version` | string/integer | 本地估算器公共身份 |
+| `estimator_is_provider_exact` | boolean | 估算器是否经验证与当前 Provider 口径精确一致 |
+| `safety_margin_tokens` | integer | 本地估算额外安全余量 |
+
+这些值来自一次 ContextBuilder 结果，后续事件不得重新读取数据库或重算 Prompt。hash 只识别变化层，不保存
+层内容。预算字段只用于裁剪和解释 `CONTEXT_BUDGET_EXCEEDED`，不得汇总到 Provider `input_tokens`，也不得
+设置 `usage_source=provider`。构建在产生结果前失败时没有可用指纹，只记录错误中已有的安全预算字段。
 
 工具事件附加 `tool_name`、`status`、`duration_ms` 和白名单摘要。每类已知工具必须注册专用摘要器，只
 提取明确允许字段；未知、MCP 和高风险工具默认不保存参数值。路径只允许保存授权根目录下的相对形式。
@@ -673,8 +694,9 @@ E2E summary 字段定义：
 
 ### 9.2 允许的 token 用量字段
 
-Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`cache_hit_tokens`。ContextBuilder
-预算另外允许 `estimated_context_tokens`、`input_budget_tokens`、`safety_margin_tokens`，但不得设置
+Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`cache_hit_tokens`、
+`cache_write_tokens`。ContextBuilder 预算另外允许 `estimated_context_tokens`、`input_budget_tokens`、
+`safety_margin_tokens`，但不得设置
 `usage_source=provider`。除此之外，包含 `token` 的键仍按凭据过滤。脱敏必须递归处理嵌套字典、数组、
 异常对象和 pytest captured 内容。
 

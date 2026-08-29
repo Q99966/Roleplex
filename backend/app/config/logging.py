@@ -28,7 +28,7 @@ _context_fields = frozenset({
 })
 _sensitive_fragments = ("password", "passwd", "secret", "token", "authorization", "api_key", "apikey", "cookie")
 _usage_token_fields = frozenset({
-    "input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens",
+    "input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens", "cache_write_tokens",
     # ContextBuilder 的本地预算估算不是凭据，也不冒充 Provider usage；字段名必须显式登记才可落盘。
     "estimated_context_tokens", "input_budget_tokens", "safety_margin_tokens",
 })

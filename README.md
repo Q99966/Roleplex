@@ -14,6 +14,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 角色删除保留墓碑（历史消息仍显示原发送者），会话删除进回收站并可在 7 天内恢复
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - 单聊通过统一 ContextBuilder 读取终态历史；角色上下文窗口默认 200K 并可由 Owner 配置
+- 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
 - 多世界物理存档、CLI 一致性备份与包装器热切换；每个世界独立数据库和密钥
@@ -84,7 +85,8 @@ npm run test:e2e:real-world
 
 它会创建 `data/roleplex-real-world-e2e-<时间戳>/default/`，包含完整世界元数据、数据库、JWT/API Key
 双密钥和 files 目录，并保留最近 5 轮。该命令同样联网计费、关闭 trace/video，但不测试世界切换；世界
-切换仍由 fake Provider 的 `test:e2e:worlds` 确定性覆盖。
+切换仍由 fake Provider 的 `test:e2e:worlds` 确定性覆盖；该命令会先在 alpha 世界完成两轮 fake 对话和
+C2 上下文/日志断言，再执行 alpha→beta 切换。
 
 真实 E2E 的 Owner 为 `realtest<时间戳>`，密码固定为 `Roleplex-Real-E2E-1`。数据库包含加密后的
 真实 Key，只能用于本机核对，不要分享或提交；离开当前实例密钥后其中的模型配置无法解密。

@@ -66,6 +66,8 @@ def test_json_formatter_assigns_identity_order_category_and_omits_empty_context(
                 "output_tokens": 30,
                 "total_tokens": 150,
                 "cache_hit_tokens": 80,
+                "cache_write_tokens": 20,
+                "cache_hit_ratio": 2 / 3,
                 "estimated_context_tokens": 1800,
                 "input_budget_tokens": 4096,
                 "safety_margin_tokens": 128,
@@ -98,6 +100,8 @@ def test_json_formatter_assigns_identity_order_category_and_omits_empty_context(
     assert payload["output_tokens"] == 30
     assert payload["total_tokens"] == 150
     assert payload["cache_hit_tokens"] == 80
+    assert payload["cache_write_tokens"] == 20
+    assert payload["cache_hit_ratio"] == 2 / 3
     assert payload["estimated_context_tokens"] == 1800
     assert payload["input_budget_tokens"] == 4096
     assert payload["safety_margin_tokens"] == 128

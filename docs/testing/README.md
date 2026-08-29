@@ -18,7 +18,7 @@
 | 后端 pytest | `pytest -q` | fake | 每轮独立 SQLite DB | 否 | 服务、权限、状态机、迁移相关业务行为 |
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
 | 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 真实前后端与浏览器用户流程 |
-| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 | 否 | 包装器重启、世界隔离和重新登录 |
+| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 | 否 | fake 两轮上下文/日志、包装器重启、世界隔离和重新登录 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
 | 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 | 是 | 正常包装器、世界双密钥和真实 Provider 全链路 |
 
@@ -40,7 +40,10 @@ cd backend
 python scripts/check_migrations.py
 ```
 
-真实命令必须由人工显式运行，不属于普通 CI 或默认回归。
+真实命令必须通过上表中的独立命令显式运行，不属于普通 CI 或默认回归。“显式”描述的是命令和配置隔离，
+不是要求必须由用户本人在终端执行：当用户已授权推进或完成一个验收标准包含真实 Provider 的阶段时，Agent
+应在说明联网与计费后主动运行对应真实命令。只有凭据缺失、用户明确禁止或该阶段尚未要求真实验收时才跳过，
+并必须明确报告未覆盖项。
 
 ## 二、测试层级与边界
 
@@ -123,7 +126,9 @@ data/roleplex-world-e2e-<时间戳>/
 ```
 
 后端通过正常 `run_world_server.py` 包装器启动。测试验证 alpha → beta 重启、Token 失效、物理数据库与
-双密钥隔离，以及切换后重新注册 Owner。它使用 fake Provider，不产生模型费用。
+双密钥隔离，以及切换后重新注册 Owner。切换前先在 alpha 中完成两轮 fake 浏览器对话，并直接核对本轮
+JSONL：稳定层 hash 不漂移、history 计数从 0 变为 2、fake usage 字段为空且 Prompt 原文不落日志。该测试
+因此同时证明 C2 在正常世界包装器中的确定性路径，不产生模型费用。
 
 ### 2.5 真实 Provider E2E（兼容数据库）
 
@@ -159,8 +164,9 @@ data/roleplex-real-world-e2e-<时间戳>/
 ```
 
 该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行与兼容数据库 real-E2E 相同的两轮
-验证码对话，用来证明 ContextBuilder、世界独立 Key、前后端和 Provider 能共同工作。它不切换世界；切换
-语义由 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
+验证码对话，并直接核对真实 Provider 的 input/cache/ratio、稳定层 hash、history `0→2` 和 Prompt 不落
+日志，用来证明 ContextBuilder、世界独立 Key、前后端、可观测性和 Provider 能共同工作。它不切换世界；
+切换语义由 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
 
 ## 三、端口矩阵
 

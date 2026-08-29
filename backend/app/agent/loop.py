@@ -92,7 +92,21 @@ def _first_token_value(*values: Any) -> int | None:
     return None
 
 
-def normalize_provider_usage(output: Any) -> dict[str, int | bool]:
+def _cache_hit_ratio(input_tokens: int | None, cache_hit_tokens: int | None) -> float | None:
+    """仅用同一份厂商 usage 计算合法缓存命中比。
+
+    Args:
+        input_tokens：厂商或框架归一化后的完整输入 token。
+        cache_hit_tokens：厂商报告的缓存命中 token。
+    """
+    if input_tokens is None or input_tokens <= 0 or cache_hit_tokens is None:
+        return None
+    if cache_hit_tokens > input_tokens:
+        return None
+    return cache_hit_tokens / input_tokens
+
+
+def normalize_provider_usage(output: Any) -> dict[str, int | float | bool]:
     """将 LangChain 与常见厂商 usage 形态映射为稳定字段。
 
     支持标准 `usage_metadata`、OpenAI-compatible/DeepSeek 的 `token_usage`，
@@ -104,7 +118,34 @@ def normalize_provider_usage(output: Any) -> dict[str, int | bool]:
     standard_details = standard.get("input_token_details") or {}
     prompt_details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
 
-    input_tokens = _first_token_value(standard.get("input_tokens"), raw.get("input_tokens"), raw.get("prompt_tokens"))
+    cache_hit_tokens = _first_token_value(
+        standard_details.get("cache_read"),
+        standard_details.get("cached_tokens"),
+        raw.get("prompt_cache_hit_tokens"),
+        raw.get("cache_read_input_tokens"),
+        prompt_details.get("cached_tokens"),
+    )
+    cache_write_tokens = _first_token_value(
+        standard_details.get("cache_creation"),
+        standard_details.get("cache_write"),
+        raw.get("cache_creation_input_tokens"),
+    )
+    standard_input = _first_token_value(standard.get("input_tokens"))
+    raw_prompt_input = _first_token_value(raw.get("prompt_tokens"))
+    raw_input = _first_token_value(raw.get("input_tokens"))
+    if standard_input is not None:
+        # LangChain Anthropic 适配器已把 cache read/create 加入 input_tokens，不能重复累加。
+        input_tokens = standard_input
+    elif raw_prompt_input is not None:
+        # OpenAI-compatible/DeepSeek 的 prompt_tokens 已包含缓存命中与未命中。
+        input_tokens = raw_prompt_input
+    elif raw_input is not None and (
+        "cache_read_input_tokens" in raw or "cache_creation_input_tokens" in raw
+    ):
+        # Anthropic 原始 input_tokens 明确排除缓存读写，需要恢复为完整输入口径。
+        input_tokens = raw_input + (cache_hit_tokens or 0) + (cache_write_tokens or 0)
+    else:
+        input_tokens = raw_input
     output_tokens = _first_token_value(
         standard.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens")
     )
@@ -113,31 +154,30 @@ def normalize_provider_usage(output: Any) -> dict[str, int | bool]:
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
         total_tokens_derived = True
-    cache_hit_tokens = _first_token_value(
-        standard_details.get("cache_read"),
-        standard_details.get("cached_tokens"),
-        raw.get("prompt_cache_hit_tokens"),
-        raw.get("cache_read_input_tokens"),
-        prompt_details.get("cached_tokens"),
-    )
-
     values = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
         "cache_hit_tokens": cache_hit_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "cache_hit_ratio": _cache_hit_ratio(input_tokens, cache_hit_tokens),
         "total_tokens_derived": True if total_tokens_derived else None,
     }
     return {key: value for key, value in values.items() if value is not None}
 
 
-def _aggregate_usage(calls: list[dict[str, int]]) -> dict[str, int | None]:
+def _aggregate_usage(calls: list[dict[str, int | float | bool]]) -> dict[str, int | float | None]:
     """仅在每次调用都报告某字段时汇总，避免用部分数据冒充整轮总量。"""
-    keys = ("input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens")
-    return {
+    keys = ("input_tokens", "output_tokens", "total_tokens", "cache_hit_tokens", "cache_write_tokens")
+    result: dict[str, int | float | None] = {
         key: sum(call[key] for call in calls) if calls and all(key in call for call in calls) else None
         for key in keys
     }
+    result["cache_hit_ratio"] = _cache_hit_ratio(
+        result["input_tokens"] if isinstance(result["input_tokens"], int) else None,
+        result["cache_hit_tokens"] if isinstance(result["cache_hit_tokens"], int) else None,
+    )
+    return result
 
 
 def _tool_status(output: Any) -> str:
@@ -158,7 +198,7 @@ async def _wrap_up(
     model: BaseChatModel,
     messages: list[Any],
     accumulated: str,
-    call_usages: list[dict[str, int]],
+    call_usages: list[dict[str, int | float | bool]],
     time_source: Callable[[], float],
 ) -> AsyncIterator[AgentEvent]:
     """追加一次禁用工具的收尾调用，保证本轮有文本结尾。
@@ -187,6 +227,8 @@ async def _wrap_up(
         output_tokens=normalized_usage.get("output_tokens"),
         total_tokens=normalized_usage.get("total_tokens"),
         cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+        cache_write_tokens=normalized_usage.get("cache_write_tokens"),
+        cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
         total_tokens_derived=normalized_usage.get("total_tokens_derived"),
     )
     text = _chunk_text(final)
@@ -229,12 +271,12 @@ async def run_agent(
     messages: list[Any] = [*(history or []), ("user", prompt)]
     accumulated = ""
     clock = time_source or loop_time
-    call_usages: list[dict[str, int]] = []
+    call_usages: list[dict[str, int | float | bool]] = []
     started_at: dict[str, float] = {}
     provider_started_at: dict[str, float] = {}
     provider_ttft_ms: dict[str, int] = {}
     provider_call_index: dict[str, int] = {}
-    provider_stream_usage: dict[str, dict[str, int]] = {}
+    provider_stream_usage: dict[str, dict[str, int | float | bool]] = {}
     next_provider_call_index = 0
     # 最近一次模型回合中尚未拿到结果的工具调用数量。
     # 实测锁定版本的 LangGraph 在达到步数上限时**不会抛异常**，而是直接结束事件流，
@@ -279,6 +321,8 @@ async def run_agent(
                     output_tokens=normalized_usage.get("output_tokens"),
                     total_tokens=normalized_usage.get("total_tokens"),
                     cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+                    cache_write_tokens=normalized_usage.get("cache_write_tokens"),
+                    cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
                     total_tokens_derived=normalized_usage.get("total_tokens_derived"),
                 )
             elif kind == _EVENT_TOOL_START:
