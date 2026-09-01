@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 内部开发、测试与本机运维 |
 | 状态 | 已实现（日志 schema v2） |
-| 协议版本 | 6 |
+| 协议版本 | 7 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
 | 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
-| 复核日期 | 2026-08-31 |
+| 复核日期 | 2026-09-01 |
 
 本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
 统一引用详细规范，不在本文复制第二份权威定义。
@@ -21,14 +21,15 @@
   `failures/HH-MM-SS_<run_id>/` 写有界诊断。
 - E2E：`logs/tests/e2e/{fake|real}/YYYY-MM-DD/HH-MM-SS_<run_id>/`，保存 events、errors、summary 和
   脱敏 artifact 索引。世界切换后的多个后端进程沿用同一 run ID。
-- archive：前一日及更早的关闭日志按日期/类别归档为 tar.gz；保留 30 天，整个日志树目标上限 1 GiB。
+- archive：当前自然月每日目录保持可直接查看；新月份启动后才把上月及更早的关闭日志按日期/类别归档为
+  tar.gz。保留 30 天，整个日志树目标上限 1 GiB。
 
 runtime active 文件按 10 MiB、一小时或跨日轮转；关闭片段使用递增 `.001/.002/...` 且永不再次写入。
 
 ## 事件身份与链路
 
-每条后端事件包含唯一 event ID、进程实例 ID 和进程内观察序号。错误文件复制同一事件，不改变 ID、
-category 或序号。可选业务关联字段无值时省略；当前世界名始终保留。
+每条后端事件包含唯一 event ID、进程实例 ID 和进程内观察序号。`timestamp` 固定使用北京时间 `+08:00`。
+错误文件复制同一事件，不改变 ID、category 或序号。可选业务关联字段无值时省略；当前世界名始终保留。
 
 Roleplex 只使用现有业务 Trace 模型：消息 chain 是整条 trace，Agent/工具 execution 是 span，父 execution
 表达父 span。上下文通过 contextvars 跨 HTTP、WS、数据库、后台任务和工具调用传播。
@@ -56,6 +57,10 @@ WebSocket/流式事件继续关联 stream epoch、event seq、message revision�
 与缓存写入 token。仅当同次调用有正数 input 和非负 cache hit 时计算命中比；至少一个 usage 字段存在时
 标记来源为 provider。fake 或厂商未报告时省略，不做字符数估算。多次模型调用的 generation 汇总只有在
 每次调用都报告对应字段时才生成，避免用部分数据冒充整轮事实。
+
+`provider.built`、`provider.call_started/completed/failed` 记录同一脱敏 `base_url` 和来源。URL 在业务层
+先移除 userinfo、query、fragment 并遮蔽疑似凭据 path；日志递归脱敏只是第二道防线。fake 固定记录
+`fake://local`，未显式配置的真实 Provider 记录公开 SDK 默认基址，不能留空让排障者猜路由。
 
 ## Context 与缓存诊断
 
@@ -86,7 +91,8 @@ JSONL 只容忍最后一行崩溃截断；active 文件重启追加前会截断�
 ## 敏感数据边界
 
 密码、哈希、API Key、访问凭据、Authorization/Cookie、完整用户输入/模型输出、带凭据 query 和 MCP
-敏感参数不落盘。工具摘要先走字段白名单，递归脱敏只是兜底。只允许四个 token 用量字段。
+敏感参数不落盘。工具摘要先走字段白名单，递归脱敏只是兜底。只允许日志设计中显式登记的 Provider 与
+Context token 字段。
 
 ## 验证覆盖
 

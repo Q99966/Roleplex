@@ -127,6 +127,33 @@ async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerou
     return model, tools
 
 
+async def _provider_log_fields(session, role: Role) -> dict[str, str]:
+    """解析本轮 Provider 类型和实际脱敏基址，不读取或返回 API Key。
+
+    Args:
+        session：读取角色模型配置的数据库会话。
+        role：本轮执行角色。
+
+    Returns:
+        可以绑定到 Provider 调用链的安全日志字段。
+    """
+    if settings.agent_use_fake_provider:
+        return {
+            "provider_mode": "fake",
+            "provider_type": "fake",
+            "base_url": "fake://local",
+            "base_url_source": "fake",
+        }
+    model_config = await session.get(ModelConfig, role.model_config_id)
+    if model_config is None:
+        raise ValueError("角色引用的模型配置不存在")
+    return {
+        "provider_mode": "real",
+        "provider_type": model_config.provider_type,
+        **providers.provider_base_url_metadata(model_config.provider_type, model_config.base_url),
+    }
+
+
 async def _record_tool_call(
     event: ToolCallFinished,
     *,
@@ -405,13 +432,15 @@ async def run_scheduled_generation(
             role = await session.get(Role, role_id)
             if role is None:
                 raise ValueError("ROLE_NOT_AVAILABLE")
+            provider_fields = await _provider_log_fields(session, role)
+            set_log_context(**provider_fields)
             model, tools = await build_agent_inputs(
                 session, role, context.current_message, allow_dangerous=allow_dangerous,
             )
         if settings.agent_use_fake_provider:
             logger.info(
                 "provider.built",
-                extra={"provider_mode": "fake", "model": role.model_name},
+                extra={**provider_fields, "model": role.model_name},
             )
 
         last_persist = asyncio.get_running_loop().time()
@@ -496,7 +525,7 @@ async def run_scheduled_generation(
                     "provider.call_completed",
                     extra={
                         "provider_call_index": event.call_index,
-                        "provider_mode": "fake" if settings.agent_use_fake_provider else "real",
+                        **provider_fields,
                         "model": role.model_name,
                         "ttft_ms": event.ttft_ms,
                         "duration_ms": event.duration_ms,
@@ -522,7 +551,7 @@ async def run_scheduled_generation(
                     "provider.call_started",
                     extra={
                         "provider_call_index": event.call_index,
-                        "provider_mode": "fake" if settings.agent_use_fake_provider else "real",
+                        **provider_fields,
                         "model": role.model_name,
                         **context_fields,
                     },

@@ -210,17 +210,18 @@ runtime 同日重启继续追加 active 文件，用进程实例和序号区分�
 关闭为递增且不可再写的 `.001/.002/...` 片段。pytest 全绿只向 summary 追加一行，失败才保存脱敏详情；
 fake/real E2E 每轮独立，世界切换重启仍保持同一 run ID。
 
-前一日及更早日志在 runtime 启动时归档为 tar.gz（gzip level 6），保留 30 天；整个日志树目标上限
-1 GiB，超限时从最旧正式归档开始淘汰。归档经过 manifest、路径、成员类型、大小和 SHA-256 校验，
-删除前后都有结构化审计；当天、活跃、running 和未迁移旧日志不会自动删除。
+当前自然月的每日日志保持原始目录可直接查看；进入新月份后，runtime 启动才归档上月及更早日志为 tar.gz
+（gzip level 6）。日志保留 30 天，整个日志树目标上限 1 GiB，超限时从最旧正式归档开始淘汰。归档经过
+manifest、路径、成员类型、大小和 SHA-256 校验，删除前后都有结构化审计；当前月、活跃、running 和未迁移
+旧日志不会自动删除。JSONL `timestamp` 固定使用北京时间 `+08:00`。
 可通过 `LOG_DIR`、`LOG_LEVEL`、`LOG_MAX_BYTES`、`LOG_MAX_SECONDS` 调整输出与轮转；归档开关和边界为
 `LOG_ARCHIVE_ENABLED`、`LOG_RETENTION_DAYS`、`LOG_MAX_TOTAL_BYTES`、`LOG_ARCHIVE_COMPRESSLEVEL`。
 
 每个 HTTP 响应都带 `X-Request-ID`；错误信封中的 `request_id` 与它相同。前端报错时可用该值
 串起访问、认证/消息业务事件、后台 `generation.*` 和最终状态。WebSocket 使用
 独立的 `ws_connection_id`，并在认证、订阅（含 `conversation_id`）、恢复方式和断开时记录生命周期。
-模型调用结束还会记录 `provider.call_completed`，包含首分片耗时、调用总耗时、输入/输出/总 token
-和缓存命中 token；厂商未提供的数据省略，不进行估算。
+模型调用日志会记录厂商类型、模型、脱敏后的实际 `base_url` 及其 configured/default/fake 来源，并包含
+首分片耗时、调用总耗时、输入/输出/总 token 和缓存命中 token；厂商未提供的数据省略，不进行估算。
 例如：
 
 ```bash

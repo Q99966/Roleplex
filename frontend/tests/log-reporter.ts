@@ -162,6 +162,8 @@ export default class RoleplexLogReporter implements Reporter {
     const processIds = new Set<string>()
     let providerType: string | undefined
     let model: string | undefined
+    let baseUrl: string | undefined
+    let baseUrlSource: string | undefined
     try {
       for (const filename of readdirSync(this.runDir).filter((name) => /^events(?:\.\d{3})?\.jsonl$/.test(name))) {
         for (const line of readFileSync(path.join(this.runDir, filename), 'utf-8').split(/\r?\n/)) {
@@ -172,6 +174,8 @@ export default class RoleplexLogReporter implements Reporter {
             if (event.event === 'provider.built') {
               if (typeof event.provider_type === 'string') providerType = event.provider_type
               if (typeof event.model === 'string') model = event.model
+              if (typeof event.base_url === 'string') baseUrl = event.base_url
+              if (typeof event.base_url_source === 'string') baseUrlSource = event.base_url_source
             }
           } catch { /* 损坏日志由后端 reader 规则报告，reporter 不猜测修复 */ }
         }
@@ -181,6 +185,8 @@ export default class RoleplexLogReporter implements Reporter {
       backend_process_instance_ids: [...processIds],
       provider_type: providerType,
       model,
+      base_url: baseUrl,
+      base_url_source: baseUrlSource,
     }
   }
 

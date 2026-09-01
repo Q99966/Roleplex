@@ -7,7 +7,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-08-31 |
+| 复核日期 | 2026-09-01 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -83,8 +83,8 @@ M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同
 
 ## Provider 工厂与能力表
 
-- API Key 只在 provider 工厂内经解密边界进入模型对象；日志只记录厂商类型、模型名、
-  角色标识和参数键名。
+- API Key 只在 provider 工厂内经解密边界进入模型对象；日志记录厂商类型、模型名、角色标识、参数键名，
+  以及移除 userinfo/query/fragment 和疑似凭据 path 后的实际 base URL。
 - 采样参数按"厂商白名单 + 模型能力"过滤：不在白名单的键直接丢弃；开启思考模式或能力表
   声明不支持时，剔除 `temperature` / `top_p`。
 - 能力表（是否支持视觉、并行工具调用等）内置默认值，可被模型配置的能力覆盖字段按厂商覆盖；

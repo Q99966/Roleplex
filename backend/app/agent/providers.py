@@ -7,7 +7,9 @@ provider 实例，不进入日志、异常信息或事件负载；参数按"厂�
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -35,6 +37,57 @@ _DEFAULT_CAPABILITIES: dict[str, dict[str, Any]] = {
     PROVIDER_ANTHROPIC: {"vision": True, "parallel_tools": True, "supports_temperature": True, "supports_top_p": True},
     PROVIDER_OPENAI_COMPATIBLE: {"vision": False, "parallel_tools": True, "supports_temperature": True, "supports_top_p": True},
 }
+
+_DEFAULT_BASE_URLS = {
+    PROVIDER_ANTHROPIC: "https://api.anthropic.com",
+    PROVIDER_OPENAI_COMPATIBLE: "https://api.openai.com/v1",
+}
+_SENSITIVE_PATH_SEGMENT = re.compile(r"(?i)(api[_-]?key|token|secret|auth|credential|password)")
+
+
+def sanitize_base_url(raw: str) -> str:
+    """生成允许写日志的 Provider 基址，剔除 URL 中的凭据材料。
+
+    Args:
+        raw：配置值或 SDK 公开默认基址。
+
+    Returns:
+        保留路由定位信息的脱敏 URL；无法安全解析时返回 `<invalid>`。
+    """
+    try:
+        parsed = urlsplit(raw.strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return "<invalid>"
+        host = parsed.hostname
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        sanitized_segments: list[str] = []
+        redact_next = False
+        for segment in parsed.path.split("/"):
+            sensitive = bool(_SENSITIVE_PATH_SEGMENT.search(segment)) or len(segment) >= 48
+            if redact_next or sensitive:
+                sanitized_segments.append("<redacted>" if segment else "")
+            else:
+                sanitized_segments.append(segment)
+            redact_next = bool(_SENSITIVE_PATH_SEGMENT.search(segment))
+        path = "/".join(sanitized_segments)
+        return urlunsplit((parsed.scheme.lower(), f"{host}{port}", path, "", ""))
+    except (TypeError, ValueError):
+        return "<invalid>"
+
+
+def provider_base_url_metadata(provider_type: str, configured_base_url: str | None) -> dict[str, str]:
+    """返回 Provider 日志使用的脱敏基址及来源。
+
+    Args:
+        provider_type：已登记厂商类型。
+        configured_base_url：模型配置保存的可选自定义基址。
+    """
+    configured = (configured_base_url or "").strip()
+    source = "configured" if configured else "default"
+    raw = configured or _DEFAULT_BASE_URLS.get(provider_type, "")
+    return {"base_url": sanitize_base_url(raw), "base_url_source": source}
 
 
 def capabilities_for(model_config: ModelConfig) -> dict[str, Any]:
@@ -100,6 +153,7 @@ def build_chat_model(role: Role, model_config: ModelConfig) -> BaseChatModel:
             "model": role.model_name,
             "role_id": role.id,
             "param_keys": sorted(params),
+            **provider_base_url_metadata(model_config.provider_type, model_config.base_url),
         },
     )
 

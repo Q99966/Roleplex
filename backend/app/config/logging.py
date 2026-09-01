@@ -12,14 +12,16 @@ import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from logging.handlers import BaseRotatingHandler
 from pathlib import Path
 from typing import Any, Iterator, Protocol
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 
 LOG_SCHEMA_VERSION = 2
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 _context: ContextVar[dict[str, Any]] = ContextVar("roleplex_log_context", default={})
 _context_fields = frozenset({
     "request_id", "user_id", "conversation_id", "message_id", "generation_id",
@@ -52,7 +54,7 @@ class _Clock(Protocol):
 
 class _SystemClock:
     def now(self) -> datetime:
-        return datetime.now().astimezone()
+        return datetime.now(BEIJING_TZ)
 
 
 def ensure_log_directory(path: str | Path) -> Path:
@@ -228,7 +230,7 @@ class JsonFormatter(logging.Formatter):
         fields = _safe_fields(record)
         payload: dict[str, Any] = {
             "schema_version": LOG_SCHEMA_VERSION,
-            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, BEIJING_TZ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "event": _redact_value(record.getMessage()),
@@ -258,7 +260,7 @@ class ReadableFormatter(logging.Formatter):
     """生成带本地时间和安全附加字段的终端日志。"""
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds")
+        timestamp = datetime.fromtimestamp(record.created, BEIJING_TZ).isoformat(timespec="milliseconds")
         fields = _safe_fields(record)
         suffix = " ".join(
             f"{key}={str(value).replace(chr(13), r'\r').replace(chr(10), r'\n')}"

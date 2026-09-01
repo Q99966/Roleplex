@@ -80,6 +80,8 @@ export async function verifyRealProviderConversation(
   )).slice(-2)
   for (const event of providerCalls) {
     expect(event.usage_source).toBe('provider')
+    expect(event.base_url).toEqual(expect.any(String))
+    expect(['configured', 'default']).toContain(event.base_url_source)
     expect(event.input_tokens).toEqual(expect.any(Number))
     expect(event.output_tokens).toEqual(expect.any(Number))
     expect(event.total_tokens).toEqual(expect.any(Number))

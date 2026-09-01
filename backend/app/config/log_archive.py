@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import psutil
 
-from .logging import ensure_log_directory, flush_persistent_logs, restrict_log_file
+from .logging import BEIJING_TZ, ensure_log_directory, flush_persistent_logs, restrict_log_file
 
 
 logger = logging.getLogger("roleplex.log_archive")
@@ -117,7 +117,7 @@ def _create_archive(candidate: ArchiveCandidate, destination: Path, logs_root: P
         "schema_version": 2,
         "source_date": candidate.source_date.isoformat(),
         "archive_kind": candidate.kind,
-        "created_at": datetime.now().astimezone().isoformat(),
+        "created_at": datetime.now(BEIJING_TZ).isoformat(),
         "files": [
             {
                 "path": path.relative_to(logs_root).as_posix(),
@@ -218,12 +218,12 @@ def _e2e_day_finished(path: Path) -> bool:
     return True
 
 
-def _candidates(root: Path, today: date) -> list[ArchiveCandidate]:
-    """收集早于今天且允许归档的 v2 来源目录。
+def _candidates(root: Path, archive_before: date) -> list[ArchiveCandidate]:
+    """收集早于当前自然月且允许归档的 v2 来源目录。
 
     Args:
         root：日志树根目录。
-        today：本机当前自然日。
+        archive_before：当前月第一天；只有更早来源可以归档。
     """
     layouts = [
         (root / "runtime", "runtime", lambda _path: True),
@@ -237,7 +237,7 @@ def _candidates(root: Path, today: date) -> list[ArchiveCandidate]:
             continue
         for item in parent.iterdir():
             source_date = _parse_date_dir(item)
-            if item.is_dir() and source_date is not None and source_date < today and completed(item):
+            if item.is_dir() and source_date is not None and source_date < archive_before and completed(item):
                 result.append(ArchiveCandidate(source_date, kind, item))
     return sorted(result, key=lambda item: (item.source_date, item.kind))
 
@@ -356,7 +356,7 @@ def _retention_lease(root: Path) -> Iterator[bool]:
         yield False
         return
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        json.dump({"pid": os.getpid(), "started_at": datetime.now().astimezone().isoformat()}, stream)
+        json.dump({"pid": os.getpid(), "started_at": datetime.now(BEIJING_TZ).isoformat()}, stream)
     try:
         yield True
     finally:
@@ -381,7 +381,8 @@ def maintain_logs(
         compresslevel：tar.gz 使用的 gzip 压缩等级。
     """
     root = Path(logs_root)
-    current = now or datetime.now().astimezone()
+    current = (now or datetime.now(BEIJING_TZ)).astimezone(BEIJING_TZ)
+    archive_before = current.date().replace(day=1)
     result = {"archives_created": 0, "archives_deleted": 0, "released_bytes": 0, "failures": 0}
     started = time.monotonic()
     bytes_before = _tree_bytes(root)
@@ -391,12 +392,13 @@ def maintain_logs(
             return result
         _audit(
             "log.retention_started",
+            archive_before=archive_before.isoformat(),
             cutoff_date=(current.date() - timedelta(days=retention_days)).isoformat(),
             retention_days=retention_days,
             max_total_bytes=max_total_bytes,
             bytes_before=bytes_before,
         )
-        for candidate in _candidates(root, current.date()):
+        for candidate in _candidates(root, archive_before):
             destination = _archive_path(root, candidate.source_date, candidate.kind)
             try:
                 if destination.exists():

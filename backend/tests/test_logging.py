@@ -83,6 +83,7 @@ def test_json_formatter_assigns_identity_order_category_and_omits_empty_context(
         payload = json.loads(formatter.format(record))
 
     assert payload["schema_version"] == 2
+    assert payload["timestamp"].endswith("+08:00")
     assert payload["event"] == "test.event"
     assert payload["category"] == "app"
     assert payload["run_kind"] == "runtime"

@@ -106,6 +106,8 @@ test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ 
   )
   for (const event of providerCalls.slice(-2)) {
     expect(event.provider_mode).toBe('fake')
+    expect(event.base_url).toBe('fake://local')
+    expect(event.base_url_source).toBe('fake')
     for (const field of [
       'input_tokens', 'output_tokens', 'total_tokens',
       'cache_hit_tokens', 'cache_write_tokens', 'cache_hit_ratio', 'usage_source',

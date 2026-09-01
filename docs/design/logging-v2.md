@@ -7,7 +7,7 @@
 | 设计版本 | 2 |
 | 当前实现 | [日志、请求关联与异步链路观测](../protocol/internal/observability.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-08-31 |
+| 复核日期 | 2026-09-01 |
 
 本文定义并约束当前日志 v2 的目录、文件职责、轮转方式和字段结构；现状摘要与事实来源见
 `docs/protocol/internal/observability.md`。该版本已于 2026-08-27 经用户人工验收，后续兼容变更必须同步
@@ -86,8 +86,9 @@ logs/
         └── 2026-08-24_e2e-real.tar.gz
 ```
 
-日期目录使用后端所在机器的本地日期 `YYYY-MM-DD`；JSON 内时间统一使用带时区的 ISO 8601，运行事件
-继续以 UTC 记录，summary 同时保存本地时区偏移。
+日期目录和 JSONL `timestamp` 统一使用北京时间 `Asia/Shanghai`（UTC+08:00）的 ISO 8601。Roleplex 是
+Owner 本机应用，固定口径避免宿主系统时区、UTC 事件和目录日期互相错位；事件身份和顺序仍以
+`event_id/process_seq` 为准，时间不能替代因果关系。测试 summary 同样保存明确时区偏移。
 
 ## 三、标识符和命名
 
@@ -208,7 +209,7 @@ provider_streaming_c02814a1.json
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `schema_version` | integer | 日志字段版本，固定为 `2` |
-| `timestamp` | string | UTC ISO 8601，含时区 |
+| `timestamp` | string | 北京时间 ISO 8601，固定 `+08:00` |
 | `level` | string | `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `logger` | string | Python logger 名称 |
 | `event_id` | string | `evt_` + UUID4 hex，全局唯一事件身份 |
@@ -323,6 +324,8 @@ status 只用于终态或策略决策：`success | failed | cancelled | timeout 
 | `provider_call_index` | integer | 本轮第几次模型调用 |
 | `provider_mode` | string | `fake/real` |
 | `provider_type` | string（可选） | `anthropic/openai_compatible` 等 |
+| `base_url` | string | 本次实际使用的脱敏 Provider 基址；fake 为 `fake://local` |
+| `base_url_source` | string | `configured/default/fake`，说明基址来源 |
 | `model` | string | 模型名 |
 | `ttft_ms` | number（可选） | 调用开始到首个流式分片 |
 | `duration_ms` | number | 本次调用总耗时 |
@@ -337,6 +340,10 @@ status 只用于终态或策略决策：`success | failed | cancelled | timeout 
 
 fake provider 或厂商未报告的 token 字段和 usage_source 省略，不得按字符数估算。生成完成/失败/停止
 事件额外包含 `provider_call_count`、`delta_count`、整轮 token 汇总、`duration_ms` 和稳定 error_code。
+
+Provider URL 必须在进入日志前结构化脱敏：移除用户名、密码、query 和 fragment；保留 scheme、host、port
+与不含凭据特征的 path。疑似 Key/Token/Secret/Auth 路径段和异常长段替换为 `<redacted>`。配置为空时记录
+对应 SDK 的公开默认基址并标记 `base_url_source=default`，不得因为没有显式配置而省略本次实际路由信息。
 
 ContextBuilder 成功后记录一次 `context.loaded`，并把同一组诊断字段绑定到本轮后续的
 `provider.call_started/completed/failed` 与 generation 终态。字段包括：
@@ -620,8 +627,8 @@ WARNING。浏览器 pageerror、失败的 console.error 和 Playwright 断言失
 }
 ```
 
-世界切换 E2E 的 `worlds` 填 alpha/beta 目录；真实 E2E 额外记录 provider_type 和 model，但不记录 Key、
-base URL query、请求 body 或完整模型回复。环境元数据只允许版本、操作系统、浏览器和 provider 公共
+世界切换 E2E 的 `worlds` 填 alpha/beta 目录；真实 E2E 额外记录 provider type、model 和脱敏 base URL，
+但不记录 Key、URL query、请求 body 或完整模型回复。环境元数据只允许版本、操作系统、浏览器和 provider 公共
 标识；不保存完整环境变量或 pip/npm 依赖清单。
 
 真实 Provider 的显式数据库 smoke 与 real-world 测试都使用 `run_kind=e2e-real`；前者由 `database` 定位，
@@ -646,6 +653,7 @@ E2E summary 字段定义：
 | `worlds` | string[] | 世界切换 E2E 使用的隔离世界路径；普通/真实单库 E2E 为空数组 |
 | `backend_process_instance_ids` | string[] | 从该轮 events 中发现的所有后端进程实例 |
 | `provider_type` / `model` | string（可选） | 从 `provider.built` 提取的公开 Provider 类型与模型名 |
+| `base_url` / `base_url_source` | string（可选） | 从 `provider.built` 提取的脱敏基址及 `configured/default/fake` 来源 |
 | `backend_version` / `python_version` / `node_version` | string/null | 非敏感运行版本元数据 |
 | `operating_system` / `browser` / `browser_version` | string/null | 非敏感系统与浏览器复现信息 |
 | `artifact_index` | string | 固定指向本轮 `artifacts.json` |
@@ -714,16 +722,19 @@ Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`
 - 自动执行时机：每次后端启动，必须在结构化日志 handler 就绪后执行检测；失败不阻断服务启动。
 - 压缩格式：tar.gz，Python 标准库 `tarfile` + gzip，`compresslevel=6`。它不引入额外依赖，在
   Linux/WSL 上可直接用 tar，在项目使用者的 Windows 环境中也已有解压工具。
-- 归档粒度：按“来源日期 + 类别”生成不可变 tar.gz，并按月份放目录；不持续追加月度大归档。
+- 归档触发：当前自然月的每日目录保持原始 JSONL，可直接查看；进入新月份后才归档上一个月及更早的已关闭
+  来源。检测仍在每次启动执行，但同月内不会反复压缩昨日目录。
+- 归档粒度：按“来源日期 + 类别”生成不可变 tar.gz，并按月份放目录；月初批量处理上月，但不持续追加或
+  改写月度大归档，以保留逐日校验和局部损坏隔离。
 - 保留期：按归档内容的本地来源日期计算，`age_days >= 30` 时删除；即保留今天和前 29 个自然日。
 - 最大占用：整个 `logs/` 树目标上限为 1 GiB，即 `1_073_741_824` bytes；旧版日志也计入总量，但在
   完成显式迁移/归档前视为受保护内容，不自动删除。
 - 容量优先级：30 天是最长保留，不是最低保证。总量超限时允许提前删除最旧归档，直到不超过上限。
-- 保护边界：绝不删除当天 runtime/unit/E2E、当前活跃日志、status=running 的测试目录、临时归档和旧版
-  未迁移日志。若受保护内容本身超过 1 GiB，只记录 CRITICAL 并停止删除，不破坏活跃事实。
+- 保护边界：绝不删除当前自然月的 runtime/unit/E2E 原始目录、当前活跃日志、status=running 的测试目录、
+  临时归档和旧版未迁移日志。若受保护内容本身超过 1 GiB，只记录 CRITICAL 并停止删除，不破坏活跃事实。
 
-前一自然日及更早的已完成目录在启动检测时立即归档，不等到第 30 天。这样大部分保留期都使用压缩存储。
-检测和本轮清理在应用报告 ready 前完成，确保健康检查成功时日志树已经处于一致状态；允许因此产生有限
+当前月目录不归档；例如 9 月 2 日仍可直接查看 9 月 1 日 JSONL，10 月首次启动才批量归档 9 月已关闭来源。
+检测和本轮清理在应用报告 ready 前完成，确保健康检查成功时日志树已经处于一致状态；月初可能产生有限
 启动延迟。清理失败写 ERROR 后继续启动，不能让日志维护故障使 Roleplex 永久不可用。
 
 ### 10.2 tar.gz 内容与校验
@@ -748,7 +759,7 @@ Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`
 
 允许的 archive kind：`runtime`、`unit-tests`、`e2e-fake`、`e2e-real`。归档流程：
 
-1. 只选择已关闭且不属于当天/运行中的来源。
+1. 只选择早于当前自然月、已经关闭且不处于 running 的来源。
 2. 把 tar.gz 写入同目录临时文件，不直接覆盖正式名称。
 3. 重新以 `r:gz` 打开并完整读到 gzip 流尾，确认 tar 结构可遍历；拒绝绝对路径、`..` 路径穿越、
    symlink、hardlink、设备文件和其他非普通文件/目录成员。
@@ -765,7 +776,7 @@ Provider usage 只允许：`input_tokens`、`output_tokens`、`total_tokens`、`
 
 每次启动按以下固定顺序：
 
-1. 扫描并归档前一自然日及更早的已关闭来源。
+1. 扫描并归档当前自然月之前的已关闭来源；同月每日目录保持原样。
 2. 删除 `age_days >= 30` 的最旧正式归档。
 3. 重新计算整个 logs 树实际字节数。
 4. 若仍超过 1 GiB，按 `source_date`、`created_at` 从旧到新删除已关闭归档，直至达标。
@@ -780,7 +791,7 @@ tar.gz 临时文件和损坏/校验失败的归档不计为“可安全淘汰的
 
 | 事件 | 关键字段 |
 |---|---|
-| `log.retention_started` | `cutoff_date`、`max_total_bytes`、`bytes_before` |
+| `log.retention_started` | `archive_before`、`cutoff_date`、`max_total_bytes`、`bytes_before` |
 | `log.archive_created` | `source_date`、`archive_kind`、相对 archive path、文件数、源/归档字节、SHA-256 |
 | `log.archive_source_removed` | `source_date`、`archive_kind`、删除文件数、删除字节数 |
 | `log.archive_delete_planned` | 相对 archive path、字节数、`reason=age|size`、来源日期、SHA-256 |

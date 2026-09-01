@@ -90,6 +90,32 @@ async def _wait_for_role_messages(
     raise AssertionError("群聊角色回复没有在预期时间内进入终态")
 
 
+async def _wait_for_queue_jobs(
+    conversation_id: int,
+    count: int,
+    statuses: set[str],
+) -> list[Any]:
+    """等待持久队列任务全部进入允许终态。
+
+    Args:
+        conversation_id：目标会话 ID。
+        count：预期任务数量。
+        statuses：允许的任务状态集合。
+    """
+    from app.db import SessionLocal
+    from app.models import QueueJob
+
+    for _ in range(200):
+        async with SessionLocal() as session:
+            jobs = (await session.scalars(select(QueueJob).where(
+                QueueJob.conversation_id == conversation_id,
+            ).order_by(QueueJob.id))).all()
+        if len(jobs) == count and all(job.status in statuses for job in jobs):
+            return list(jobs)
+        await asyncio.sleep(0.01)
+    raise AssertionError("队列任务没有在预期时间内进入终态")
+
+
 @pytest.mark.anyio
 async def test_group_without_mentions_persists_message_without_generation():
     """群聊无 mentions 时只保存真人消息，不创建 generation 或调用 Provider。"""
@@ -226,7 +252,7 @@ async def test_mentions_run_strictly_in_request_order_and_later_role_sees_prior_
     from app.agent.domain import MessageDone, TextDelta
     from app.db import SessionLocal, engine
     from app.main import app
-    from app.models import Generation, Message, QueueJob
+    from app.models import Generation, Message
     from app.services import chat
 
     timeline: list[str] = []
@@ -264,13 +290,11 @@ async def test_mentions_run_strictly_in_request_order_and_later_role_sees_prior_
             role_messages = await _wait_for_role_messages(
                 client, group["headers"], group["conversation_id"], 2,
             )
+            jobs = await _wait_for_queue_jobs(group["conversation_id"], 2, {"completed"})
             async with SessionLocal() as session:
                 generations = (await session.scalars(select(Generation).where(
                     Generation.conversation_id == group["conversation_id"],
                 ).order_by(Generation.id))).all()
-                jobs = (await session.scalars(select(QueueJob).where(
-                    QueueJob.conversation_id == group["conversation_id"],
-                ).order_by(QueueJob.id))).all()
                 user_message = await session.scalar(select(Message).where(
                     Message.conversation_id == group["conversation_id"],
                     Message.sender_type == "user",

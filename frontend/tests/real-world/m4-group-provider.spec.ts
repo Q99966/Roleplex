@@ -44,6 +44,8 @@ test('runs two real provider roles serially inside one managed-world chain', asy
   expect(calls[0].chain_id).toBe(calls[1].chain_id)
   expect(calls[0].execution_id).not.toBe(calls[1].execution_id)
   expect(calls.every((event) => typeof event.input_tokens === 'number')).toBe(true)
+  expect(calls.every((event) => typeof event.base_url === 'string')).toBe(true)
+  expect(calls.every((event) => ['configured', 'default'].includes(String(event.base_url_source)))).toBe(true)
   const serialized = JSON.stringify(await readRunEvents())
   expect(serialized).not.toContain(prompt)
   expect(serialized).not.toContain(collaborationCode)

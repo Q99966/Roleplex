@@ -6,7 +6,7 @@
 | 状态 | 已实现测试体系的使用指南 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/tests/`、`frontend/tests/`、Playwright 配置、pytest 配置与日志 v2 |
-| 复核日期 | 2026-08-29 |
+| 复核日期 | 2026-09-01 |
 
 本文是 Roleplex 测试分层、命令、端口、数据、账号、日志和人工排查方式的统一入口。接口断言仍以对应
 协议文档为权威，日志字段以 [日志 v2](../design/logging-v2.md) 为权威；本文不复制完整 wire schema。
@@ -318,6 +318,10 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 
 确认使用了显式 real/real-world 命令，并配置 Key、模型和 base URL。普通 pytest 与普通 E2E 无论 `.env`
 是否存在都固定 fake；contract 未配置某厂商时会显示 skip。
+
+真实 Provider 路由可从 `provider.built` 或 `provider.call_started/completed/failed` 的 `base_url` 查看；该值已
+移除 URL 凭据和 query。E2E `summary.json` 同时汇总 `base_url` 与 `base_url_source`。若返回
+`PROVIDER_AUTH_FAILED`，先核对该脱敏路由对应的 Key 是否仍有效，不要把 Key 打印到终端或日志。
 
 ## 九、新增测试时的规则
 

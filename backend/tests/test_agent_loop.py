@@ -238,6 +238,41 @@ def test_deepseek_cache_miss_is_not_reported_as_cache_write():
     assert "cache_write_tokens" not in usage
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://api.example.com/v1", "https://api.example.com/v1"),
+        (
+            "https://user:password@example.com:8443/v1?api_key=secret#fragment",
+            "https://example.com:8443/v1",
+        ),
+        (
+            "https://relay.example.com/api/token/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL/v1",
+            "https://relay.example.com/api/<redacted>/<redacted>/v1",
+        ),
+    ],
+)
+def test_provider_base_url_is_structurally_redacted(raw: str, expected: str):
+    """Provider BASE_URL 日志必须保留路由信息，同时剔除凭据与高风险路径段。"""
+    from app.agent.providers import sanitize_base_url
+
+    assert sanitize_base_url(raw) == expected
+
+
+def test_provider_base_url_metadata_distinguishes_configured_and_default():
+    """未配置基址时仍记录 SDK 默认路由，并明确区别于自定义中转。"""
+    from app.agent.providers import PROVIDER_OPENAI_COMPATIBLE, provider_base_url_metadata
+
+    assert provider_base_url_metadata(PROVIDER_OPENAI_COMPATIBLE, None) == {
+        "base_url": "https://api.openai.com/v1",
+        "base_url_source": "default",
+    }
+    assert provider_base_url_metadata(PROVIDER_OPENAI_COMPATIBLE, "https://relay.example.com/v1") == {
+        "base_url": "https://relay.example.com/v1",
+        "base_url_source": "configured",
+    }
+
+
 @pytest.mark.anyio
 async def test_tool_round_emits_paired_tool_events():
     """工具轮应产出成对的开始/结束事件，并继续产出后续文本。"""
