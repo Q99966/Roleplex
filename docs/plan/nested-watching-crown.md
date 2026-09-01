@@ -1,17 +1,24 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
-## 当前追加任务：上下文、Prompt Cache、群聊与 Orchestrator（C0-C2、M4a 已完成，等待 M4b 指令）
+## 当前追加任务：单角色工作区与基础命令（W1a/W1b/W1c 已细分）
 
 用户于 2026-08-28 决定延期工作项四“会话导出与导入”：必须先补齐统一历史上下文、优化 Prompt Prefix
 Cache、实现群聊串行调度和 Orchestrator，并完成阶段式 Checkpoint 与真实缓存验收，再冻结导出格式。
 
 详细范围、依赖、数据边界、测试矩阵和分阶段验收统一见：
-[上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md)。
+[上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md)和
+[Agent 仓库工作区、代码工具与 Worktree 实施计划 v1](agent-repository-workspaces-v1.md)。
+2026-09-01 已确认 M4b fan-out 前先定义 W0、实现 E0，再以 W1a 原生文件、W1b 结构化命令和 W1c 审批
+Shell 逐层跑通单聊角色；之后才进入 Repository、只读代码工具和 worktree。各切片仍需
+编码前复核、独立测试、人工验收和提交，当前未创建迁移或产品代码。
 
 当前建议主线：
 
 ```text
-C0 基线 → C1 ContextBuilder → C2 缓存观测 → M4a 群聊 → M4b Orchestrator
+C0 基线 → C1 ContextBuilder → C2 缓存观测 → M4a 群聊
+→ W0 设置 → E0 Execution → W1a 文件 → W1b 结构化命令 → W1c Shell → W2a Repository
+→ W2b 文件/Git → W3 Worktree/补丁
+→ M4b Orchestrator
 → C3 Checkpoint → C4 真实缓存验收 → 会话导出/导入 → 世界分发
 ```
 
@@ -37,7 +44,7 @@ M4a 已于 2026-08-30 获得实施指令。首版确认群聊真人消息没有 
 M4a 已于 2026-08-31 实现并通过自动验证：后端 93 passed、普通 fake E2E 18 passed、fake
 managed-world E2E 1 passed、真实 DeepSeek managed-world E2E 2 passed、前端 build 通过。群聊成员管理、
 @ 补全、持久串行队列、同 chain 前序回复、停止整链和工具过程卡片均已落地；已于 2026-09-01 经用户
-人工验收，M4b 尚未开始。
+人工验收。下一阶段先确认 W0，再实施 E0、W1a；W1b/W1c 和 Repository/worktree 尚未开始。
 
 ## 当前追加任务：日志与测试报告 v2（已完成，经人工验收）
 
@@ -157,8 +164,10 @@ M0 剩余风险验证已完成并提交（commit `c2f070a`）。随后明确了�
 ### 工作项四：会话导出与导入（延期，等待上下文/群聊/编排稳定）
 
 本工作项由 2026-08-28 的计划修订延期。解锁条件和新的前置顺序见
-[上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md)。以下内容保留
-作为导出目标，不代表当前可以开始编码。
+[上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md)及
+[Agent 仓库工作区、代码工具与 Worktree 实施计划 v1](agent-repository-workspaces-v1.md)。以下内容保留
+作为导出目标，不代表当前可以开始编码。Repository Binding、绝对路径、execution worktree、命令审批和代码
+变更均为主机本地状态，不进入会话导出；导入后的会话默认不绑定仓库。
 
 1. 导出：单会话一个 JSON；多选导出为一个文件夹，内含多个 JSON 与一份清单（格式版本、导出时间、会话列表、来源实例标识）。
 2. 内容：会话元信息、成员、消息（parts、状态、版本、链路标识、时间、发送者）。事件日志不导出，导入后重新编号。
@@ -179,7 +188,9 @@ M0 剩余风险验证已完成并提交（commit `c2f070a`）。随后明确了�
 ### 实施顺序
 
 一（密码）→ 二（删除语义）→ 三（存档）已完成。后续顺序已修订为：上下文与缓存基础 → 群聊 →
-Orchestrator → Checkpoint/真实缓存验收 → 四（导出导入）→ 五（世界分发，其中 Agent 化最后实施）。
+工作区/Shell 设置 → execution → 单角色 Shell → Repository/代码工具/worktree → Orchestrator →
+Checkpoint/真实缓存验收 → 四（导出导入）→
+五（世界分发，其中 Agent 化最后实施）。
 工作项四不再视为与群聊/编排无关；第五仍依赖一、三、四。
 
 ### 验证命令
@@ -573,13 +584,24 @@ M0/M1 功能已经通过构建、API smoke test 和 Playwright 浏览器测试�
 | **M2 单聊闭环**（最高风险） | 会话 CRUD（成员级置顶/归档）、WS 可靠续传协议全量实现、模型工厂+防腐层、markdown/代码渲染、停止生成、chain 日志 | 两家 provider 流式单聊；**断网 10s 重连事件不丢不重**（含生成中消息续接与 done 补齐）；停止 1s 内 UI 生效落库 stopped；两会话并发互不干扰 |
 | **M3 富媒体+消息操作** | 上传（图片/文件）、图片多模态、create/update_artifact、artifact 卡+加固 iframe+全屏、产物列表、引用/重新生成(stale 徽标)/pin(预算拦截)、搜索 | 视觉模型识图、非视觉降级；HTML 沙箱运行且 raw 直开被强制下载；regenerate 后旧依赖消息出现 stale 徽标；pin 超预算被拒并提示 |
 | **M4a 群聊** | 建群/成员管理/删群、@补全、串行回复调度、工具过程卡片、tool_calls 审计落库 | @A 仅 A 回复；@A @B 严格串行且 B 可见 A；停止停整条链；chain 上限生效 |
+| **W0 设置契约** | workspace root/kind、Shell、审批、timeout、输出、环境、网络与保留边界 | 只确认文档和测试门槛，不创建工具或迁移 |
+| **E0 Execution 身份** | 持久 `agent_executions`、generation 一对一身份、启动中断降级 | 新执行不再只靠 queue JSON/日志；SQLite/PostgreSQL 迁移验证；不改变 M4a 行为 |
+| **W1a 原生文件** | 前端当前 World 工作区列表、single 绑定、list/read/write、原子写与 expected hash | fake managed-world 完成创建/读取/更新；越界和跨 World 拒绝；不启动子进程 |
+| **W1b 结构化命令** | 稳定 command ID、专用参数 schema、cwd/环境/输出/超时/取消/进程树 | 无任意 shell fallback；fake 浏览器在测试工作区完成 pwd/list/read/count |
+| **W1c 任意 Shell** | Owner 逐次审批、stdin/no-profile、拒绝/过期/重启和真实 Provider | fake 与真实 Provider 均跑通简单 Shell；不接 Git、不创建 worktree |
+| **W2a Repository Binding** | Owner 注册/复核仓库、会话绑定、主机迁移后重绑定、dirty 保护 | Guest 不见宿主路径；dirty 仓库只读可用但写执行拒绝；World 不复制外部仓库 |
+| **W2b 文件/Git 工具** | 原生 list/read/search/status/diff、路径与敏感内容边界 | 临时仓库内可重复读取；越界、符号链接、凭据文件、超限和 Guest 调用均由服务端拒绝 |
+| **W3 Worktree/补丁** | execution worktree、补丁、命令 profile、复用 W1b/W1c 运行器、保留清理 | 两写 execution 隔离；补丁可验证；dirty worktree 保留；不自动 commit/merge/push |
 | **M4b Orchestrator** | 开关+模板角色、dispatch 并行、失败重试/降级、汇总 | 2 子任务并行流式；人为致 1 个失败→重试→降级汇总；子角色确无 dispatch 工具 |
 | **M5 MCP** | 宿主任务池、MCP 配置表单+测试连接、工具接入循环、工具分级标注 | stdio+streamable-http 各接一个真实 server 可调用；server 挂掉角色降级回复 |
 | **M6 真人协作+打磨** | 邀请码全流程（原子兑换）、guest 配额与危险工具拦截、多人实时、在线/未读、错误文案、空态 | 双浏览器实时互见；同会话两人同时发消息按序处理；**guest 触发含 stdio MCP 角色被默认拒绝**；guest 看不到 owner 配置；邀请码超限/过期兑换失败 |
 
 ## 七、验证方式
 - **自动化**：pytest+httpx 覆盖核心 API 与**权限矩阵**（owner/guest 双身份参数化）、邀请原子兑换并发测试；mock 模型测调度/循环/abort/orchestrator/事件映射；WS 续传用"断开-重连-比对事件序列"集成测试；厂商契约测试（带 key 可选）
-- **手动端到端**（每 milestone 末）：真实 key（DeepSeek/智谱低价模型）→ 单聊流式 → 建群 @ 两角色 → 开 Orchestrator → 接 `@modelcontextprotocol/server-filesystem` → 第二浏览器 guest 入群发言并验证权限边界
+- **手动端到端**（每 milestone 末）：真实 key（DeepSeek/智谱低价模型）→ 单聊流式 → 单角色在托管目录
+  申请并执行简单 Shell → 建群 @ 两角色 → 在测试仓库完成绑定/读取/worktree/补丁/测试/diff →
+  开 Orchestrator 并行协作 → M5 再接外部 MCP →
+  第二浏览器 guest 入群发言并验证权限边界
 - **Windows**：`start.ps1` 单进程启动；README 写明环境要求
 
 ## 八、关键风险与对策
@@ -592,6 +614,8 @@ M0/M1 功能已经通过构建、API smoke test 和 Playwright 浏览器测试�
 | 隔 langchain 层排错难 | 防腐层收敛 + 脱敏元数据日志（body 仅临时 debug）+ 契约测试 + M0 实测后锁精确版本 |
 | MCP × Windows | 宿主任务模型、npx.cmd、env 合并、进程树清理、Proactor（M0 spike） |
 | 群聊消息风暴 | chain 上限 + 角色 @ 不触发 + 编排深度 1 + 停止按钮 |
+| Worktree 被误当安全沙箱 | 路径逐次校验 + shell 始终 dangerous/审批 + 最小环境 + 超时/进程树；明确无 OS 沙箱时仍可访问网络和宿主资源 |
+| 并行 Agent 覆盖用户改动 | dirty base 禁止写 + execution 独立 worktree + expected hash 补丁；dirty worktree 永不自动删除，首版不自动合并 |
 | Key/JWT 泄露 | key 加密落库+打码；日志不记敏感头；iframe 无 same-origin + CSP + 防顶层打开 |
 | 历史未配对 tool_use 持续 400 | 触顶收尾调用 + 仅最近一轮保留结构化工具块 |
 | pin 无限膨胀溢出上下文 | 分区硬预算，超限拒绝新增 pin |

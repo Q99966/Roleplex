@@ -3,7 +3,7 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | 已批准；C0-C2、M4a 已完成，等待 M4b 实施指令 |
+| 状态 | 已批准；C0-C2、M4a 已完成；W0/E0/W1a-W1c/W2a-W3 分层顺序已确认，当前待 W0 复核 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
@@ -12,12 +12,17 @@
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
-思路，不直接授权其中的 Workspace、FTS5、sqlite-vec、Embedding 或自动长期记忆能力。
+思路，不直接授权其中的 Memory Workspace、FTS5、sqlite-vec、Embedding 或自动长期记忆能力。M4b 前新增
+的本地 Git 仓库与 execution worktree 只以[Agent 仓库工作区计划](agent-repository-workspaces-v1.md)为权威，
+不得与 Memory scope 混用。
 
 ## 当前实施进度（2026-09-01）
 
 - C0/C1 已实现并于 2026-08-29 经用户人工验收，提交 `4ea6312`；C2 已于 2026-08-30 经用户人工验收；
-  M4a 已于 2026-09-01 经用户人工验收；M4b 及后续阶段尚未开始。
+  M4a 已于 2026-09-01 经用户人工验收；2026-09-01 已确认先定义 W0 工作区/Shell 契约，再实施 E0，随后
+  以 W1a 原生文件、W1b 结构化命令、W1c 审批 Shell 逐层跑通单角色闭环，最后才进入 Repository、worktree
+  和 M4b fan-out。
+  上述新阶段的编码、迁移和协议变化尚未开始。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -57,18 +62,21 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
 
 - 群聊成员、mentions、串行回复顺序和同一 chain 的停止边界；
 - Orchestrator、子 Agent、父子执行、重试和降级汇总的持久化关系；
+- Repository Binding、execution worktree 和代码变更哪些属于主机本地状态、不得进入会话导出；
 - 消息 regenerate 后的 revision/旧版本语义；
 - Context Checkpoint 是权威数据还是可重建派生数据；
 - Shared Memory 是否属于单个会话导出范围。
 
-因此工作项四“会话导出与导入”延期，直到本文 C1、C2、M4a、M4b、C3 和 C4 完成。工作项五“世界
-分发”继续依赖会话导出/导入，不提前实施。
+因此工作项四“会话导出与导入”延期，直到本文 C1、C2、M4a、W0、E0、W1a/W1b/W1c、W2a/W2b、W3、M4b、
+C3 和 C4 完成。
+工作项五“世界分发”继续依赖会话导出/导入，不提前实施。
 
 ## 二、当前架构事实与术语映射
 
 ### 2.1 当前事实
 
-- 一个世界是一个物理目录和数据库，不存在额外的 Workspace 表或 `workspace_id`。
+- 当前实现中，一个世界是一个物理目录和数据库，尚不存在额外的 Workspace 表或 `workspace_id`；W1 计划的
+  Repository Binding 是主机本地代码能力，不是 Memory Workspace，也不改变世界物理 scope。
 - 默认部署继续使用 SQLite、单进程、单 worker；不为了缓存或记忆引入外部数据库服务。
 - 当前生成服务已通过唯一 ContextBuilder 向 `run_agent()` 传入终态历史和预算诊断。
 - `messages` 已有 sender、reply、mentions、parts、status、revision、chain 和 meta 字段。
@@ -80,14 +88,15 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
 
 | 参考设计术语 | Roleplex v1 解释 |
 |---|---|
-| Workspace Stable Prefix | 当前世界内、由软件版本确定的稳定运行约束；不是把工程文档全文注入 Prompt |
+| Workspace Stable Prefix | 当前世界内、由软件版本确定的稳定运行约束；不是代码仓库绑定，也不是把工程文档全文注入 Prompt |
 | Role Stable Prefix | 角色 system prompt、稳定技能说明和允许暴露的工具策略 |
 | Conversation Stable Prefix | 会话类型、稳定规则和按固定顺序编码的成员身份表 |
 | Role × Conversation | ContextBuilder 的上下文隔离键；同一角色在不同会话不共享历史 |
 | Conversation Checkpoint | 按明确消息边界生成的不可变上下文压缩版本，属于派生数据 |
 | Shared Memory | 当前世界内、角色级跨会话的显式长期记忆；不等同于聊天历史 |
 
-首版不新增 Workspace 实体，也不把 `world_name` 当作数据库外键。物理世界隔离已经提供最高层边界。
+C1/C2 首版不新增 Memory Workspace 实体，也不把 `world_name` 当作数据库外键。物理世界隔离已经提供最高层
+上下文边界；后续 Repository Binding 只负责本机代码工具授权，不能进入这一术语映射偷换 scope。
 
 ## 三、已批准的核心决策
 
@@ -496,46 +505,136 @@ cache_hit_ratio
 - WS 继续使用现有事件信封，新增事件先更新公开 WS 协议；
 - 对未知事件保持降级，不让旧客户端崩溃。
 
-## 十、M4b：Orchestrator
+## 十、E0 持久 execution 与 M4b Orchestrator
 
-### 10.1 调度边界
+> **已确认实施顺序**：先按[Agent 仓库工作区计划](agent-repository-workspaces-v1.md)完成 W0 设置契约，再
+> 独立完成 10.2 的 E0 单表持久执行树；W1a/W1b/W1c 依次完成原生文件、结构化命令和审批 Shell，验收后
+> 才进入 W2a Repository Binding、W2b 只读文件/Git 和 W3 worktree/补丁。所有阶段分别
+> 人工验收后，才实施
+> 10.1、10.3-10.6 的 M4b fan-out。
 
-- Orchestrator 只在会话显式开启时成为入口；
-- `dispatch(role_id, task, context_hint)` 只接受本会话、当前 Owner、存活启用角色 ID；
-- task/context hint 限长，不能覆盖系统安全与工具 policy；
-- 深度固定为 1，子 Agent 工具集中不包含 dispatch；
-- 子执行使用共同 base context boundary 并行；
-- 占位消息在并发启动前按稳定 dispatch 顺序短事务创建；
-- 子任务失败重试一次，仍失败以结构化 error 摘要交给 Orchestrator；
-- 最终汇总不得伪造失败子角色已经成功。
+### 10.1 产品入口与公开行为
 
-### 10.2 父子执行与持久化
+- Orchestrator 只允许群聊显式开启；单聊不能开启。开启后，真人消息统一只创建一个 Orchestrator 父执行，
+  不再按 mentions 走 M4a 串行队列；mentions 仍作为用户输入保存，可供 Orchestrator 理解，但不直接授予分派权。
+- Orchestrator 角色必须是会话内当前 Owner 拥有的存活启用成员；它不属于可 dispatch 的子角色集合，避免
+  把编排角色再次当成子 Agent。成员被移除、停用或墓碑后自动关闭编排，不能靠旧配置继续执行。
+- 新增 Owner-only 的会话编排配置接口，使用 `expected_revision` 乐观锁启用、关闭或更换 Orchestrator；
+  更新成功产生 `conversation_updated` 事件。创建群聊时的现有字段继续兼容，但 M4b 前的禁用 UI 才在本阶段开放。
+- `POST /messages` 仍返回 `202`。开启编排时，初始 `generation_id/generation_ids` 只包含父执行；后续子执行
+  通过既有消息事件出现，不要求发送接口等待模型规划完成。
+- 子角色消息继续使用 `sender_type=role`；最终汇总使用 `sender_type=orchestrator` 和实际 Orchestrator 角色 ID。
+  客户端必须把两者都计入活动 generation，并用现有消息状态展示失败、停止和重试结果。
 
-M4b 编码前必须单独确认是否新增持久 `agent_executions`/dispatch 表。仅日志中的 execution ID 不足以支持
-重启诊断、导出语义和可靠汇总。如果新增表，至少表达：
+### 10.2 E0：父子执行持久化
 
-```text
-execution_id
-parent_execution_id
-generation_id
-role_id
-execution_kind
-attempt
-status
-error_code
-started_at / ended_at
-```
+E0 采用一张新的 `agent_executions` 表作为执行身份、父子关系、dispatch 请求和重试终态的唯一事实源；不另建
+一张复制 status/attempt 的 dispatch 状态表。一次子任务重试创建新的 execution/generation/消息，保留失败
+尝试，不把已经广播的失败输出静默改写成成功。`generations` 继续负责消息流生命周期，二者在同一短事务更新，
+但不能从日志反推或修复数据库状态。
 
-具体 schema、外键和恢复策略需先更新数据模型协议、错误码和迁移计划；不能把执行树塞进日志后让导出器
-反向解析日志。
+| 字段 | 约束与含义 |
+|---|---|
+| `id` | 标准整数主键 |
+| `execution_id` | `String(64)`，非空、唯一；日志链路标识 |
+| `parent_execution_id` | 可空，自引用 `execution_id`；父执行删除时级联删除子树 |
+| `conversation_id` | 非空，外键到会话并级联删除 |
+| `generation_id` | 非空且唯一，外键到 generation；每次实际尝试拥有独立 generation |
+| `chain_id` | 非空，等于本次真人触发链的 `generations.run_id` |
+| `role_id` | 可空，角色墓碑保留 ID；真正硬删除时置空，不级联抹掉执行事实 |
+| `execution_kind` | `single/group_role/orchestrator/subagent` |
+| `dispatch_order` | 子执行在父执行中的稳定零基序号；父执行为空 |
+| `attempt` | 从 1 开始；同一 `parent_execution_id + dispatch_order` 内递增 |
+| `task_text` / `context_hint_text` | 仅 subagent 非空；受限的会话内容，不进入日志或测试失败摘要 |
+| `status` | `queued/running/completed/failed/stopped/interrupted` |
+| `error_code` | 失败或中断时的稳定错误码，其他状态为空 |
+| `created_at/started_at/ended_at` | 生命周期时间；不能用日志时间猜测终态 |
 
-### 10.3 上下文与工具
+约束与索引至少包括：`UNIQUE(generation_id)`、
+`UNIQUE(parent_execution_id, dispatch_order, attempt)`、
+`INDEX(conversation_id, status)`、`INDEX(parent_execution_id, dispatch_order, attempt)` 和 `INDEX(chain_id)`。
+迁移命名为 `0005_agent_executions`，必须验证 SQLite 升降级、外键完整性和 PostgreSQL 离线 SQL。
 
-- Orchestrator 和子 Agent 都调用同一个 ContextBuilder；
-- execution ID 只用于链路，不进入稳定自然语言前缀；
-- 成员能力表按稳定 ID 排序；
-- dispatch policy 变化改变工具 hash；
-- 子 Agent 执行前再次校验权限，不能继承 Orchestrator 未经验证的参数。
+M4b 起，single、group_role、orchestrator 和 subagent 的新 generation 都先创建 execution 行；旧数据库中已经
+终结的 generation 不从 `queue_jobs.payload_json` 反向猜测回填。旧进程遗留任务仍按现有规则在启动时降级，
+从迁移后的新请求开始保证执行表完整。数据模型协议必须明确：queue payload 只是唤醒参数，不再是 execution
+身份的权威来源。
+
+### 10.3 两阶段编排与稳定顺序
+
+一个 Orchestrator 父 job 仍由 M4a 的会话 worker 独占，内部按以下顺序执行；子任务不进入 M4a 串行
+`queue_jobs`，而由父任务持有和取消，避免名义并行实际被同一 worker 串行化：
+
+1. 父执行调用唯一 ContextBuilder，进入 planning 阶段；`dispatch(role_id, task, context_hint)` 只收集请求，
+   框架 tool call 必须先经防腐层转为领域 dispatch 请求，业务层不能读取 LangGraph 私有事件。
+2. 以模型 tool-call 数组中的原始顺序分配 `dispatch_order`。服务端批量校验全部请求后，在一个短事务中按
+   稳定顺序预创建第一轮子 generation、execution 和角色占位消息；父汇总占位消息最后创建，因此消息 ID
+   顺序固定为“真人 → 子任务 → Orchestrator 汇总”。
+3. 提交占位和 `message_created` 事件后，再用有界 `asyncio.gather(return_exceptions=True)` 并行启动子任务。
+   每个子 generation 是其消息唯一 reducer，跨子任务不能更新同一消息。
+4. 可重试失败创建 `attempt=2` 的新 execution/generation/消息；第一轮失败消息保持 `error`。所有子任务
+   到达终态后，父执行只选择每个 dispatch 最新的成功结果，或最后一次结构化失败摘要。
+5. Orchestrator 使用相同 ContextBuilder 构造 final 阶段输入，流式写入最后的汇总占位；失败角色必须以
+   明确失败状态提供给模型，汇总不能描述为已经成功。
+
+Planning 文本不作为一条伪造完成消息展示；没有有效 dispatch 时仍进入 final 阶段，由 Orchestrator 直接
+回答或说明无法分派。父 planning/final、各子尝试均保留独立 Provider usage 日志，并用 parent execution 串联。
+
+### 10.4 ContextBuilder 与 dispatch 工具边界
+
+- Orchestrator planning/final 和所有 subagent 都调用 `app/context/` 的唯一 ContextBuilder。ContextBuilder
+  增加类型化 execution overlay，把 dispatch task、context hint 或结构化子结果计入当前输入和硬预算；业务
+  服务不得在 Builder 之后拼接未计费的大段 Prompt。
+- 并行子执行共享原始真人消息 ID 作为 base boundary，只读取 `message.id < current_message_id` 的同一历史
+  快照；它们看不见同批兄弟的 generating、done 或 retry 消息。final 阶段只通过类型化子结果 overlay 获取
+  本批结果，不依赖查询时机推断兄弟顺序。
+- 首版 `task` 最长 4096 字符、`context_hint` 最长 2048 字符；空 task、未知字段、越限或非法 role ID 返回
+  结构化 dispatch 拒绝，不截断后悄悄执行。task/hint 是受会话授权保护的数据，可以进入业务数据库和模型
+  输入，但不得进入正式日志、工具摘要、浏览器测试失败文件或 E2E summary。
+- Orchestrator 的 `tool_policy_hash` 包含 dispatch schema 版本、最大 fan-out、长度限制和排序后的可分派角色
+  ID；任一项变化必须改变 hash。execution/request ID 仍不进入稳定自然语言前缀。
+- dispatch 执行前以及每次 subagent attempt 开始前，都重新校验 conversation 未删除、开关仍启用、父执行
+  未停止、目标角色仍是本会话成员且属于当前 Owner 并处于 active 状态。
+- 深度固定为 1：只有 `execution_kind=orchestrator` 的 planning 阶段暴露 dispatch；subagent、final 阶段及
+  普通 single/group_role 的工具集中都没有 dispatch，服务端工具注册表也必须按 execution kind 强制过滤。
+
+### 10.5 并行、重试、停止与重启
+
+- 首版每个父执行最多接受 4 个有效 dispatch；超限作为结构化工具拒绝交给 Orchestrator，不启动前 4 个后
+  静默丢弃其余请求。并行数固定上限 4，不从模型参数或用户文本动态提高。
+- 子任务最多重试一次。只有 `PROVIDER_TIMEOUT`、`PROVIDER_RATE_LIMITED`、暂态 `PROVIDER_ERROR` 和受控
+  fake 暂态错误可重试；鉴权、bad request、上下文预算、权限/成员变化和用户停止不重试，避免重复计费和
+  无意义调用。第二次失败以原稳定错误码进入 final 结构化摘要。
+- 停止 chain 时先持久化父子 generation/execution 的停止请求，再取消父任务；取消必须传播到 gather 中的
+  子任务。已缓冲文本按现有规则以 `stopped` 收尾，尚未开始的子任务不得调用 Provider，其他 chain 不受影响。
+- 服务重启不恢复或重放 Provider 调用。遗留 `queued/running` execution 统一写为 `interrupted`，对应
+  generation/message 继续走既有中断降级；不能猜测子任务成功，也不能自动生成一个没有发生的父汇总。
+- Orchestrator 配置在消息接收时已经失效，必须在真人消息落库前返回稳定 422；dispatch 后续失效则只失败
+  对应子执行并继续 final 降级，不回滚已经持久化的真人消息。
+
+### 10.6 协议、日志与测试切片
+
+E0 编码前先更新 execution 数据模型、内部协议和错误码；W0、W1a/W1b/W1c、W2a/W2b、W3 的协议、日志和测试只在
+仓库工作区计划维护。
+M4b 编码前再更新 Agent 内部协议、公开会话/消息/WS 协议和错误码；实现后才把 Orchestrator 状态从预留改为
+已实现。日志只增加 execution/dispatch 序号、attempt、状态、耗时和稳定错误码，不保存 task、hint、子结果
+或 Prompt。新的阶段顺序为：
+
+1. **E0 持久执行树**：迁移、ORM、所有新 generation 的 execution 行、父子/attempt 状态和启动中断降级；
+   独立人工验收和提交，不开放仓库工具。
+2. **W0/W1a-W1c 单角色最小闭环**：先确认设置契约，再依次完成当前 World 工作区/原生读写、结构化命令和
+   Owner 审批 Shell；不接 Git 或 worktree，每个切片独立人工验收和提交。
+3. **W2a/W2b/W3 代码协作扩展**：按独立计划依次完成 Repository Binding、只读文件/Git 和 worktree/补丁；
+   每个切片独立人工验收和提交。
+4. **M4b-1 确定性 fan-out**：领域 dispatch 请求、防腐层映射、稳定占位顺序、共同 base boundary、最大 4 并行。
+5. **M4b-2 重试与汇总**：按错误码重试一次、失败摘要、最终 Orchestrator 流式消息、停止整树。
+6. **M4b-3 产品验收**：Owner 配置 UI、并行代码协作/失败可见性、断线恢复、fake managed-world 与独立真实 Provider
+   managed-world smoke。真实测试在阶段推进授权下由 Agent 显式运行，运行前说明联网和费用；普通 E2E 固定 fake。
+
+后端确定性测试必须覆盖两子任务真实重叠、父子 ID、稳定 dispatch 顺序、同角色多 dispatch、一次暂态失败后
+成功、不可重试失败、两次失败降级、伪造/墓碑/越权 role ID、深度 1、最大 fan-out、停止和重启。Playwright
+至少保留一个两子任务 happy path 和一个失败重试后降级路径，并断言旧客户端可忽略新增事件。迁移同时执行
+SQLite 重放、PostgreSQL 离线编译；移除二次鉴权、并行上限或子角色 dispatch 过滤时，对应用例必须变红。
 
 ## 十一、C3：阶段式 Checkpoint
 
@@ -663,6 +762,8 @@ Memory ID。
 
 - ContextBuilder 投影规则和 `context_schema_version` 已稳定；
 - M4a mentions、串行 chain 和停止语义已实现；
+- W0/E0/W1a/W1b/W1c/W2a/W2b/W3 工作区、execution、Shell、仓库/worktree 生命周期已实现，主机本地绑定、命令和
+  代码变更明确不进入会话包；
 - M4b Orchestrator、子角色消息和父子执行的长期事实已确定；
 - regenerate/revision 对历史和 stale 的语义已确定；
 - Checkpoint 已明确为派生数据且默认不导出；
@@ -724,7 +825,20 @@ revision 语义，如确需改变必须先更新本计划、公开协议与回�
 
 ### M4b 验收
 
-- 两子任务并行；一个失败能重试并降级汇总；子角色不能 dispatch；父子执行可持久追溯。
+- `0005_agent_executions` 在 SQLite 升降级、外键检查和 PostgreSQL 离线 SQL 中通过；新执行不再只把
+  execution ID 藏在 queue payload 或日志里。该项作为 E0 先独立人工验收和提交。
+- W0/E0/W1a/W1b/W1c 已按[仓库工作区计划](agent-repository-workspaces-v1.md)先完成设置、当前 World
+  工作区、原生文件、结构化命令与审批 Shell；W2a/W2b/W3 随后分别验收并提交。子执行最终能在临时测试仓库的
+  独立 worktree 中完成读取、
+  补丁、测试和 diff，且没有自动 merge 或宿主路径越界旁路。
+- 两个子任务真实重叠运行，消息按 dispatch 顺序稳定创建；同批子任务使用共同 base boundary，互相看不见
+  兄弟执行的中间或终态输出。
+- 一个暂态失败只重试一次并可成功；不可重试或第二次失败以结构化错误进入最终汇总，失败消息不被改写，
+  Orchestrator 不伪造成功。
+- 子角色没有 dispatch，非法/越权/墓碑角色和超过 4 个 fan-out 在服务端拒绝；停止和服务重启不会重放
+  Provider 调用，父子 execution 可从数据库持久追溯。
+- 普通 fake 回归、fake managed-world 和显式真实 Provider managed-world 均完成；真实 usage 只记录厂商事实，
+  不以固定缓存命中率或时延作为验收门槛。
 
 ### C3/C4 验收
 
@@ -764,12 +878,21 @@ revision 语义，如确需改变必须先更新本计划、公开协议与回�
 5. M4a 群聊无 mentions 时完全不触发角色回复，不增加默认回复角色配置；这样避免意外模型调用、费用和
    消息风暴。只有真人消息中的显式 mentions 或 `all` 才进入串行调度。
 
-### 18.2 到对应阶段前再确认
+### 18.2 2026-09-01 已确认
 
-1. M4b：父子 execution 是否必须新表持久化？本计划建议必须，具体 schema 待评审。
-2. C3：checkpoint 使用目标角色模型、专用摘要模型还是确定性裁剪？首版建议角色无关摘要需单独配置。
-3. Memory v0：Owner 通过独立 UI、消息操作还是工具调用确认 Memory？未确认前不实施写入入口。
-4. 导出：未来是否允许显式携带“本会话引用过的 Memory 快照”？默认建议不携带。
+1. M4b fan-out 前先定义 W0，完成 E0 后以 W1a 原生文件、W1b 结构化命令、W1c 审批 Shell 跑通单角色
+   最小工具闭环；
+   再进入 W2a Repository、W2b 只读工具和 W3 worktree/补丁，避免多个故障域一次落地。
+2. Worktree 只解决并行写隔离，不是安全沙箱；任意 Bash/PowerShell 始终 dangerous 并需要 Owner 逐次审批。
+3. 首版不自动 merge/commit/push，由 Orchestrator 汇总 diff、测试和冲突，Owner 决定整合。
+
+### 18.3 到对应阶段前再确认
+
+1. E0/M4b：采用 10.2 的单张 `agent_executions` 持久执行树；W0-W3 详细限制按独立计划 13.2 逐切片复核。
+2. M4b：planning/final 两阶段、首版 fan-out 上限 4，以及“只重试暂态错误一次”的规则在 W3 完成后复核。
+3. C3：checkpoint 使用目标角色模型、专用摘要模型还是确定性裁剪？首版建议角色无关摘要需单独配置。
+4. Memory v0：Owner 通过独立 UI、消息操作还是工具调用确认 Memory？未确认前不实施写入入口。
+5. 导出：未来是否允许显式携带“本会话引用过的 Memory 快照”？默认建议不携带。
 
 ## 十九、最终实施顺序
 
@@ -778,6 +901,14 @@ C0 基线与内部契约
 → C1 ContextBuilder、历史正确性、稳定前缀与硬预算
 → C2 Prefix/Provider Cache 可观测性
 → M4a 群聊串行调度
+→ W0 工作区与 Shell 设置契约
+→ E0 持久 execution 身份
+→ W1a 当前 World 工作区列表与原生文件读写
+→ W1b 无任意 Shell 的结构化命令
+→ W1c 任意 Shell 与 Owner 审批
+→ W2a Repository Binding
+→ W2b 只读文件与 Git 工具
+→ W3 Git Worktree 与补丁写入
 → M4b Orchestrator 并行编排
 → C3 阶段式 Checkpoint
 → C4 真实缓存验收
