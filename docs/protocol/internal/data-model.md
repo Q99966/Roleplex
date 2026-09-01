@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-08-29 |
+| 复核日期 | 2026-08-31 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -39,7 +39,7 @@
 | `messages` | 会话消息 | 已实现 |
 | `generations` | 一次 Agent 生成的状态机 | 已实现 |
 | `event_log` | 持久化事件流，断线恢复的唯一可靠来源 | 已实现 |
-| `queue_jobs` | 会话串行队列的持久化任务 | 预留，当前无代码写入 |
+| `queue_jobs` | 会话串行队列的持久化任务 | M4a 已实现 |
 | `invites` | 邀请码与使用次数 | 预留 |
 | `artifacts` / `artifact_versions` | 产物身份与不可变版本内容 | 预留（读取端点已实现，创建/更新未实现） |
 | `attachments` | 上传文件元数据 | 预留 |
@@ -168,8 +168,8 @@ Agent 角色定义，是"联系人"的数据来源。
 | `sender_id` | 用户 ID 或角色 ID，按 `sender_type` 解释；系统消息可为空 |
 | `reply_to_id` | 引用的消息（预留，当前会持久化但不影响回复逻辑） |
 | `client_message_id` | 客户端生成的幂等键。与 `(conversation_id, sender_id)` 组成唯一约束 `uq_message_client_key`，重复提交直接命中已有消息，不会重复生成 |
-| `mentions_json` | `@` 到的角色 ID 或 `"all"`（预留，群聊调度时生效） |
-| `parts_json` | 消息内容，part 数组。当前只有 `{"type":"text","text":"..."}`；后续扩展 code / image / file / artifact / tool_call，客户端对未知类型降级展示 |
+| `mentions_json` | M4a `@` 到的稳定角色 ID 或 `"all"`；群聊按该顺序去重调度，单聊忽略 |
+| `parts_json` | 消息内容，part 数组。当前支持 `text` 和不含原始参数/输出的 `tool_call` 过程卡；后续扩展 code / image / file / artifact，客户端对未知类型降级展示 |
 | `status` | `pending`（已建未开始）/ `generating`（流式中）/ `done`（完成）/ `error`（失败）/ `stopped`（用户停止）/ `interrupted`（进程重启时遗留的未完成生成，启动时自动改写） |
 | `revision` | 消息乐观锁版本。每次内容或状态变化 `+1`，客户端据此幂等应用事件；**一条消息只由其生成任务这一个 reducer 修改** |
 | `pinned` | 是否 pin（预留，M3） |
@@ -214,15 +214,16 @@ Agent 角色定义，是"联系人"的数据来源。
 
 一次完整回复的事件形态：用户消息 `message_created` → 角色占位消息 `message_created` → 若干 `message_delta` → `message_done`。
 
-## queue_jobs（预留）
+## queue_jobs
 
-单进程会话串行队列的持久化任务状态，用于重启后恢复未完成的调度。当前调度直接用内存中的 asyncio 任务，本表没有写入。
+M4a 单进程会话串行队列的持久化任务状态。内存队列负责当前进程内唤醒和顺序，表记录任务身份、目标角色、
+执行 ID 与终态；重启不恢复调用 Provider，遗留 queued/running 任务统一降级为取消/中断状态。
 
 | 字段 | 含义 |
 |---|---|
 | `conversation_id` / `generation_id` | 任务归属 |
-| `status` | `queued` / `running` / 终态 |
-| `payload_json` | 任务参数 |
+| `status` | `queued` / `running` / `completed` / `failed` / `cancelled` |
+| `payload_json` | `current_message_id`、`target_role_id`、`triggered_by_user_id`、`execution_id`、`chain_id` 与权限类别；不保存 Prompt 或工具原始参数 |
 | `attempts` | 已尝试次数，用于重试上限 |
 | `cancel_requested` | 是否已请求取消 |
 | `created_at` / `started_at` / `ended_at` | 生命周期时间戳 |

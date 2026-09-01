@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 内部（不承诺客户端兼容性） |
-| 状态 | 原型（M0 风险验证结论，产品接入见后续里程碑） |
+| 状态 | 部分已实现（M0 Agent 基础与 M4a 会话调度） |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/mcp/manager.py` |
-| 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-08-29 |
+| 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
+| 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
+| 复核日期 | 2026-08-31 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -38,6 +38,20 @@
 单聊、后续群聊角色和 Orchestrator 必须通过 `app/context/` 构造模型输入。当前实现以已落库用户消息 ID
 作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
 revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。
+
+M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同一 chain 中已经提交的前序角色终态回复；
+后一个角色只有在前一个 `message_done` 提交后才开始 build。其他 chain、generating 占位和失败半成品仍不可见，
+单聊继续保持原有严格截止边界。
+
+## M4a 会话串行调度
+
+- 每个会话一个进程内 worker，顺序消费已提交的 `queue_jobs`；不同会话 worker 可以并行。
+- 同一真人消息创建一个 chain ID；每个目标角色拥有独立 generation、queue job 和 execution ID。
+- job payload 只保存消息/角色/触发用户等稳定 ID、权限类别和 request/execution/chain 关联，不保存 Prompt。
+- worker 开始前重新校验 generation 仍为 queued；角色成员关系、Owner 归属、active/墓碑状态在生成入口再次
+  校验，成员变化后不能靠旧 job 恢复权限。
+- 停止按 chain 标记 queued job cancelled、queued generation stopped，并取消当前子执行；其他 chain 与会话
+  不受影响。服务重启不重新调用 Provider，遗留 queued/running job 降级为取消状态。
 
 角色上下文窗口默认 200K，并受部署 ceiling 约束。未知 tokenizer 使用明确标记的保守 UTF-8 估算，不能
 冒充 Provider usage。预算不足时产生 `CONTEXT_BUDGET_EXCEEDED`，在调用模型前失败。

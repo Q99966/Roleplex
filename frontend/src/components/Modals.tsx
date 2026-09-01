@@ -3,7 +3,7 @@ import {
   Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users 
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
-import { type Role } from '../api/client'
+import { type Conversation, type Role } from '../api/client'
 
 interface ModalProps {
   onClose: () => void
@@ -641,6 +641,11 @@ export function ConversationModal({ onClose }: ModalProps) {
       setBusy(false)
       return
     }
+    if (form.type === 'group' && form.selected_role_ids.length < 2) {
+      setErrorMsg('群聊会话至少需要邀请两位 Agent。')
+      setBusy(false)
+      return
+    }
 
     const payload = {
       type: form.type,
@@ -758,37 +763,13 @@ export function ConversationModal({ onClose }: ModalProps) {
             </div>
           </div>
 
-          {/* 协调者 (Orchestrator) 仅在群聊显示 */}
+          {/* M4a 只实现显式 @ 串行调度，Orchestrator 留到 M4b。 */}
           {form.type === 'group' && form.selected_role_ids.length > 1 && (
-            <div className="bg-slate-950/40 border border-slate-855 rounded-xl p-4 space-y-3.5">
-              <label className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
-                <input 
-                  type="checkbox" 
-                  checked={form.orchestrator_enabled}
-                  onChange={e => setForm({...form, orchestrator_enabled: e.target.checked})}
-                  className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                />
-                <span className="font-medium text-xs">开启发言协调器模式 (Orchestrator Mode)</span>
-              </label>
-
-              {form.orchestrator_enabled && (
-                <label className="block">
-                  <span className="text-slate-500">指定群聊调度发言人 (调度协调器)</span>
-                  <select 
-                    value={form.orchestrator_role_id}
-                    onChange={e => setForm({...form, orchestrator_role_id: Number(e.target.value)})}
-                    className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
-                  >
-                    <option value={0} disabled>-- 请选择协调者 Agent --</option>
-                    {roles
-                      .filter(r => form.selected_role_ids.includes(r.id))
-                      .map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))
-                    }
-                  </select>
-                </label>
-              )}
+            <div className="bg-slate-950/40 border border-slate-800 rounded-xl p-4">
+              <p className="text-xs font-medium text-slate-300">M4a 显式 @ 串行模式</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                群聊只有明确 @ 的角色会依次回复；没有 @ 时只记录消息。Orchestrator 将在 M4b 开放。
+              </p>
             </div>
           )}
 
@@ -818,6 +799,94 @@ export function ConversationModal({ onClose }: ModalProps) {
             </button>
           </div>
 
+        </form>
+      </div>
+    </div>
+  )
+}
+
+interface ConversationMembersModalProps extends ModalProps {
+  conversation: Conversation
+}
+
+/** Owner 调整群聊角色成员与稳定 all 展开顺序。 */
+export function ConversationMembersModal({ conversation, onClose }: ConversationMembersModalProps) {
+  const roles = useAppStore((state) => state.roles)
+  const updateMembers = useAppStore((state) => state.updateConversationMembers)
+  const [selected, setSelected] = useState<number[]>(conversation.role_ids)
+  const [busy, setBusy] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  /** @param roleId 需要加入或移出群聊的角色 ID。 */
+  function toggle(roleId: number) {
+    setSelected((current) => (
+      current.includes(roleId) ? current.filter((id) => id !== roleId) : [...current, roleId]
+    ))
+  }
+
+  /** 保存成员顺序；revision 冲突要求关闭后刷新再重试。 */
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (selected.length < 2) {
+      setErrorMsg('群聊至少需要两位 Agent 角色。')
+      return
+    }
+    setBusy(true)
+    setErrorMsg(null)
+    try {
+      await updateMembers(conversation.id, selected, conversation.revision)
+      onClose()
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : '更新群聊成员失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+          <div className="flex items-center gap-2 text-indigo-400">
+            <Users size={18} />
+            <h3 className="text-base font-bold text-white">管理群聊成员</h3>
+          </div>
+          <button type="button" onClick={onClose} aria-label="关闭成员管理" className="text-slate-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} className="flex-1 space-y-4 overflow-y-auto p-6">
+          <p className="text-xs leading-relaxed text-slate-500">
+            选择顺序决定 @全部 的回复顺序。至少保留两位角色，历史消息不会随成员移出而删除。
+          </p>
+          <div className="space-y-2" aria-label="群聊角色成员">
+            {roles.map((role) => {
+              const checked = selected.includes(role.id)
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  onClick={() => toggle(role.id)}
+                  aria-pressed={checked}
+                  className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                    checked ? 'border-indigo-500/40 bg-indigo-950/30' : 'border-slate-800 bg-slate-950/50'
+                  }`}
+                >
+                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? 'border-indigo-500 bg-indigo-600' : 'border-slate-700'}`}>
+                    {checked && <Check size={11} />}
+                  </span>
+                  <span className="text-xs font-semibold text-slate-200">{role.name}</span>
+                </button>
+              )
+            })}
+          </div>
+          {errorMsg && <p className="text-xs text-red-400">{errorMsg}</p>}
+          <div className="flex justify-end gap-2 border-t border-slate-800 pt-4">
+            <button type="button" onClick={onClose} className="rounded-xl border border-slate-800 px-4 py-2 text-xs text-slate-300">取消</button>
+            <button type="submit" disabled={busy} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+              {busy ? '保存中…' : '保存成员'}
+            </button>
+          </div>
         </form>
       </div>
     </div>

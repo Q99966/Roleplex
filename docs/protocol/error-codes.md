@@ -6,8 +6,8 @@
 | 状态 | 已建立注册表；含明确标注的预留/部分实现项 |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py` |
-| 复核日期 | 2026-08-29 |
+| 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py`、`backend/app/scheduling/` |
+| 复核日期 | 2026-08-31 |
 
 本文是稳定 `error_code` 的跨领域权威注册表。各领域协议负责说明“哪个接口或事件会返回哪些错误码”；
 错误码本身的名称、含义、终态和重试语义只在本文定义，避免同一含义散落后漂移。
@@ -111,6 +111,7 @@ WebSocket error frame 使用：
 | `ROLE_NOT_AVAILABLE` | 已实现 | REST | 422 | rejected | conditional | 创建会话引用了不存在、停用、墓碑或非当前 Owner 的角色 |
 | `ROLE_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 创建会话没有提供任何角色 |
 | `SINGLE_CHAT_REQUIRES_ONE_ROLE` | 已实现 | REST | 422 | rejected | conditional | 单聊必须且只能包含一个角色 |
+| `GROUP_CHAT_REQUIRES_MULTIPLE_ROLES` | 已实现 | REST | 422 | rejected | conditional | 群聊创建或成员更新后少于两个角色 |
 | `ORCHESTRATOR_MUST_BE_MEMBER` | 已实现 | REST | 422 | rejected | conditional | 编排角色不在会话角色成员中 |
 
 领域适用范围见 [角色管理与墓碑](public/rest/roles.md) 和
@@ -122,6 +123,9 @@ WebSocket error frame 使用：
 |---|---|---|---:|---|---|---|
 | `CONVERSATION_NOT_FOUND` | 已实现 | REST/WS | 404/— | rejected | conditional | 会话不存在、已进回收站或请求者不是成员；不得区分三种情况 |
 | `CONVERSATION_HAS_NO_ROLE` | 已实现 | REST/WS/生成 | 422/— | rejected | conditional | 会话没有存活且启用的可回复角色；墓碑会话只读 |
+| `GROUP_CHAT_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 群聊成员管理端点被用于单聊 |
+| `CONVERSATION_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | yes | 群聊成员更新的 expected revision 已过期，应刷新后重试 |
+| `CHAIN_LIMIT_EXCEEDED` | 已实现 | REST | 422 | rejected | conditional | 一条 mentions chain 展开后超过 20 个角色 |
 | `TEXT_PART_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 当前消息发送接口要求至少一个非空 text part |
 | `ARTIFACT_NOT_FOUND` | 已实现（读取原型） | REST | 404 | rejected | conditional | Artifact、版本不存在或请求者不是会话成员；不得泄露差异 |
 

@@ -4,12 +4,13 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..models import Conversation, ConversationMember, Role, User
-from ..schemas import ConversationCreate, ConversationResponse
+from ..realtime import store as event_store
+from ..schemas import ConversationCreate, ConversationMembersUpdate, ConversationResponse
 from ..security.tokens import get_current_user, require_owner
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -46,12 +47,14 @@ async def response(session: AsyncSession, conversation: Conversation, member: Co
             ConversationMember.member_type == "role",
             Role.deleted_at.is_(None),
         )
+        .order_by(ConversationMember.id.asc())
     )).all()
     return ConversationResponse(
         id=conversation.id, type=conversation.type, title=conversation.title,
         orchestrator_enabled=conversation.orchestrator_enabled,
         orchestrator_role_id=conversation.orchestrator_role_id,
         role_ids=list(role_members),
+        revision=conversation.revision,
         last_message_at=conversation.last_message_at,
         pinned=member.pinned, archived=member.archived,
         deleted_at=conversation.deleted_at,
@@ -100,11 +103,21 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
     """创建会话，并且只绑定 Owner 拥有且处于启用状态的角色。"""
     if payload.type == "single" and len(payload.role_ids) != 1:
         raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRES_ONE_ROLE")
+    if payload.type == "group" and len(payload.role_ids) < 2:
+        raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
     if not payload.role_ids:
         raise HTTPException(status_code=422, detail="ROLE_REQUIRED")
-    roles = (await session.scalars(select(Role).where(Role.id.in_(payload.role_ids), Role.created_by == user.id, Role.active.is_(True)))).all()
-    if len(roles) != len(set(payload.role_ids)):
+    if len(payload.role_ids) != len(set(payload.role_ids)):
         raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+    roles = (await session.scalars(select(Role).where(
+        Role.id.in_(payload.role_ids),
+        Role.created_by == user.id,
+        Role.active.is_(True),
+        Role.deleted_at.is_(None),
+    ))).all()
+    if len(roles) != len(payload.role_ids):
+        raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+    roles_by_id = {role.id: role for role in roles}
     if payload.orchestrator_role_id and payload.orchestrator_role_id not in {role.id for role in roles}:
         raise HTTPException(status_code=422, detail="ORCHESTRATOR_MUST_BE_MEMBER")
     now = datetime.now(timezone.utc)
@@ -116,11 +129,94 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
     session.add(conversation)
     await session.flush()
     session.add(ConversationMember(conversation_id=conversation.id, member_type="user", member_id=user.id, joined_at=now))
-    for role in roles:
-        session.add(ConversationMember(conversation_id=conversation.id, member_type="role", member_id=role.id, joined_at=now))
+    for role_id in payload.role_ids:
+        session.add(ConversationMember(
+            conversation_id=conversation.id, member_type="role", member_id=roles_by_id[role_id].id, joined_at=now,
+        ))
     await session.commit()
     await session.refresh(conversation)
     member = await require_member(session, conversation.id, user.id)
+    return await response(session, conversation, member)
+
+
+@router.put("/{conversation_id}/members", response_model=ConversationResponse)
+async def update_group_members(
+    conversation_id: int,
+    payload: ConversationMembersUpdate,
+    user: Annotated[User, Depends(require_owner)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """按请求顺序替换群聊角色成员，并用 revision 阻止静默覆盖。
+
+    Args:
+        conversation_id：目标群聊 ID。
+        payload：新角色顺序和调用方读取到的会话 revision。
+        user：当前世界 Owner。
+        session：请求级数据库会话。
+    """
+    conversation = await _owned_conversation(session, conversation_id, user.id)
+    if conversation.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+    if conversation.type != "group":
+        raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRED")
+    if len(payload.role_ids) < 2:
+        raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
+    if len(payload.role_ids) != len(set(payload.role_ids)):
+        raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+    roles = (await session.scalars(select(Role).where(
+        Role.id.in_(payload.role_ids),
+        Role.created_by == user.id,
+        Role.active.is_(True),
+        Role.deleted_at.is_(None),
+    ))).all()
+    if len(roles) != len(payload.role_ids):
+        raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+
+    next_revision = payload.expected_revision + 1
+    updated = await session.scalar(
+        update(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.revision == payload.expected_revision)
+        .values(
+            revision=next_revision,
+            orchestrator_enabled=(
+                conversation.orchestrator_enabled
+                and conversation.orchestrator_role_id in set(payload.role_ids)
+            ),
+            orchestrator_role_id=(
+                conversation.orchestrator_role_id
+                if conversation.orchestrator_role_id in set(payload.role_ids)
+                else None
+            ),
+        )
+        .returning(Conversation.revision)
+    )
+    if updated is None:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="CONVERSATION_REVISION_CONFLICT")
+
+    await session.execute(delete(ConversationMember).where(
+        ConversationMember.conversation_id == conversation_id,
+        ConversationMember.member_type == "role",
+    ))
+    now = datetime.now(timezone.utc)
+    for role_id in payload.role_ids:
+        session.add(ConversationMember(
+            conversation_id=conversation_id,
+            member_type="role",
+            member_id=role_id,
+            joined_at=now,
+        ))
+    pending = await event_store.append_event(
+        session,
+        conversation_id,
+        "member_updated",
+        {"role_ids": payload.role_ids, "revision": next_revision},
+        revision=next_revision,
+    )
+    await session.commit()
+    await event_store.publish_events(pending)
+    await session.refresh(conversation)
+    member = await require_member(session, conversation_id, user.id)
     return await response(session, conversation, member)
 
 

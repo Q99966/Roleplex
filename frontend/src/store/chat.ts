@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api, type Message, type MessageHistory, type Part, type StreamEvent } from '../api/client'
 import { ConversationStream } from '../api/stream'
+import { useAppStore } from './app'
 
 type ChatState = {
   conversationId: number | null
@@ -8,11 +9,12 @@ type ChatState = {
   loading: boolean
   sending: boolean
   generating: boolean
+  activeGenerationIds: number[]
   connection: 'connecting' | 'open' | 'closed'
   error: string | null
   openConversation: (conversationId: number) => Promise<void>
   closeConversation: () => void
-  sendMessage: (text: string) => Promise<void>
+  sendMessage: (text: string, mentions?: Array<number | 'all'>) => Promise<void>
   stopGeneration: () => Promise<void>
 }
 
@@ -44,6 +46,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loading: false,
   sending: false,
   generating: false,
+  activeGenerationIds: [],
   connection: 'closed',
   error: null,
 
@@ -60,6 +63,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: history.items,
         loading: false,
         generating: history.active_generation_id !== null,
+        activeGenerationIds: history.active_generation_ids ?? (
+          history.active_generation_id === null ? [] : [history.active_generation_id]
+        ),
       })
       const nextStream = new ConversationStream(conversationId, {
         onStatusChange: (connection) => set({ connection }),
@@ -67,6 +73,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           set({
             messages: (payload.messages ?? []) as Message[],
             generating: payload.active_generation_id !== null && payload.active_generation_id !== undefined,
+            activeGenerationIds: (payload.active_generation_ids ?? (
+              payload.active_generation_id == null ? [] : [payload.active_generation_id]
+            )) as number[],
           })
         },
         onEvent: (event) => applyEvent(set, get, event),
@@ -83,10 +92,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     openSequence += 1
     stream?.close()
     stream = null
-    set({ conversationId: null, messages: [], generating: false, connection: 'closed' })
+    set({ conversationId: null, messages: [], generating: false, activeGenerationIds: [], connection: 'closed' })
   },
 
-  sendMessage: async (text) => {
+  sendMessage: async (text, mentions = []) => {
     const conversationId = get().conversationId
     if (!conversationId || !text.trim() || get().sending) return
     set({ sending: true, error: null })
@@ -94,9 +103,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // client_message_id 让网络重试不会产生重复用户消息。
       const result = await api.sendMessage(conversationId, {
         parts: [{ type: 'text', text: text.trim() }],
+        mentions,
         client_message_id: crypto.randomUUID(),
       })
-      set({ generating: result.generation_id !== null })
+      set({
+        generating: result.generation_ids.length > 0,
+        activeGenerationIds: result.generation_ids,
+      })
       upsert(set, get, result.message)
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '发送失败' })
@@ -109,7 +122,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const conversationId = get().conversationId
     if (!conversationId) return
     // 先让界面立即退出生成状态，最终状态仍以服务端事件为准。
-    set({ generating: false })
+    set({ generating: false, activeGenerationIds: [] })
     try {
       await api.stopGeneration(conversationId)
     } catch (error) {
@@ -130,7 +143,12 @@ function upsert(set: any, get: () => ChatState, message: Message) {
 function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
   if (event.type === 'message_created') {
     upsert(set, get, event.payload.message as Message)
-    if ((event.payload.message as Message)?.sender_type === 'role') set({ generating: true })
+    if ((event.payload.message as Message)?.sender_type === 'role') {
+      const generationIds = event.generation_id === null
+        ? get().activeGenerationIds
+        : Array.from(new Set([...get().activeGenerationIds, event.generation_id]))
+      set({ generating: generationIds.length > 0, activeGenerationIds: generationIds })
+    }
     return
   }
 
@@ -151,7 +169,32 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
 
   if (event.type === 'message_done') {
     upsert(set, get, event.payload.message as Message)
-    set({ generating: false })
+    const generationIds = event.generation_id === null
+      ? get().activeGenerationIds
+      : get().activeGenerationIds.filter((id) => id !== event.generation_id)
+    set({ generating: generationIds.length > 0, activeGenerationIds: generationIds })
     if (event.payload.error_code) set({ error: String(event.payload.error_code) })
+    return
+  }
+
+  if (event.type === 'message_part_update') {
+    const incoming = event.payload.message as Message
+    const current = get().messages.find((message) => message.id === incoming.id)
+    // 工具事件从数据库带回的文本可能落后于内存流；保留客户端已经应用的文本增量，
+    // 只用服务端完整消息校正非文本 part，最终 message_done 仍会统一收口。
+    const merged = current ? {
+      ...incoming,
+      parts_json: [
+        { type: 'text', text: textOf(current.parts_json) },
+        ...incoming.parts_json.filter((part) => part.type !== 'text'),
+      ],
+    } : incoming
+    upsert(set, get, merged)
+    return
+  }
+
+  if (event.type === 'member_updated') {
+    // 其他浏览器或窗口调整成员时刷新共享会话；服务端 revision 决定最终状态。
+    void useAppStore.getState().loadWorkspace()
   }
 }

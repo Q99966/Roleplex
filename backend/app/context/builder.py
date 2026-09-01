@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 
 from langchain_core.messages import BaseMessage
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -171,9 +171,17 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     conversation_prefix = await _conversation_prefix(session, conversation)
     system_prompt = "\n".join((runtime_prefix, role_prefix, conversation_prefix))
 
+    history_boundary = Message.id < current.id
+    if request.execution_kind == "group_role" and current.chain_id:
+        # 群聊后续角色还要读取当前真人消息之后、同一 chain 已提交的前序角色终态。
+        # project_message 会继续过滤 generating/error 等非稳定状态，因此不会看见未来或半成品输出。
+        history_boundary = or_(
+            history_boundary,
+            and_(Message.id > current.id, Message.chain_id == current.chain_id),
+        )
     history_rows = (await session.scalars(
         select(Message)
-        .where(Message.conversation_id == conversation.id, Message.id < current.id)
+        .where(Message.conversation_id == conversation.id, history_boundary)
         .order_by(Message.id.asc())
     )).all()
     projected: list[_ProjectedHistory] = []

@@ -85,7 +85,7 @@ async def test_owner_tool_call_is_audited(monkeypatch):
     """Owner 触发的 safe 工具应正常执行并留下审计记录。"""
     from app.main import app
     from app.db import SessionLocal, engine
-    from app.models import ToolCall
+    from app.models import EventLog, Message, ToolCall
     from app.services import chat
 
     async with app.router.lifespan_context(app):
@@ -105,6 +105,14 @@ async def test_owner_tool_call_is_audited(monkeypatch):
                 calls = (await session.scalars(
                     select(ToolCall).where(ToolCall.conversation_id == conversation_id)
                 )).all()
+                assistant = await session.scalar(select(Message).where(
+                    Message.conversation_id == conversation_id,
+                    Message.sender_type == "role",
+                ))
+                part_events = (await session.scalars(select(EventLog).where(
+                    EventLog.conversation_id == conversation_id,
+                    EventLog.event_type == "message_part_update",
+                ).order_by(EventLog.event_seq))).all()
 
     assert len(calls) == 1
     assert calls[0].tool_name == "read_artifact"
@@ -112,6 +120,11 @@ async def test_owner_tool_call_is_audited(monkeypatch):
     assert calls[0].triggered_by_user_id == owner_id
     assert calls[0].role_id is not None and calls[0].message_id is not None
     assert "artifact_id" in calls[0].args_summary
+    assert assistant is not None
+    tool_part = next(part for part in assistant.parts_json if part["type"] == "tool_call")
+    assert tool_part["tool_name"] == "read_artifact"
+    assert tool_part["status"] == "success"
+    assert len(part_events) == 2
     await engine.dispose()
 
 

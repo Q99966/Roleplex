@@ -3,21 +3,21 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | 已批准；C0-C2 已完成，等待 M4a 实施指令 |
+| 状态 | 已批准；C0-C2、M4a 已完成，等待 M4b 实施指令 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-08-30 |
+| 复核日期 | 2026-09-01 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
 思路，不直接授权其中的 Workspace、FTS5、sqlite-vec、Embedding 或自动长期记忆能力。
 
-## 当前实施进度（2026-08-30）
+## 当前实施进度（2026-09-01）
 
 - C0/C1 已实现并于 2026-08-29 经用户人工验收，提交 `4ea6312`；C2 已于 2026-08-30 经用户人工验收；
-  M4a 及后续阶段尚未开始。
+  M4a 已于 2026-09-01 经用户人工验收；M4b 及后续阶段尚未开始。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -41,11 +41,18 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
 - fake managed-world 在独立 `alpha/beta` 世界中先完成两轮消息与 C2 日志断言，再切换世界；真实测试在
   独立 `default` 世界中完成相同两轮历史与日志安全断言。本轮 DeepSeek 第一轮 input/cache=`229/128`、
   ratio=`0.5589519651`，第二轮=`264/128`、ratio=`0.4848484848`；数字仍只属于本轮观测。
+- M4a 已实现群聊成员 revision 管理、稳定 mentions/`all` 展开、每会话持久串行队列、跨会话并行、共享
+  chain/独立 execution、停止整链、同 chain L6 上下文和工具过程卡片；无 mentions 只记录真人消息。
+- M4a 自动验证：后端 93 passed、3 skipped；普通 fake E2E 18 passed；fake managed-world E2E 1 passed；
+  真实 DeepSeek managed-world E2E 2 passed；前端 build 通过。真实群聊 A/B 同 chain 串行，B 成功复述只
+  存在于 A system prompt 的协作码；A/B context message count=`0/1`，execution ID 不同。
+- 本轮真实群聊 Provider 观测：A input/cache=`292/0`、B=`306/0`。命中受 Provider 策略影响，不作为门槛；
+  串行顺序、上下文可见性、chain/execution 和 Prompt 不落日志才是确定性验收。
 
 ## 一、为什么先暂停会话导出/导入
 
 本计划获批时，单聊链路虽然已经能持久化消息并流式回复，但尚未把数据库历史投影为模型上下文；该缺口
-现已由 C1 修复。群聊调度和 Orchestrator 仍未落地。如果现在冻结导出格式，会遗漏
+现已由 C1 修复，M4a 群聊调度也已实现；Orchestrator 仍未落地。如果现在冻结导出格式，会遗漏
 或过早决定以下语义：
 
 - 群聊成员、mentions、串行回复顺序和同一 chain 的停止边界；
@@ -706,9 +713,14 @@ Memory ID。
 fake usage 为空以及真实 input/cache/ratio 可追溯。自动验证和用户人工验收均已通过；后续变更不得在 M4a
 中顺带改变上述日志字段或 usage 口径，如确需改变必须先更新日志设计、内部协议与回归测试。
 
-### M4a 验收
+### M4a 验收（已完成，2026-09-01 经用户人工验收）
 
 - @A 只 A 回复；@A@B 严格串行且 B 看见 A；停止取消整链；不同会话互不阻塞。
+
+后端确定性测试覆盖无 mentions、非法/重复/超限 mentions、all 稳定顺序、成员 revision 冲突、同会话串行、
+跨会话并行和停止整链；普通浏览器覆盖建群、成员管理、@ 补全和无 @ 静默；fake/真实 managed-world 均
+通过。自动验证和用户人工验收均已完成；后续 M4b 不得顺带改变 M4a mentions、串行 chain、停止或成员
+revision 语义，如确需改变必须先更新本计划、公开协议与回归测试。
 
 ### M4b 验收
 
@@ -749,14 +761,15 @@ fake usage 为空以及真实 input/cache/ratio 可追溯。自动验证和用�
    默认不进入模型历史。
 4. 上下文窗口改为 Role 级 Owner 可配置字段，默认 200K；前端提供 128K/200K/1M 预设和自定义，应用
    ceiling 默认 2M，具体预算始终使用有效窗口。
+5. M4a 群聊无 mentions 时完全不触发角色回复，不增加默认回复角色配置；这样避免意外模型调用、费用和
+   消息风暴。只有真人消息中的显式 mentions 或 `all` 才进入串行调度。
 
 ### 18.2 到对应阶段前再确认
 
-1. M4a：群聊无 mentions 时是完全不回复，还是允许配置默认回复角色？首版建议完全不回复。
-2. M4b：父子 execution 是否必须新表持久化？本计划建议必须，具体 schema 待评审。
-3. C3：checkpoint 使用目标角色模型、专用摘要模型还是确定性裁剪？首版建议角色无关摘要需单独配置。
-4. Memory v0：Owner 通过独立 UI、消息操作还是工具调用确认 Memory？未确认前不实施写入入口。
-5. 导出：未来是否允许显式携带“本会话引用过的 Memory 快照”？默认建议不携带。
+1. M4b：父子 execution 是否必须新表持久化？本计划建议必须，具体 schema 待评审。
+2. C3：checkpoint 使用目标角色模型、专用摘要模型还是确定性裁剪？首版建议角色无关摘要需单独配置。
+3. Memory v0：Owner 通过独立 UI、消息操作还是工具调用确认 Memory？未确认前不实施写入入口。
+4. 导出：未来是否允许显式携带“本会话引用过的 Memory 快照”？默认建议不携带。
 
 ## 十九、最终实施顺序
 

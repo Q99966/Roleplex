@@ -23,9 +23,6 @@ from ..realtime import store as event_store
 
 logger = logging.getLogger("roleplex.chat")
 
-# 运行中的生成任务；停止生成通过取消对应任务实现。
-_running: dict[int, asyncio.Task[None]] = {}
-
 # 流式内容先保存在内存，按节流间隔落库，避免逐片段写事务。
 _PERSIST_INTERVAL_SECONDS = 1.0
 
@@ -66,6 +63,8 @@ def message_payload(message: Message) -> dict:
         "conversation_id": message.conversation_id,
         "sender_type": message.sender_type,
         "sender_id": message.sender_id,
+        "reply_to_id": message.reply_to_id,
+        "mentions": message.mentions_json,
         "parts_json": message.parts_json,
         "status": message.status,
         "revision": message.revision,
@@ -74,7 +73,7 @@ def message_payload(message: Message) -> dict:
     }
 
 
-async def resolve_reply_role(session, conversation_id: int) -> Role | None:
+async def resolve_reply_role(session, conversation_id: int, role_id: int | None = None) -> Role | None:
     """返回该会话中可回复的角色；墓碑或停用角色不能触发生成。
 
     角色成员关系会为历史保留，不能仅凭成员表判断可用性；必须同时检查角色当前仍存活
@@ -83,18 +82,22 @@ async def resolve_reply_role(session, conversation_id: int) -> Role | None:
     Args:
         session：用于读取会话成员与角色状态的数据库会话。
         conversation_id：目标会话标识。
+        role_id：群聊指定的目标角色；单聊为空时返回稳定成员顺序中的唯一角色。
     """
+    conditions = [
+        ConversationMember.conversation_id == conversation_id,
+        Role.deleted_at.is_(None),
+        Role.active.is_(True),
+    ]
+    if role_id is not None:
+        conditions.append(Role.id == role_id)
     return await session.scalar(
         select(Role)
         .join(
             ConversationMember,
             (ConversationMember.member_id == Role.id) & (ConversationMember.member_type == "role"),
         )
-        .where(
-            ConversationMember.conversation_id == conversation_id,
-            Role.deleted_at.is_(None),
-            Role.active.is_(True),
-        )
+        .where(*conditions)
         .order_by(ConversationMember.id.asc())
     )
 
@@ -122,60 +125,6 @@ async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerou
     # 当前里程碑没有已实现的内置工具；包装层保持在链路上，工具接入见后续里程碑。
     tools = guard_tools([], allow_dangerous=allow_dangerous)
     return model, tools
-
-
-def start_generation(
-    generation_id: int,
-    conversation_id: int,
-    current_message_id: int,
-    *,
-    triggered_by_user_id: int,
-    allow_dangerous: bool,
-) -> None:
-    """为一次生成登记后台任务，使停止生成可以取消它。
-
-    Args:
-        generation_id：生成记录标识，同时用于停止生成。
-        conversation_id：所属会话。
-        current_message_id：触发本次生成的已落库用户消息；ContextBuilder 以它作为历史截止边界。
-        triggered_by_user_id：触发本次链路的真人，用于工具审计与权限判定。
-        allow_dangerous：该触发者是否可以执行 dangerous 工具。
-    """
-    task = asyncio.create_task(
-        _run_generation(
-            generation_id, conversation_id, current_message_id,
-            triggered_by_user_id=triggered_by_user_id, allow_dangerous=allow_dangerous,
-        )
-    )
-    _running[generation_id] = task
-    logger.info(
-        "generation.created",
-        extra={"conversation_id": conversation_id, "generation_id": generation_id},
-    )
-
-    def task_finished(done: asyncio.Task[None]) -> None:
-        """回收任务引用，并显式暴露逃出生成函数的异常。"""
-        _running.pop(generation_id, None)
-        if done.cancelled():
-            return
-        error = done.exception()
-        if error is not None:
-            logger.error(
-                "generation.failed",
-                extra={"conversation_id": conversation_id, "generation_id": generation_id, "status": "failed"},
-                exc_info=(type(error), error, error.__traceback__),
-            )
-
-    task.add_done_callback(task_finished)
-
-
-async def request_stop(generation_id: int) -> bool:
-    """请求停止一次生成；返回是否存在正在运行的任务。"""
-    task = _running.get(generation_id)
-    if task is None or task.done():
-        return False
-    task.cancel()
-    return True
 
 
 async def _record_tool_call(
@@ -217,6 +166,75 @@ async def _record_tool_call(
         await session.commit()
 
 
+def _with_text_part(parts: list[dict], text: str) -> list[dict]:
+    """替换文本 part，同时保留同一消息中的工具过程卡片。
+
+    Args:
+        parts：消息当前 parts。
+        text：最新累计文本。
+
+    Returns:
+        文本 part 位于首位、其他 part 保持原顺序的新数组。
+    """
+    return [{"type": "text", "text": text}, *[part for part in parts if part.get("type") != "text"]]
+
+
+async def _update_tool_part(
+    *,
+    conversation_id: int,
+    message_id: int,
+    generation_id: int,
+    call_id: str,
+    tool_name: str,
+    status: str,
+    duration_ms: int | None = None,
+) -> None:
+    """更新角色消息中的工具过程 part，并按事件先落库后广播。
+
+    Args:
+        conversation_id：工具调用所属会话。
+        message_id：当前角色回复消息。
+        generation_id：关联 generation。
+        call_id：本轮内配对工具开始与结束的标识。
+        tool_name：允许向会话成员展示的工具名称。
+        status：`running/success/failed/rejected`。
+        duration_ms：结束时的耗时；开始事件为空。
+    """
+    async with SessionLocal() as session:
+        message = await session.get(Message, message_id)
+        if message is None:
+            return
+        parts = [dict(part) for part in (message.parts_json or [])]
+        replacement = {
+            "type": "tool_call",
+            "call_id": call_id,
+            "tool_name": tool_name,
+            "status": status,
+        }
+        if duration_ms is not None:
+            replacement["duration_ms"] = duration_ms
+        index = next((
+            index for index, part in enumerate(parts)
+            if part.get("type") == "tool_call" and part.get("call_id") == call_id
+        ), None)
+        if index is None:
+            parts.append(replacement)
+        else:
+            parts[index] = replacement
+        message.parts_json = parts
+        message.revision += 1
+        pending = await event_store.append_event(
+            session,
+            conversation_id,
+            "message_part_update",
+            {"message": message_payload(message)},
+            revision=message.revision,
+            generation_id=generation_id,
+        )
+        await session.commit()
+    await event_store.publish_events(pending)
+
+
 async def _finalize(generation_id: int, status: str, text: str, error_code: str | None = None) -> dict:
     """把生成终态写入数据库并广播，返回终态事件的可观测字段。"""
     async with SessionLocal() as session:
@@ -229,7 +247,7 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
         generation.ended_at = datetime.now(timezone.utc)
         events_to_publish = []
         if message is not None:
-            message.parts_json = [{"type": "text", "text": text}]
+            message.parts_json = _with_text_part(message.parts_json or [], text)
             message.status = {"completed": "done", "stopped": "stopped", "failed": "error"}[status]
             message.revision += 1
             events_to_publish.append(
@@ -255,13 +273,16 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
     }
 
 
-async def _run_generation(
+async def run_scheduled_generation(
     generation_id: int,
     conversation_id: int,
     current_message_id: int,
     *,
+    target_role_id: int,
     triggered_by_user_id: int | None = None,
     allow_dangerous: bool = False,
+    execution_id: str,
+    execution_kind: str = "single",
 ) -> None:
     """执行一次 Agent 生成，并按事件协议广播增量与终态。
 
@@ -272,8 +293,11 @@ async def _run_generation(
         generation_id：生成记录标识，同时用于停止生成。
         conversation_id：所属会话。
         current_message_id：当前用户消息 ID；不接收旁路文本，避免当前消息与数据库历史漂移。
+        target_role_id：本次 generation 唯一允许回复的角色 ID。
         triggered_by_user_id：触发者，写入工具审计。
         allow_dangerous：触发者是否可以执行 dangerous 工具。
+        execution_id：本次角色执行标识；群聊各角色独立，chain ID 仍共享。
+        execution_kind：ContextBuilder 运行类型，单聊为 single、群聊为 group_role。
     """
     set_log_context(
         user_id=triggered_by_user_id,
@@ -301,8 +325,19 @@ async def _run_generation(
             if generation is None:
                 logger.warning("generation.record_missing")
                 return
-            set_log_context(chain_id=generation.run_id, execution_id=generation.run_id)
-            role = await resolve_reply_role(session, conversation_id)
+            if generation.status != "queued":
+                logger.info("generation.skipped", extra={"status": "cancelled", "reason": "not_queued"})
+                return
+            set_log_context(chain_id=generation.run_id, execution_id=execution_id)
+            conversation = await session.get(Conversation, conversation_id)
+            if conversation is None or conversation.deleted_at is not None:
+                await _finalize(generation_id, "failed", "", error_code="CONVERSATION_NOT_FOUND")
+                logger.warning(
+                    "generation.conversation_unavailable",
+                    extra={"error_code": "CONVERSATION_NOT_FOUND", "status": "rejected"},
+                )
+                return
+            role = await resolve_reply_role(session, conversation_id, target_role_id)
             if role is None:
                 await _finalize(generation_id, "failed", "", error_code="CONVERSATION_HAS_NO_ROLE")
                 logger.warning(
@@ -361,6 +396,7 @@ async def _run_generation(
                     conversation_id=conversation_id,
                     current_message_id=current_message_id,
                     triggered_by_user_id=triggered_by_user_id,
+                    execution_kind=execution_kind,
                 ),
             )
             context_fields = _context_log_fields(context)
@@ -397,7 +433,7 @@ async def _run_generation(
                     if message is None:
                         return
                     if should_persist:
-                        message.parts_json = [{"type": "text", "text": accumulated}]
+                        message.parts_json = _with_text_part(message.parts_json or [], accumulated)
                         last_persist = now
                     message.revision += 1
                     delta_event = await event_store.append_event(
@@ -413,6 +449,14 @@ async def _run_generation(
                 await event_store.publish_events(delta_event)
             elif isinstance(event, ToolCallStarted):
                 tool_args[event.call_id] = event.args_summary
+                await _update_tool_part(
+                    conversation_id=conversation_id,
+                    message_id=assistant_id,
+                    generation_id=generation_id,
+                    call_id=event.call_id,
+                    tool_name=event.tool_name,
+                    status="running",
+                )
                 logger.info(
                     "tool.call_started",
                     extra={
@@ -425,6 +469,15 @@ async def _run_generation(
                     event, args_summary=tool_args.pop(event.call_id, ""),
                     conversation_id=conversation_id, message_id=assistant_id,
                     role_id=role_id, triggered_by_user_id=triggered_by_user_id,
+                )
+                await _update_tool_part(
+                    conversation_id=conversation_id,
+                    message_id=assistant_id,
+                    generation_id=generation_id,
+                    call_id=event.call_id,
+                    tool_name=event.tool_name,
+                    status={"ok": "success", "error": "failed", "rejected": "rejected"}[event.status],
+                    duration_ms=event.duration_ms,
                 )
                 logger.info(
                     "tool.call_completed",
@@ -605,16 +658,17 @@ async def build_snapshot(session, conversation_id: int) -> dict:
     messages = (await session.scalars(
         select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id.asc())
     )).all()
-    active = await session.scalar(
-        select(Generation)
+    active_ids = list((await session.scalars(
+        select(Generation.id)
         .where(Generation.conversation_id == conversation_id, Generation.status.in_(["queued", "running"]))
-        .order_by(Generation.id.desc())
-    )
+        .order_by(Generation.id.asc())
+    )).all())
     return {
         "conversation_id": conversation_id,
         "event_seq": event_seq,
         "messages": [message_payload(message) for message in messages],
-        "active_generation_id": active.id if active else None,
+        "active_generation_id": active_ids[0] if active_ids else None,
+        "active_generation_ids": active_ids,
     }
 
 

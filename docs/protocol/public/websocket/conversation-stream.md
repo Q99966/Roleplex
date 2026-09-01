@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊事件；成员、会话状态与正在输入事件未实现） |
-| 协议版本 | 1 |
+| 状态 | 已实现（单聊、M4a 群聊消息与成员事件） |
+| 协议版本 | 2（兼容新增成员事件和队列快照字段） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/realtime/websocket.py`、`backend/app/realtime/events.py`、`backend/app/realtime/store.py` |
-| 关联测试 | `backend/tests/test_ws_recovery.py` |
-| 复核日期 | 2026-08-14 |
+| 关联测试 | `backend/tests/test_ws_recovery.py`、`backend/tests/test_group_chat.py`、`frontend/tests/m4-group-chat.spec.ts` |
+| 复核日期 | 2026-08-30 |
 
 ## 范围
 
@@ -56,7 +56,7 @@ ws(s)://<host>/api/ws
 2. **快照恢复**——`stream_epoch` 变化或待补齐事件超过回放上限：
 
    ```json
-   {"type":"snapshot","stream_epoch":"占位 epoch","payload":{"conversation_id":42,"event_seq":24,"messages":[],"active_generation_id":null}}
+   {"type":"snapshot","stream_epoch":"占位 epoch","payload":{"conversation_id":42,"event_seq":24,"messages":[],"active_generation_id":null,"active_generation_ids":[]}}
    ```
 
    客户端必须用快照整体替换本地会话状态，并把游标重置为快照的 `event_seq`；快照包含生成中消息的当前累积内容。
@@ -94,8 +94,14 @@ ws(s)://<host>/api/ws
 | `message_created` | 用户消息落库、角色占位消息创建 | `{"message": {}}` |
 | `message_delta` | 流式文本增量 | `{"message_id": 99, "text": "增量文本"}` |
 | `message_done` | 生成完成、停止或失败 | `{"message": {}, "error_code": null}` |
+| `message_part_update` | 工具过程 part 开始或结束 | `{"message": {}}` |
+| `member_updated` | Owner 修改群聊角色成员 | `{"role_ids":[2,1],"revision":3}` |
 
-`message_done` 的终态体现在消息 `status`（`done | stopped | error`）；`error_code` 仅在失败时非空。`message_part_update`、`message_regenerated`、`member_updated`、`conversation_updated`、`conversation_state` 属于后续里程碑预留，当前不会下发。
+`message_done` 的终态体现在消息 `status`（`done | stopped | error`）；`error_code` 仅在失败时非空。
+`message_part_update` 携带完整消息，客户端按 message revision 替换；M4a 用它显示不含原始参数/输出的工具名、
+`running/success/failed/rejected` 状态和可选耗时。`member_updated.revision` 是会话共享 revision，客户端可刷新
+会话成员并忽略旧 revision。`message_regenerated`、`conversation_updated`、`conversation_state` 属于后续
+里程碑预留，当前不会下发。
 
 ## 客户端幂等要求
 

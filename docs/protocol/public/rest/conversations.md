@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊；群聊成员管理未实现） |
-| 协议版本 | 1 |
+| 状态 | 已实现（单聊与 M4a 群聊；Orchestrator 未实现） |
+| 协议版本 | 2（兼容新增群聊成员管理与 revision） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/conversations.py`、`backend/app/schemas.py`、`backend/app/services/retention.py` |
-| 关联测试 | `backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
-| 复核日期 | 2026-08-20 |
+| 关联测试 | `backend/tests/test_delete_semantics.py`、`backend/tests/test_group_chat.py`、`frontend/tests/recycle-and-tombstone.spec.ts`、`frontend/tests/m4-group-chat.spec.ts` |
+| 复核日期 | 2026-08-30 |
 
 ## 范围
 
@@ -32,6 +32,7 @@
   "orchestrator_enabled": false,
   "orchestrator_role_id": null,
   "role_ids": [1],
+  "revision": 0,
   "last_message_at": null,
   "pinned": false,
   "archived": false,
@@ -43,6 +44,7 @@
 历史消息的发送者展示中（见 [角色管理与墓碑](roles.md)）。
 
 `pinned` / `archived` 是请求者的个人偏好，不是会话的共享状态。
+`revision` 是共享会话配置的乐观锁版本；成员变化会递增，个人偏好不会递增。
 
 ## 列表
 
@@ -62,15 +64,36 @@ POST /api/conversations
 {"type":"single","title":"占位会话","role_ids":[1],"orchestrator_enabled":false,"orchestrator_role_id":null}
 ```
 
-单聊必须且只能绑定一个角色。绑定的角色必须属于同一 Owner 且处于启用状态；
+单聊必须且只能绑定一个角色；群聊至少绑定两个角色。绑定的角色必须属于同一 Owner 且处于启用状态；
 已删除的角色是停用的，因此不能被选进新会话。
 
 | 错误码 | 状态码 | 含义 |
 |---|---|---|
 | `SINGLE_CHAT_REQUIRES_ONE_ROLE` | 422 | 单聊的 `role_ids` 数量不等于 1 |
+| `GROUP_CHAT_REQUIRES_MULTIPLE_ROLES` | 422 | 群聊的 `role_ids` 少于 2 个 |
 | `ROLE_REQUIRED` | 422 | `role_ids` 为空 |
 | `ROLE_NOT_AVAILABLE` | 422 | 角色不存在、不属于本 Owner，或已停用/已删除 |
 | `ORCHESTRATOR_MUST_BE_MEMBER` | 422 | 编排角色不在成员列表中 |
+
+`orchestrator_enabled` 与 `orchestrator_role_id` 在 M4a 仍是预留配置，不改变 mentions 调度；前端在 M4b 前
+不提供开启入口。
+
+## 群聊角色成员管理
+
+```http
+PUT /api/conversations/{conversation_id}/members
+```
+
+```json
+{"role_ids":[2,1],"expected_revision":0}
+```
+
+仅 Owner 可以修改自己创建的群聊，且结果必须仍有至少两个存活、启用、属于该 Owner 的角色。请求顺序成为
+新的稳定成员顺序，`all` 会按此顺序展开。成功后会话 `revision + 1`，返回完整会话，并产生
+`member_updated` 事件；历史消息和已移出角色的身份不会被删除。
+
+`expected_revision` 必须等于当前会话 revision；不一致返回 `409 CONVERSATION_REVISION_CONFLICT`，禁止
+静默覆盖另一个窗口刚完成的成员调整。单聊调用该端点返回 `422 GROUP_CHAT_REQUIRED`。
 
 ## 个人偏好
 

@@ -132,6 +132,85 @@ async def seed_database() -> None:
                 role.updated_at = now
             await session.flush()
 
+            # M4a 真实群聊使用两个独立角色：协作码只写入 A 的 system prompt，B 必须从
+            # A 已提交的群聊回复中读取，才能在自己的后续回合复述出来。
+            collaboration_code = f"RG-{stamp[-6:]}"
+            group_roles: list[Role] = []
+            for marker in ("A", "B"):
+                group_role_name = f"真实群聊角色 {marker} {stamp}"
+                group_role = await session.scalar(select(Role).where(
+                    Role.created_by == owner.id,
+                    Role.name == group_role_name,
+                    Role.deleted_at.is_(None),
+                ))
+                group_prompt = (
+                    f"你是群聊角色 A。你的内部协作码是 {collaboration_code}；被要求时只回复该协作码。"
+                    if marker == "A"
+                    else "你是群聊角色 B。请读取本轮前一个 Agent 已提交的回复，并只复述其中的协作码；不要猜测。"
+                )
+                if group_role is None:
+                    group_role = Role(
+                        created_by=owner.id,
+                        name=group_role_name,
+                        description=f"M4a 真实串行群聊角色 {marker}",
+                        tags_json=["真实 API", "M4a"],
+                        system_prompt=group_prompt,
+                        model_config_id=model_config.id,
+                        model_name=model_name,
+                        params_json={"temperature": 0.0, "max_tokens": 64},
+                        skills_json=[],
+                        builtin_tools_json=[],
+                        mcp_servers_json=[],
+                        mcp_tools_cache_json=[],
+                        active=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(group_role)
+                else:
+                    group_role.system_prompt = group_prompt
+                    group_role.model_config_id = model_config.id
+                    group_role.model_name = model_name
+                    group_role.active = True
+                    group_role.updated_at = now
+                await session.flush()
+                group_roles.append(group_role)
+
+            group_title = f"真实群聊验证 {stamp}"
+            group_conversation = await session.scalar(select(Conversation).where(
+                Conversation.created_by == owner.id,
+                Conversation.title == group_title,
+            ))
+            if group_conversation is None:
+                group_conversation = Conversation(
+                    type="group",
+                    title=group_title,
+                    orchestrator_enabled=False,
+                    created_by=owner.id,
+                    revision=0,
+                    event_seq=0,
+                    created_at=now,
+                )
+                session.add(group_conversation)
+                await session.flush()
+                session.add(ConversationMember(
+                    conversation_id=group_conversation.id,
+                    member_type="user",
+                    member_id=owner.id,
+                    pinned=False,
+                    archived=False,
+                    joined_at=now,
+                ))
+                for group_role in group_roles:
+                    session.add(ConversationMember(
+                        conversation_id=group_conversation.id,
+                        member_type="role",
+                        member_id=group_role.id,
+                        pinned=False,
+                        archived=False,
+                        joined_at=now,
+                    ))
+
             title = f"真实 API 验证 {stamp}"
             conversation = await session.scalar(select(Conversation).where(
                 Conversation.created_by == owner.id,

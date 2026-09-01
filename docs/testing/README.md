@@ -17,10 +17,10 @@
 |---|---|---|---|---|---|
 | 后端 pytest | `pytest -q` | fake | 每轮独立 SQLite DB | 否 | 服务、权限、状态机、迁移相关业务行为 |
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
-| 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 真实前后端与浏览器用户流程 |
-| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 | 否 | fake 两轮上下文/日志、包装器重启、世界隔离和重新登录 |
+| 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 单聊、M4a 群聊与其他浏览器用户流程 |
+| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 | 否 | C2/M4a 世界链路、包装器重启、世界隔离和重新登录 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
-| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 | 是 | 正常包装器、世界双密钥和真实 Provider 全链路 |
+| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 | 是 | C2 单聊、M4a 两角色串行与正常世界全链路 |
 
 默认开发回归只需要：
 
@@ -126,9 +126,9 @@ data/roleplex-world-e2e-<时间戳>/
 ```
 
 后端通过正常 `run_world_server.py` 包装器启动。测试验证 alpha → beta 重启、Token 失效、物理数据库与
-双密钥隔离，以及切换后重新注册 Owner。切换前先在 alpha 中完成两轮 fake 浏览器对话，并直接核对本轮
-JSONL：稳定层 hash 不漂移、history 计数从 0 变为 2、fake usage 字段为空且 Prompt 原文不落日志。该测试
-因此同时证明 C2 在正常世界包装器中的确定性路径，不产生模型费用。
+双密钥隔离，以及切换后重新注册 Owner。切换前先在 alpha 中完成 C2 两轮 fake 单聊和 M4a 两角色串行
+群聊，并直接核对 JSONL 的稳定层、history、chain/execution 与 fake usage。该测试因此同时证明 C2/M4a
+在正常世界包装器中的确定性路径，不产生模型费用。
 
 ### 2.5 真实 Provider E2E（兼容数据库）
 
@@ -163,10 +163,10 @@ data/roleplex-real-world-e2e-<时间戳>/
     └── files/
 ```
 
-该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行与兼容数据库 real-E2E 相同的两轮
-验证码对话，并直接核对真实 Provider 的 input/cache/ratio、稳定层 hash、history `0→2` 和 Prompt 不落
-日志，用来证明 ContextBuilder、世界独立 Key、前后端、可观测性和 Provider 能共同工作。它不切换世界；
-切换语义由 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
+该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行 C2 两轮验证码单聊，以及 M4a
+两个真实角色的同 chain 串行群聊；协作码只放进 A 的 system prompt，B 必须从 A 已提交回复中复述。测试
+同时核对真实 usage、稳定层、history、独立 execution 和 Prompt 不落日志。它不切换世界；切换语义由
+fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
 
 ## 三、端口矩阵
 

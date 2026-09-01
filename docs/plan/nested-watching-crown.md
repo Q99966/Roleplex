@@ -1,6 +1,6 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
-## 当前追加任务：上下文、Prompt Cache、群聊与 Orchestrator（C0-C2 已完成，等待 M4a 指令）
+## 当前追加任务：上下文、Prompt Cache、群聊与 Orchestrator（C0-C2、M4a 已完成，等待 M4b 指令）
 
 用户于 2026-08-28 决定延期工作项四“会话导出与导入”：必须先补齐统一历史上下文、优化 Prompt Prefix
 Cache、实现群聊串行调度和 Orchestrator，并完成阶段式 Checkpoint 与真实缓存验收，再冻结导出格式。
@@ -29,7 +29,15 @@ C2 已于 2026-08-29 实现：ContextBuilder schema、稳定层/tool policy hash
 到 `context.loaded`、Provider 与 generation 日志；Provider usage 支持 cache write 和命中比，fake 不伪造
 usage。后端 86 passed、普通 fake E2E 17 passed、fake managed-world E2E 1 passed、真实 DeepSeek
 managed-world E2E 1 passed、前端 build 通过。fake 与真实测试都在独立世界目录中完成两轮对话并自动核对
-稳定 hash、history `0→2`、usage 和 Prompt 不落日志；已于 2026-08-30 经用户人工验收，M4a 尚未开始。
+稳定 hash、history `0→2`、usage 和 Prompt 不落日志；已于 2026-08-30 经用户人工验收。
+
+M4a 已于 2026-08-30 获得实施指令。首版确认群聊真人消息没有 mentions 时完全不触发回复，不增加默认
+回复角色配置；显式 mentions 按请求顺序串行，`all` 按稳定成员顺序展开。
+
+M4a 已于 2026-08-31 实现并通过自动验证：后端 93 passed、普通 fake E2E 18 passed、fake
+managed-world E2E 1 passed、真实 DeepSeek managed-world E2E 2 passed、前端 build 通过。群聊成员管理、
+@ 补全、持久串行队列、同 chain 前序回复、停止整链和工具过程卡片均已落地；已于 2026-09-01 经用户
+人工验收，M4b 尚未开始。
 
 ## 当前追加任务：日志与测试报告 v2（已完成，经人工验收）
 

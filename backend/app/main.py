@@ -27,6 +27,8 @@ from .config.logging import (
 from .config.log_archive import maintain_logs
 from .routers import artifacts, auth, conversations, messages, model_configs, roles, worlds
 from .services import retention
+from .services import chat
+from .scheduling import conversation_scheduler
 from .realtime.websocket import router as ws_router
 from .worlds import WorldManager
 from .worlds.compatibility import assert_world_compatible
@@ -45,7 +47,7 @@ lifecycle_logger = logging.getLogger("roleplex.lifecycle")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """在应用生命周期内初始化进程事件广播器和数据库资源。
+    """在应用生命周期内初始化事件广播器、数据库和会话调度器。
 
     数据库就绪后清理一次超过保留期的已删除会话：回收站没有常驻定时任务，
     启动是唯一的清理时机（理由见 `services/retention.py`）。
@@ -88,6 +90,7 @@ async def lifespan(_app: FastAPI):
             "world.starting", extra={"world_managed": settings.world_managed},
         )
         await init_db()
+        await conversation_scheduler.start(chat.run_scheduled_generation)
         await retention.purge_expired_on_startup()
         yield
     except Exception:
@@ -95,6 +98,7 @@ async def lifespan(_app: FastAPI):
         lifecycle_logger.exception("process.failed", extra={"status": "failed"})
         raise
     finally:
+        await conversation_scheduler.shutdown()
         lifecycle_logger.info(
             "process.stopped",
             extra={"status": process_status, "reason": process_stop_reason()},

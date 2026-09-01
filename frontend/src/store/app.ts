@@ -40,6 +40,7 @@ type AppState = {
 
   // 会话操作
   createConversation: (body: Parameters<typeof api.createConversation>[0]) => Promise<void>
+  updateConversationMembers: (id: number, roleIds: number[], expectedRevision: number) => Promise<void>
   deleteConversation: (id: number) => Promise<void>
   loadDeletedConversations: () => Promise<void>
   restoreConversation: (id: number) => Promise<void>
@@ -249,6 +250,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeConversationId: conv.id,
     })
     navigateToConversation(conv.id)
+  },
+  updateConversationMembers: async (id, roleIds, expectedRevision) => {
+    const updated = await api.updateConversationMembers(id, {
+      role_ids: roleIds,
+      expected_revision: expectedRevision,
+    })
+    set({
+      conversations: get().conversations.map((conversation) => (
+        conversation.id === id ? updated : conversation
+      )),
+    })
   },
   deleteConversation: async (id) => {
     await api.deleteConversation(id)

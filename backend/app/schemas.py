@@ -158,10 +158,18 @@ class ConversationResponse(BaseModel):
     orchestrator_enabled: bool
     orchestrator_role_id: int | None
     role_ids: list[int] = Field(default_factory=list)
+    revision: int
     last_message_at: datetime | None
     pinned: bool
     archived: bool
     deleted_at: datetime | None = None
+
+
+class ConversationMembersUpdate(BaseModel):
+    """Owner 更新群聊角色成员时使用的乐观锁请求。"""
+
+    role_ids: list[int] = Field(max_length=50)
+    expected_revision: int = Field(ge=0)
 
 
 class Part(BaseModel):

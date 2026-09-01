@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle
+  Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle, UsersRound, X
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
-import { type Message, type Part, type Role } from '../api/client'
+import { type Conversation, type Message, type Part, type Role } from '../api/client'
 
 interface ActiveWorkspaceProps {
   isSidebarCollapsed: boolean
   onOpenRoleModal: (role?: Role) => void
+  onManageMembers: (conversation: Conversation) => void
 }
 
 /** 读取消息中的文本内容；未知 part 类型会被渲染为占位提示。 */
@@ -18,7 +19,9 @@ function messageText(parts: Part[]): string {
 
 /** 列出消息中当前尚未支持渲染的 part 类型。 */
 function unknownPartTypes(parts: Part[]): string[] {
-  return Array.from(new Set(parts.filter((part) => part.type !== 'text').map((part) => part.type)))
+  return Array.from(new Set(
+    parts.filter((part) => !['text', 'tool_call'].includes(part.type)).map((part) => part.type),
+  ))
 }
 
 /**
@@ -35,19 +38,20 @@ function chatErrorMessage(code: string, isOwner: boolean): string {
   return code
 }
 
-/** 渲染真实单聊工作台：历史消息、流式回复、停止生成与会话成员面板。 */
-export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveWorkspaceProps) {
+/** 渲染单聊与 M4a 群聊工作台：历史、@ 补全、串行队列、停止和成员面板。 */
+export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageMembers }: ActiveWorkspaceProps) {
   const { conversations, activeConversationId, roles, roleDirectory, user } = useAppStore()
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
-  const { messages, loading, sending, generating, connection, error } = useChatStore()
+  const { messages, loading, sending, generating, activeGenerationIds, connection, error } = useChatStore()
   const openConversation = useChatStore((state) => state.openConversation)
   const closeConversation = useChatStore((state) => state.closeConversation)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const stopGeneration = useChatStore((state) => state.stopGeneration)
 
   const [draft, setDraft] = useState('')
+  const [mentions, setMentions] = useState<Array<number | 'all'>>([])
   const feedRef = useRef<HTMLDivElement | null>(null)
 
   const activeConv = useMemo(
@@ -58,9 +62,16 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
   // 成员来自后端会话绑定的角色，不再由前端推测。
   const memberRoles = useMemo(() => {
     if (!activeConv) return []
-    return roles.filter((role) => activeConv.role_ids.includes(role.id))
+    return activeConv.role_ids
+      .map((roleId) => roles.find((role) => role.id === roleId))
+      .filter((role): role is Role => Boolean(role))
   }, [activeConv, roles])
   const hasReplyRole = memberRoles.some((role) => role.active && !role.deleted_at)
+  const mentionMatch = activeConv?.type === 'group' ? draft.match(/@([^\s@]*)$/) : null
+  const mentionQuery = mentionMatch?.[1]?.toLocaleLowerCase() ?? ''
+  const mentionSuggestions = activeConv?.type === 'group' && mentionMatch
+    ? memberRoles.filter((role) => role.name.toLocaleLowerCase().includes(mentionQuery))
+    : []
 
   const orchestrator = useMemo(() => {
     if (!activeConv?.orchestrator_enabled || !activeConv.orchestrator_role_id) return null
@@ -81,7 +92,27 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
     if (!hasReplyRole) return
     const text = draft
     setDraft('')
-    void sendMessage(text)
+    const selectedMentions = mentions
+    setMentions([])
+    void sendMessage(text, selectedMentions)
+  }
+
+  /** @param target 选择的角色 ID，`all` 表示按稳定成员顺序全部回复。 */
+  function selectMention(target: number | 'all') {
+    if (!mentionMatch || mentionMatch.index === undefined) return
+    const label = target === 'all' ? '全部' : memberRoles.find((role) => role.id === target)?.name
+    if (!label) return
+    setDraft(`${draft.slice(0, mentionMatch.index)}@${label} `)
+    setMentions((current) => {
+      if (target === 'all') return ['all']
+      if (current.includes('all') || current.includes(target)) return current
+      return [...current, target]
+    })
+  }
+
+  /** @param target 从本轮待发送 mentions 中移除的稳定目标。 */
+  function removeMention(target: number | 'all') {
+    setMentions((current) => current.filter((item) => item !== target))
   }
 
   if (!activeConv) {
@@ -123,6 +154,17 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
             >
               <Pin size={15} className={activeConv.pinned ? 'fill-indigo-400/20' : ''} />
             </button>
+            {activeConv.type === 'group' && user?.is_owner && (
+              <button
+                type="button"
+                title="管理群聊成员"
+                aria-label="管理群聊成员"
+                onClick={() => onManageMembers(activeConv)}
+                className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-indigo-300 transition"
+              >
+                <UsersRound size={15} />
+              </button>
+            )}
             <button
               type="button"
               title={activeConv.archived ? '取消归档' : '归档会话'}
@@ -166,6 +208,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
             const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
             const senderDeleted = !isUser && Boolean(role?.deleted_at)
             const text = messageText(message.parts_json)
+            const toolParts = message.parts_json.filter((part) => part.type === 'tool_call')
             const unknown = unknownPartTypes(message.parts_json)
             return (
               <div key={message.id} data-testid="chat-message" className={`flex gap-3.5 max-w-2xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}>
@@ -193,6 +236,17 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
                         [当前版本暂不支持渲染的内容：{unknown.join(', ')}]
                       </p>
                     )}
+                    {toolParts.map((part) => (
+                      <div key={part.call_id} className="mt-2 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-400">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-indigo-300">{part.tool_name ?? 'tool'}</span>
+                          <span className={part.status === 'failed' || part.status === 'rejected' ? 'text-red-400' : 'text-emerald-400'}>
+                            {part.status === 'running' ? '执行中' : part.status === 'success' ? '已完成' : part.status === 'rejected' ? '已拒绝' : '失败'}
+                          </span>
+                        </div>
+                        {typeof part.duration_ms === 'number' && <p className="mt-1 text-slate-600">耗时 {part.duration_ms}ms</p>}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -214,12 +268,44 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
               <span>角色已删除，当前会话仅可查看历史消息。</span>
             </div>
           )}
-          <div className="flex items-center gap-2 rounded-xl bg-slate-950/80 p-2.5 border border-slate-800 focus-within:border-indigo-500/40 transition-all">
+          {activeConv.type === 'group' && (
+            <div className="mb-2 flex min-h-6 flex-wrap items-center gap-1.5">
+              {mentions.map((target) => {
+                const label = target === 'all' ? '全部' : memberRoles.find((role) => role.id === target)?.name
+                if (!label) return null
+                return (
+                  <span key={target} className="flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-950/40 px-2 py-1 text-[10px] text-indigo-300">
+                    @{label}
+                    <button type="button" onClick={() => removeMention(target)} aria-label={`移除 @${label}`}>
+                      <X size={10} />
+                    </button>
+                  </span>
+                )
+              })}
+              {mentions.length === 0 && <span className="text-[10px] text-slate-600">无 @ 时消息只记录，不触发 Agent。</span>}
+            </div>
+          )}
+          <div className="relative flex items-center gap-2 rounded-xl bg-slate-950/80 p-2.5 border border-slate-800 focus-within:border-indigo-500/40 transition-all">
+            {activeConv.type === 'group' && mentionMatch && (
+              <div className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl" role="listbox" aria-label="@ 角色补全">
+                <button type="button" role="option" aria-selected={false} onClick={() => selectMention('all')} className="block w-full px-3 py-2 text-left text-xs text-indigo-300 hover:bg-slate-800">
+                  @全部 · 按成员顺序回复
+                </button>
+                {mentionSuggestions.map((role) => (
+                  <button key={role.id} type="button" role="option" aria-selected={mentions.includes(role.id)} onClick={() => selectMention(role.id)} className="block w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-800">
+                    @{role.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <input
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                setDraft(event.target.value)
+                if (!event.target.value.trim()) setMentions([])
+              }}
               disabled={!hasReplyRole}
-              placeholder={hasReplyRole ? '输入消息，回车发送…' : '角色已删除，无法继续发送'}
+              placeholder={hasReplyRole ? (activeConv.type === 'group' ? '输入 @ 选择回复角色…' : '输入消息，回车发送…') : '角色已删除，无法继续发送'}
               aria-label="消息输入框"
               className="w-full bg-transparent text-sm text-slate-200 outline-none placeholder:text-slate-600 disabled:cursor-not-allowed disabled:text-slate-600"
             />
@@ -230,7 +316,9 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
                   onClick={() => void stopGeneration()}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 transition text-xs font-medium"
                 >
-                  <Square size={12} />停止生成
+                  <Square size={12} />
+                  {activeConv.type === 'group' ? '停止整条链' : '停止生成'}
+                  {activeConv.type === 'group' && activeGenerationIds.length > 1 ? ` · ${activeGenerationIds.length}` : ''}
                 </button>
               ) : (
                 <button
@@ -300,7 +388,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal }: ActiveW
               <span className="text-[10px] text-slate-500 font-semibold block uppercase">群聊协调策略</span>
               <p className="text-xs font-bold text-slate-200 mt-1.5">调度者：{orchestrator.name}</p>
               <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                群聊调度将在后续里程碑接入，当前仅展示会话配置。
+                当前使用 M4a 显式 @ 串行调度；Orchestrator 自动编排将在 M4b 接入。
               </p>
             </div>
           )}

@@ -32,10 +32,10 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
-| REST 会话管理与回收站 | 已实现（单聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
+| REST 会话管理与回收站 | 已实现（单聊与 M4a 群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
-| 消息发送、历史与停止生成 | 已实现（单聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
-| WebSocket 连接、订阅与恢复 | 已实现（单聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
+| 消息发送、历史与停止生成 | 已实现（单聊与 M4a 群聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
+| WebSocket 连接、订阅与恢复 | 已实现（单聊与 M4a 群聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |
 | Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |
@@ -80,7 +80,8 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 
 会话历史读取、用户消息发送（含 `client_message_id` 幂等键）和停止生成已实现，权威文档见 [public/messaging/messages.md](protocol/public/messaging/messages.md)。流式增量和终态不通过 REST 返回，客户端必须订阅 WebSocket 事件流。
 
-群聊 `@` 调度、Orchestrator 分派、附件和 Artifact part 仍属后续里程碑。
+M4a 群聊创建、成员管理和 `@` 串行调度已实现；当前 wire contract 以对应领域文档为准。Orchestrator
+分派、附件和 Artifact part 仍属后续里程碑。
 
 ## WebSocket 订阅恢复
 

@@ -4,7 +4,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 ## 当前阶段
 
-已完成 M0/M1 基础骨架和 M2 单聊闭环：
+已完成 M0/M1 基础骨架、M2 单聊闭环和 M4a 群聊：
 
 - SQLite + SQLAlchemy 2 async，WAL、busy timeout、外键约束、单进程单 worker 边界
 - Owner 原子初始化模型、JWT 7 天有效期与 token version 撤销
@@ -14,6 +14,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 角色删除保留墓碑（历史消息仍显示原发送者），会话删除进回收站并可在 7 天内恢复
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - 单聊通过统一 ContextBuilder 读取终态历史；角色上下文窗口默认 200K 并可由 Owner 配置
+- 群聊支持角色成员管理、可访问的 @ 补全、无 @ 静默记录、mentions 串行回复、停止整条 chain 和工具过程卡片
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
@@ -25,7 +26,7 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
-富媒体产物、群聊调度、Orchestrator 与 MCP 产品接入将在后续里程碑完成。
+富媒体产物、Orchestrator 与 MCP 产品接入将在后续里程碑完成。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 
@@ -84,9 +85,9 @@ npm run test:e2e:real-world
 ```
 
 它会创建 `data/roleplex-real-world-e2e-<时间戳>/default/`，包含完整世界元数据、数据库、JWT/API Key
-双密钥和 files 目录，并保留最近 5 轮。该命令同样联网计费、关闭 trace/video，但不测试世界切换；世界
-切换仍由 fake Provider 的 `test:e2e:worlds` 确定性覆盖；该命令会先在 alpha 世界完成两轮 fake 对话和
-C2 上下文/日志断言，再执行 alpha→beta 切换。
+双密钥和 files 目录，并保留最近 5 轮。该命令同样联网计费、关闭 trace/video，执行 C2 两轮真实单聊和
+M4a 两角色真实串行群聊，但不测试世界切换。世界切换由 fake Provider 的 `test:e2e:worlds` 确定性覆盖：
+它会在 alpha 世界完成 C2 单聊与 M4a 群聊断言，再执行 alpha→beta 切换。
 
 真实 E2E 的 Owner 为 `realtest<时间戳>`，密码固定为 `Roleplex-Real-E2E-1`。数据库包含加密后的
 真实 Key，只能用于本机核对，不要分享或提交；离开当前实例密钥后其中的模型配置无法解密。

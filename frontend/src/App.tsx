@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Globe2, PanelLeftOpen } from 'lucide-react'
 import { useAppStore } from './store/app'
-import { type Role } from './api/client'
+import { type Conversation, type Role } from './api/client'
 import { AuthScreen } from './components/AuthScreen'
 import { PasswordResetScreen } from './components/PasswordResetScreen'
 import { RecycleBinModal } from './components/RecycleBinModal'
 import { Sidebar } from './components/Sidebar'
 import { EmptyWorkspace } from './components/EmptyWorkspace'
 import { ActiveWorkspace } from './components/ActiveWorkspace'
-import { SettingsModal, RoleModal, ConversationModal } from './components/Modals'
+import { ConversationMembersModal, SettingsModal, RoleModal, ConversationModal } from './components/Modals'
 import { LandingPage } from './components/LandingPage'
 import { WebPet } from './components/WebPet/WebPet'
 
@@ -27,6 +27,7 @@ export function App() {
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null)
   const [showConvModal, setShowConvModal] = useState(false)
+  const [membersConversation, setMembersConversation] = useState<Conversation | null>(null)
   const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
@@ -117,11 +118,13 @@ export function App() {
       />
       {activeConversationId ? (
         <ActiveWorkspace 
+          key={activeConversationId}
           isSidebarCollapsed={isSidebarCollapsed}
           onOpenRoleModal={(role?: Role) => {
             setRoleToEdit(role || null)
             setShowRoleModal(true)
           }}
+          onManageMembers={(conversation) => setMembersConversation(conversation)}
         />
       ) : (
         <EmptyWorkspace 
@@ -161,6 +164,13 @@ export function App() {
       )}
       
       {showConvModal && <ConversationModal onClose={() => setShowConvModal(false)} />}
+
+      {membersConversation && (
+        <ConversationMembersModal
+          conversation={membersConversation}
+          onClose={() => setMembersConversation(null)}
+        />
+      )}
 
       {showRecycleBin && <RecycleBinModal onClose={() => setShowRecycleBin(false)} />}
       

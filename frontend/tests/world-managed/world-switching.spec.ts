@@ -39,7 +39,43 @@ async function seedFakeConversation(page: Page, title: string): Promise<number> 
   }, { base: backend, conversationTitle: title, suffix: `${Date.now()}` })
 }
 
-test('runs C2 in a fake physical world, then switches worlds and requires a new login', async ({ page }) => {
+/**
+ * 在 alpha 世界中创建两个 fake 角色和群聊。
+ * @param page 当前浏览器页面。
+ * @returns 群聊 ID 和稳定角色名称顺序。
+ */
+async function seedFakeGroup(page: Page): Promise<{ conversationId: number; roleNames: string[] }> {
+  return page.evaluate(async ({ base, suffix }) => {
+    const token = localStorage.getItem('roleplex_token')
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    const post = async (route: string, body: unknown) => {
+      const response = await fetch(`${base}${route}`, { method: 'POST', headers, body: JSON.stringify(body) })
+      if (!response.ok) throw new Error(`${route} failed: ${response.status}`)
+      return response.json()
+    }
+    const config = await post('/api/model-configs', {
+      name: `world-group-${suffix}`, provider_type: 'openai_compatible', api_key: 'sk-e2e-placeholder',
+    })
+    const roles = []
+    for (const marker of ['A', 'B']) {
+      roles.push(await post('/api/roles', {
+        name: `世界群聊${marker}-${suffix}`,
+        system_prompt: `你是世界群聊角色 ${marker}`,
+        model_config_id: config.id,
+        model_name: 'fake-model',
+      }))
+    }
+    const conversation = await post('/api/conversations', {
+      type: 'group', title: 'Fake 世界 M4a 验证', role_ids: roles.map((role) => role.id),
+    })
+    return {
+      conversationId: conversation.id as number,
+      roleNames: roles.map((role) => role.name as string),
+    }
+  }, { base: backend, suffix: `${Date.now()}` })
+}
+
+test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ page }) => {
   await ensureOwnerSession(page)
 
   const healthBefore = await page.evaluate(async (base) => (await fetch(`${base}/api/health`)).json(), backend)
@@ -77,6 +113,28 @@ test('runs C2 in a fake physical world, then switches worlds and requires a new 
   }
   const serialized = JSON.stringify(await readRunEvents())
   for (const prompt of prompts) expect(serialized).not.toContain(prompt)
+
+  const group = await seedFakeGroup(page)
+  await page.reload()
+  await page.getByText('Fake 世界 M4a 验证').first().click()
+  await expect(page.getByRole('heading', { name: 'Fake 世界 M4a 验证' })).toBeVisible()
+  const groupInput = page.getByLabel('消息输入框')
+  await groupInput.fill('@')
+  await page.getByRole('option', { name: `@${group.roleNames[0]}` }).click()
+  await groupInput.fill(`${await groupInput.inputValue()}@`)
+  await page.getByRole('option', { name: `@${group.roleNames[1]}` }).click()
+  await groupInput.fill(`${await groupInput.inputValue()}世界群聊依次回复`)
+  await page.getByLabel('发送消息').click()
+  await expect(page.getByTestId('chat-message')).toHaveCount(3, { timeout: 20_000 })
+  const groupContexts = (await waitForRunEvents(
+    (event) => event.event === 'context.loaded' && event.conversation_id === group.conversationId,
+    2,
+  )).slice(-2)
+  expect(groupContexts.map((event) => event.context_message_count)).toEqual([0, 1])
+  for (const field of ['runtime_prefix_hash', 'conversation_prefix_hash', 'tool_policy_hash']) {
+    expect(groupContexts[1][field]).toBe(groupContexts[0][field])
+  }
+  expect(groupContexts[1].role_prefix_hash).not.toBe(groupContexts[0].role_prefix_hash)
 
   const selector = page.getByLabel('切换世界')
   await expect(selector).toBeEnabled()
