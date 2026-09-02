@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { 
   Bot, MessageCircle, Plus, Search, Users, WandSparkles, 
-  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose, Sparkles, Globe2
+  Trash2, Pin, Archive, ChevronRight, ChevronDown, LogOut, Settings2, PanelLeftClose, Sparkles, Globe2
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { usePetStore } from '../store/pet'
@@ -68,14 +68,32 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
         </div>
       </div>
 
+      {/* 运行世界与切换 */}
       <div className="border-b border-slate-800/80 px-4 py-3">
-        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-          <Globe2 size={14} className="shrink-0 text-indigo-400" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-xs font-semibold text-slate-200">{worldName}</span>
-              <span className="text-[9px] uppercase tracking-wider text-slate-600">世界</span>
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 transition-all">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-indigo-400">
+              <Globe2 size={13} className="shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">运行世界</span>
             </div>
+            {worldSwitchingSupported ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-950/60 border border-emerald-800/50 px-2 py-0.5 text-[9px] font-medium text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                可热切换
+              </span>
+            ) : (
+              <span className="rounded-full bg-slate-900 border border-slate-800/80 px-2 py-0.5 text-[9px] text-slate-500 font-medium">
+                单世界
+              </span>
+            )}
+          </div>
+
+          <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+            <span className="truncate text-xs font-bold text-white tracking-tight">{worldName}</span>
+            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-medium">当前世界</span>
+          </div>
+
+          <div className="relative flex items-center">
             <select
               aria-label="切换世界"
               value={worldName}
@@ -86,16 +104,30 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
                   void switchWorld(target)
                 }
               }}
-              className="mt-1 w-full bg-transparent text-[11px] text-slate-400 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-900/90 py-1.5 pl-3 pr-8 text-xs font-medium text-slate-300 shadow-sm transition-all hover:border-slate-700 hover:bg-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-800"
             >
-              {!worlds.some((world) => world.name === worldName) && <option value={worldName}>{worldName}</option>}
-              {worlds.map((world) => <option key={world.name} value={world.name}>{world.name}</option>)}
+              {!worlds.some((world) => world.name === worldName) && (
+                <option value={worldName} className="bg-slate-900 text-slate-200 py-1">
+                  {worldName}
+                </option>
+              )}
+              {worlds.map((world) => (
+                <option key={world.name} value={world.name} className="bg-slate-900 text-slate-200 py-1">
+                  {world.name}
+                </option>
+              ))}
             </select>
+            <div className="pointer-events-none absolute right-2.5 flex items-center text-slate-400">
+              <ChevronDown size={14} />
+            </div>
           </div>
+
+          {!worldSwitchingSupported && (
+            <p className="mt-2 px-0.5 text-[10px] text-slate-500 flex items-center gap-1">
+              <span>需使用世界包装器启动</span>
+            </p>
+          )}
         </div>
-        {!worldSwitchingSupported && (
-          <p className="mt-1.5 px-1 text-[10px] text-slate-600">需使用世界包装器启动</p>
-        )}
       </div>
 
       {/* 搜索栏 */}
