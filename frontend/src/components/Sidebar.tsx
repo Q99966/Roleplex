@@ -12,7 +12,7 @@ import { type Role } from '../api/client'
 interface SidebarProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
-  onOpenSettings: () => void
+  onOpenSettings: (initialTab?: 'models' | 'worlds' | 'account') => void
   onOpenRoleModal: (role?: Role) => void
   onOpenConvModal: () => void
   onOpenRecycleBin: () => void
@@ -68,65 +68,38 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
         </div>
       </div>
 
-      {/* 运行世界与切换 */}
+      {/* 运行世界状态胶囊（点击打开综合设置中心管理/切换世界） */}
       <div className="border-b border-slate-800/80 px-4 py-3">
-        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 transition-all">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-indigo-400">
-              <Globe2 size={13} className="shrink-0" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">运行世界</span>
+        <div
+          onClick={() => onOpenSettings('worlds')}
+          title="点击管理运行世界与存储"
+          className="group flex items-center justify-between gap-2.5 rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 hover:border-indigo-500/40 hover:bg-slate-900/80 cursor-pointer transition-all shadow-sm"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-950/70 border border-indigo-500/20 text-indigo-400 shrink-0 group-hover:scale-105 transition-transform">
+              <Globe2 size={16} />
             </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-xs font-bold text-white group-hover:text-indigo-300 transition-colors">
+                  {worldName}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-500 block truncate">运行世界 · 点击管理</span>
+            </div>
+          </div>
+          <div className="shrink-0 flex items-center gap-1">
             {worldSwitchingSupported ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-950/60 border border-emerald-800/50 px-2 py-0.5 text-[9px] font-medium text-emerald-400">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-950/70 border border-emerald-800/50 px-2 py-0.5 text-[9px] font-medium text-emerald-400">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 可热切换
               </span>
             ) : (
-              <span className="rounded-full bg-slate-900 border border-slate-800/80 px-2 py-0.5 text-[9px] text-slate-500 font-medium">
+              <span className="rounded bg-slate-900 border border-slate-800 px-1.5 py-0.5 text-[9px] text-slate-500 font-medium">
                 单世界
               </span>
             )}
           </div>
-
-          <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
-            <span className="truncate text-xs font-bold text-white tracking-tight">{worldName}</span>
-            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-medium">当前世界</span>
-          </div>
-
-          <div className="relative flex items-center">
-            <select
-              aria-label="切换世界"
-              value={worldName}
-              disabled={!user?.is_owner || !worldSwitchingSupported || Boolean(switchingWorld)}
-              onChange={(event) => {
-                const target = event.target.value
-                if (target !== worldName && confirm(`切换到世界“${target}”并重新登录吗？`)) {
-                  void switchWorld(target)
-                }
-              }}
-              className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-900/90 py-1.5 pl-3 pr-8 text-xs font-medium text-slate-300 shadow-sm transition-all hover:border-slate-700 hover:bg-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-800"
-            >
-              {!worlds.some((world) => world.name === worldName) && (
-                <option value={worldName} className="bg-slate-900 text-slate-200 py-1">
-                  {worldName}
-                </option>
-              )}
-              {worlds.map((world) => (
-                <option key={world.name} value={world.name} className="bg-slate-900 text-slate-200 py-1">
-                  {world.name}
-                </option>
-              ))}
-            </select>
-            <div className="pointer-events-none absolute right-2.5 flex items-center text-slate-400">
-              <ChevronDown size={14} />
-            </div>
-          </div>
-
-          {!worldSwitchingSupported && (
-            <p className="mt-2 px-0.5 text-[10px] text-slate-500 flex items-center gap-1">
-              <span>需使用世界包装器启动</span>
-            </p>
-          )}
         </div>
       </div>
 
@@ -319,7 +292,7 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
           </button>
           <button 
             type="button" 
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings('models')}
             title="打开设置"
             aria-label="打开设置"
             className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition"

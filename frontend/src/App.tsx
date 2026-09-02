@@ -24,12 +24,18 @@ export function App() {
   const [view, setView] = useState<'landing' | 'auth'>('landing')
   const [currentHash, setCurrentHash] = useState(typeof window !== 'undefined' ? window.location.hash || '#/' : '#/')
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<'models' | 'worlds' | 'account'>('models')
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null)
   const [showConvModal, setShowConvModal] = useState(false)
   const [membersConversation, setMembersConversation] = useState<Conversation | null>(null)
   const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+
+  const handleOpenSettings = (tab: 'models' | 'worlds' | 'account' = 'models') => {
+    setSettingsTab(tab)
+    setShowSettings(true)
+  }
 
   // 页面初始化加载状态
   useEffect(() => { 
@@ -108,7 +114,7 @@ export function App() {
       <Sidebar
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(true)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={handleOpenSettings}
         onOpenRoleModal={(role?: Role) => {
           setRoleToEdit(role || null)
           setShowRoleModal(true)
@@ -128,7 +134,7 @@ export function App() {
         />
       ) : (
         <EmptyWorkspace 
-          onOpenSettings={() => setShowSettings(true)}
+          onOpenSettings={handleOpenSettings}
           onOpenRoleModal={() => {
             setRoleToEdit(null)
             setShowRoleModal(true)
@@ -150,12 +156,17 @@ export function App() {
       )}
       
       {/* 模态浮层 */}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsModal 
+          initialTab={settingsTab}
+          onClose={() => setShowSettings(false)} 
+        />
+      )}
       
       {showRoleModal && (
         <RoleModal 
           role={roleToEdit}
-          onOpenSettings={() => setShowSettings(true)}
+          onOpenSettings={handleOpenSettings}
           onClose={() => {
             setShowRoleModal(false)
             setRoleToEdit(null)

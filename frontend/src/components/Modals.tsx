@@ -1,17 +1,29 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { 
-  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users 
+  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { type Conversation, type Role } from '../api/client'
 
-interface ModalProps {
+export interface ModalProps {
   onClose: () => void
 }
 
-/** 模型厂商密钥配置管理弹窗 (SettingsModal)。 */
-export function SettingsModal({ onClose }: ModalProps) {
-  const { modelConfigs, createModelConfig, deleteModelConfig } = useAppStore()
+export interface SettingsModalProps {
+  onClose: () => void
+  initialTab?: 'models' | 'worlds' | 'account'
+}
+
+/** 综合系统与环境配置管理弹窗 (SettingsModal)。 */
+export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<'models' | 'worlds' | 'account'>(initialTab)
+  const { 
+    modelConfigs, createModelConfig, deleteModelConfig,
+    worldName, worlds, worldSwitchingSupported, switchingWorld, switchWorld,
+    user, logout
+  } = useAppStore()
+
+  // 大模型表单状态
   const [form, setForm] = useState({ name: '', provider_type: 'openai_compatible' as const, base_url: '', api_key: '' })
   const [busy, setBusy] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -47,130 +59,349 @@ export function SettingsModal({ onClose }: ModalProps) {
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] shadow-2xl">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh] shadow-2xl">
         {/* 标题栏 */}
-        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+        <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-indigo-400">
             <Settings2 size={18} />
-            <h3 className="font-bold text-white text-base">打开设置 · 大模型密钥管理</h3>
+            <h3 className="font-bold text-white text-base">系统与环境设置</h3>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition">
             <X size={18} />
           </button>
         </div>
 
-        {/* 主体区 */}
-        <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* 左侧：密钥配置列表 */}
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
-              <Shield size={14} />
-              <span>当前已配置密钥 ({modelConfigs.length})</span>
-            </h4>
-            
-            <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
-              {modelConfigs.map((config) => (
-                <div key={config.id} className="bg-slate-950/60 border border-slate-850 rounded-xl p-3.5 flex items-start justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <Cpu size={13} className="text-indigo-400" />
-                      <span className="text-xs font-bold text-slate-200 truncate">{config.name}</span>
+        {/* 选项卡导航 */}
+        <div className="flex border-b border-slate-800 bg-slate-950/40 px-6 gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('models')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'models'
+                ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
+            }`}
+          >
+            <Cpu size={14} />
+            <span>大模型密钥</span>
+            <span className="rounded-full bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-400">{modelConfigs.length}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('worlds')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'worlds'
+                ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
+            }`}
+          >
+            <Globe2 size={14} />
+            <span>运行世界与存储</span>
+            {worldSwitchingSupported ? (
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            ) : (
+              <span className="rounded bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-500">单世界</span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('account')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'account'
+                ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
+            }`}
+          >
+            <Shield size={14} />
+            <span>账号与安全</span>
+            <span className="rounded bg-indigo-950/80 border border-indigo-800/40 px-1.5 py-0.2 text-[10px] text-indigo-300">
+              {user?.is_owner ? 'Owner' : 'Guest'}
+            </span>
+          </button>
+        </div>
+
+        {/* 选项卡内容区 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {activeTab === 'models' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 左侧：已保存密钥 */}
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+                  <Shield size={14} />
+                  <span>当前已配置密钥 ({modelConfigs.length})</span>
+                </h4>
+                
+                <div className="space-y-2.5 max-h-[48vh] overflow-y-auto pr-1">
+                  {modelConfigs.map((config) => (
+                    <div key={config.id} className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 flex items-start justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <Cpu size={13} className="text-indigo-400" />
+                          <span className="text-xs font-bold text-slate-200 truncate">{config.name}</span>
+                        </div>
+                        <p className="text-[10px] text-indigo-400 mt-1">{config.provider_type === 'anthropic' ? 'Anthropic' : 'OpenAI 兼容'}</p>
+                        <p className="text-[10px] text-slate-500 truncate mt-1">API Endpoint: {config.base_url || '默认端点'}</p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          API Key: <code className="bg-slate-900 px-1 py-0.5 rounded border border-slate-800">{config.api_key_hint}</code>
+                        </p>
+                      </div>
+                      
+                      <button 
+                        onClick={() => void handleDelete(config.id)}
+                        className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/40 rounded transition shrink-0 ml-2"
+                        title="删除配置"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
-                    <p className="text-[10px] text-indigo-400 mt-1">{config.provider_type === 'anthropic' ? 'Anthropic' : 'OpenAI 兼容'}</p>
-                    <p className="text-[10px] text-slate-500 truncate mt-1">API Endpoint: {config.base_url || '默认端点'}</p>
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      API Key: <code className="bg-slate-900 px-1 py-0.5 rounded border border-slate-800">{config.api_key_hint}</code>
+                  ))}
+                  
+                  {modelConfigs.length === 0 && (
+                    <div className="text-center py-8 border border-dashed border-slate-800 rounded-2xl text-xs text-slate-600 bg-slate-950/10">
+                      暂无已保存密钥，请使用右侧表单添加。
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 右侧：添加密钥表单 */}
+              <div className="border-t md:border-t-0 md:border-l border-slate-800 pt-6 md:pt-0 md:pl-6">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
+                  <Plus size={14} />
+                  <span>添加大模型厂商密钥</span>
+                </h4>
+                
+                <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+                  <label className="block">
+                    <span className="text-slate-400 font-medium">配置别名 (用于标识)</span>
+                    <input 
+                      required 
+                      value={form.name} 
+                      onChange={e => setForm({...form, name: e.target.value})}
+                      placeholder="例如: DeepSeek / Claude-API" 
+                      className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-slate-400 font-medium">厂商类型</span>
+                    <select 
+                      value={form.provider_type}
+                      onChange={e => setForm({...form, provider_type: e.target.value as any})}
+                      className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
+                    >
+                      <option value="openai_compatible">OpenAI 兼容接口 (Deepseek, Qwen 等)</option>
+                      <option value="anthropic">Anthropic Claude</option>
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="text-slate-400 font-medium">API 代理端点 Base URL (可选)</span>
+                    <input 
+                      value={form.base_url} 
+                      onChange={e => setForm({...form, base_url: e.target.value})}
+                      placeholder="例如: https://api.deepseek.com/v1" 
+                      className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-slate-400 font-medium">API 密钥 (API Key)</span>
+                    <input 
+                      required
+                      type="password"
+                      value={form.api_key} 
+                      onChange={e => setForm({...form, api_key: e.target.value})}
+                      placeholder="sk-••••••••••••••••••••••••" 
+                      className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
+                    />
+                  </label>
+
+                  {errorMsg && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] flex items-start gap-1.5">
+                      <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit" 
+                    disabled={busy}
+                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
+                  >
+                    <Check size={14} />
+                    {busy ? '正在校验并保存...' : '添加配置并加密存储'}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'worlds' && (
+            <div className="space-y-6 text-xs">
+              {/* 当前运行状态卡片 */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-950/80 border border-indigo-500/30 text-indigo-400">
+                      <Globe2 size={20} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-bold text-white tracking-tight">{worldName}</span>
+                        <span className="rounded-full bg-indigo-950 border border-indigo-800/40 px-2 py-0.5 text-[10px] font-medium text-indigo-300">
+                          当前物理世界
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        独立的 SQLite 数据存储、JWT 鉴权密钥与加密 API Key 存储目录
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    {worldSwitchingSupported ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-950/80 border border-emerald-800/60 px-3 py-1 text-[11px] font-medium text-emerald-400">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                        包装器已接管 · 支持热切换
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 border border-slate-800 px-3 py-1 text-[11px] font-medium text-slate-400">
+                        单世界模式 · 未使用包装器
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 切换世界操作区 */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
+                  <Server size={14} className="text-indigo-400" />
+                  <span>切换运行世界</span>
+                </h4>
+                <p className="text-[11px] text-slate-500 mb-3">
+                  切换目标世界将由世界包装器平滑重启后端服务；由于每个世界具有完全独立的用户与凭据数据库，切换后需重新认证登录。
+                </p>
+
+                <div className="relative max-w-md">
+                  <select
+                    aria-label="切换世界"
+                    value={worldName}
+                    disabled={!user?.is_owner || !worldSwitchingSupported || Boolean(switchingWorld)}
+                    onChange={(event) => {
+                      const target = event.target.value
+                      if (target !== worldName && confirm(`切换到世界“${target}”并重新登录吗？`)) {
+                        void switchWorld(target)
+                      }
+                    }}
+                    className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-900 py-2.5 pl-3.5 pr-10 text-xs font-semibold text-slate-100 shadow-sm transition-all hover:border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {!worlds.some((world) => world.name === worldName) && (
+                      <option value={worldName} className="bg-slate-900 py-1.5 text-slate-200">
+                        {worldName} (当前)
+                      </option>
+                    )}
+                    {worlds.map((world) => (
+                      <option key={world.name} value={world.name} className="bg-slate-900 py-1.5 text-slate-200">
+                        {world.name} {world.name === worldName ? '· 当前运行' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute right-3 top-3 flex items-center text-slate-400">
+                    <ChevronDown size={14} />
+                  </div>
+                </div>
+
+                {!worldSwitchingSupported && (
+                  <p className="mt-2 text-[11px] text-amber-400/90 flex items-center gap-1">
+                    <AlertCircle size={13} className="shrink-0" />
+                    <span>需使用世界包装器启动以启用切换功能（运行 python scripts/run_world_server.py）</span>
+                  </p>
+                )}
+              </div>
+
+              {/* 已发现物理世界列表 */}
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+                  <Database size={14} />
+                  <span>已发现的物理世界存档 ({worlds.length})</span>
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {worlds.map((world) => {
+                    const isCurrent = world.name === worldName
+                    return (
+                      <div
+                        key={world.name}
+                        className={`rounded-xl border p-3 flex items-center justify-between transition-all ${
+                          isCurrent
+                            ? 'border-indigo-500/50 bg-indigo-950/20 shadow-sm'
+                            : 'border-slate-850 bg-slate-950/60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Globe2 size={15} className={isCurrent ? 'text-indigo-400' : 'text-slate-500'} />
+                          <span className={`text-xs font-bold truncate ${isCurrent ? 'text-white' : 'text-slate-300'}`}>
+                            {world.name}
+                          </span>
+                        </div>
+                        {isCurrent ? (
+                          <span className="rounded-full bg-indigo-600/30 border border-indigo-500/40 px-2 py-0.5 text-[9px] font-semibold text-indigo-300">
+                            当前运行中
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">可切换</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'account' && (
+            <div className="space-y-6 text-xs">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white font-bold text-base shadow-lg shadow-indigo-600/30">
+                    {user?.nickname?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || 'U'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white">{user?.nickname || user?.username}</span>
+                      <span className="text-xs text-slate-500">@{user?.username}</span>
+                    </div>
+                    <p className="text-[11px] text-indigo-400 mt-0.5">
+                      {user?.is_owner ? '系统超级管理员（Owner）' : '受限访客用户（Guest）'}
                     </p>
                   </div>
-                  
-                  <button 
-                    onClick={() => void handleDelete(config.id)}
-                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/40 rounded transition shrink-0 ml-2"
-                    title="删除配置"
-                  >
-                    <Trash2 size={13} />
-                  </button>
                 </div>
-              ))}
-              
-              {modelConfigs.length === 0 && (
-                <div className="text-center py-8 border border-dashed border-slate-800 rounded-2xl text-xs text-slate-600 bg-slate-950/10">
-                  暂无已保存密钥，请使用右侧表单添加。
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* 右侧：添加密钥表单 */}
-          <div className="border-t md:border-t-0 md:border-l border-slate-800 pt-6 md:pt-0 md:pl-6">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
-              <Plus size={14} />
-              <span>添加大模型厂商密钥</span>
-            </h4>
-            
-            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
-              <label className="block">
-                <span className="text-slate-400 font-medium">配置别名 (用于标识)</span>
-                <input 
-                  required 
-                  value={form.name} 
-                  onChange={e => setForm({...form, name: e.target.value})}
-                  placeholder="例如: DeepSeek / Claude-API" 
-                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
-                />
-              </label>
-
-              <label className="block">
-                <span className="text-slate-400 font-medium">厂商类型</span>
-                <select 
-                  value={form.provider_type}
-                  onChange={e => setForm({...form, provider_type: e.target.value as any})}
-                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none"
+                <button
+                  type="button"
+                  onClick={() => { onClose(); logout(); }}
+                  className="rounded-xl border border-red-900/40 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-900/60 hover:text-white transition"
                 >
-                  <option value="openai_compatible">OpenAI 兼容接口 (Deepseek, Qwen 等)</option>
-                  <option value="anthropic">Anthropic Claude</option>
-                </select>
-              </label>
+                  退出登录
+                </button>
+              </div>
 
-              <label className="block">
-                <span className="text-slate-400 font-medium">API 代理端点 Base URL (可选)</span>
-                <input 
-                  value={form.base_url} 
-                  onChange={e => setForm({...form, base_url: e.target.value})}
-                  placeholder="例如: https://api.deepseek.com/v1" 
-                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
-                />
-              </label>
-
-              <label className="block">
-                <span className="text-slate-400 font-medium">API 密钥 (API Key)</span>
-                <input 
-                  required
-                  type="password"
-                  value={form.api_key} 
-                  onChange={e => setForm({...form, api_key: e.target.value})}
-                  placeholder="sk-••••••••••••••••••••••••" 
-                  className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none" 
-                />
-              </label>
-
-              {errorMsg && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] flex items-start gap-1.5">
-                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
-              <button 
-                type="submit" 
-                disabled={busy}
-                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
-              >
-                <Check size={14} />
-                {busy ? '正在校验并保存...' : '添加配置并加密存储'}
-              </button>
-            </form>
-          </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
+                <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Shield size={14} className="text-indigo-400" />
+                  <span>权限与安全边界说明</span>
+                </h4>
+                <ul className="text-slate-400 text-[11px] space-y-1.5 list-disc list-inside">
+                  <li><strong>Owner 专属权限</strong>：只有世界 Owner 能够配置大模型 API 密钥、创建与修改 Agent 角色、切换物理世界。</li>
+                  <li><strong>密钥隔离机制</strong>：API Key 在落库时使用当前世界独立的加密密钥对称加密，前端仅能读取脱敏标识（如 <code>sk-...ab12</code>）。</li>
+                  <li><strong>单世界数据隔离</strong>：所有会话、角色与模型配置均只保存在当前运行的物理世界数据库中。</li>
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
