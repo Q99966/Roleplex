@@ -5,6 +5,7 @@ import {
 import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
 import { type Conversation, type Message, type Part, type Role } from '../api/client'
+import { MarkdownRenderer } from './MarkdownRenderer'
 
 interface ActiveWorkspaceProps {
   isSidebarCollapsed: boolean
@@ -227,10 +228,17 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                     {message.status === 'stopped' && <span className="text-[10px] text-amber-400">已停止</span>}
                     {message.status === 'error' && <span className="text-[10px] text-red-400">生成失败</span>}
                   </div>
-                  <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border whitespace-pre-wrap break-words ${
-                    isUser ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900/60 text-slate-300 border-slate-800'
+                  <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border break-words ${
+                    isUser ? 'bg-indigo-600 text-white border-indigo-500 whitespace-pre-wrap' : 'bg-slate-900/60 text-slate-300 border-slate-800'
                   }`}>
-                    {text || (message.status === 'generating' ? '…' : '')}
+                    {isUser ? (
+                      text
+                    ) : (
+                      <MarkdownRenderer
+                        content={text}
+                        isGenerating={message.status === 'generating'}
+                      />
+                    )}
                     {unknown.length > 0 && (
                       <p className="mt-2 text-[10px] text-slate-500">
                         [当前版本暂不支持渲染的内容：{unknown.join(', ')}]

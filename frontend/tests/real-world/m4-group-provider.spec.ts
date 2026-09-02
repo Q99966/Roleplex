@@ -26,9 +26,11 @@ test('runs two real provider roles serially inside one managed-world chain', asy
 
   const messages = page.getByTestId('chat-message')
   await expect(messages).toHaveCount(3, { timeout: 120_000 })
+  await expect(messages.nth(1).getByText('生成中…')).toBeHidden({ timeout: 90_000 })
   await expect(messages.nth(1)).toContainText(roleNames[0])
-  // 真实厂商输出时延不属于普通 UI 超时契约；独立 real-world smoke 显式等待完整终态。
+  // 真实 smoke 先等待生成终态，再核对最终内容；文本 timeout 只给 DOM 收口留余量。
   await expect(messages.nth(1)).toContainText(collaborationCode, { timeout: 30_000 })
+  await expect(messages.nth(2).getByText('生成中…')).toBeHidden({ timeout: 90_000 })
   await expect(messages.nth(2)).toContainText(roleNames[1])
   await expect(messages.nth(2)).toContainText(collaborationCode, { timeout: 30_000 })
 

@@ -66,13 +66,12 @@ export type ModelConfig = {
 type ApiError = Error & { status?: number; code?: string }
 
 /**
- * 后端地址：优先使用构建时配置，否则回退到当前页面主机的 8000 端口。
- *
- * 使用页面主机而不是写死 localhost，可避免 Windows 上 localhost 解析到 IPv6
- * 而后端只监听 IPv4 的连接失败，同时让局域网访问自动指向同一台主机。
+ * 后端地址：
+ * 1. 优先使用显式环境变量（如 E2E 测试指定不同端口）。
+ * 2. 未指定时默认为空字符串，由当前 Web 宿主（如 Vite 开发代理或生产同源网关）统一反向代理 /api 与 WebSocket，
+ *    彻底避免 Windows / WSL2 下浏览器直连 8000 端口引发的 ERR_CONNECTION_REFUSED。
  */
-const API_URL = import.meta.env.VITE_API_URL
-  ?? (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000')
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 let token = localStorage.getItem('roleplex_token')
 
 /** 保存或清除浏览器会话 Token，不将其暴露给业务状态。 */

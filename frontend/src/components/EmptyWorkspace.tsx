@@ -4,7 +4,7 @@ import {
 import { useAppStore } from '../store/app'
 
 interface EmptyWorkspaceProps {
-  onOpenSettings: () => void
+  onOpenSettings: (initialTab?: 'models' | 'worlds' | 'account') => void
   onOpenRoleModal: () => void
   onOpenConvModal: () => void
 }
@@ -31,7 +31,7 @@ export function EmptyWorkspace({ onOpenSettings, onOpenRoleModal, onOpenConvModa
       {/* 快捷引导板块 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl w-full mt-10 relative z-10">
         <div 
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings('models')}
           className="bg-slate-900/50 border border-slate-850 p-5 rounded-2xl cursor-pointer hover:bg-slate-900 hover:border-indigo-500/30 transition-all group"
         >
           <div className="flex items-center justify-between mb-3 text-indigo-400">
@@ -90,7 +90,7 @@ export function EmptyWorkspace({ onOpenSettings, onOpenRoleModal, onOpenConvModa
         </button>
         <button 
           type="button" 
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings('models')}
           className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-6 py-3 font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition active:scale-[0.98]"
         >
           <Settings2 size={17} />
