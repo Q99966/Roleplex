@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle, UsersRound, X
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
 import { type Conversation, type Message, type Part, type Role } from '../api/client'
-import { MarkdownRenderer } from './MarkdownRenderer'
+
+const MarkdownRenderer = lazy(async () => {
+  const module = await import('./MarkdownRenderer')
+  return { default: module.MarkdownRenderer }
+})
 
 interface ActiveWorkspaceProps {
   isSidebarCollapsed: boolean
@@ -234,10 +238,12 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                     {isUser ? (
                       text
                     ) : (
-                      <MarkdownRenderer
-                        content={text}
-                        isGenerating={message.status === 'generating'}
-                      />
+                      <Suspense fallback={<span className="whitespace-pre-wrap">{text || '…'}</span>}>
+                        <MarkdownRenderer
+                          content={text}
+                          isGenerating={message.status === 'generating'}
+                        />
+                      </Suspense>
                     )}
                     {unknown.length > 0 && (
                       <p className="mt-2 text-[10px] text-slate-500">

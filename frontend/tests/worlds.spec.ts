@@ -6,7 +6,9 @@ test.describe('A1 world visibility', () => {
     await ensureOwnerSession(page)
 
     await expect(page.getByText('default', { exact: true }).first()).toBeVisible()
-    await page.getByTitle('点击管理运行世界与存储').click()
+    const worldSettings = page.getByRole('button', { name: /管理运行世界与存储/ })
+    await worldSettings.focus()
+    await page.keyboard.press('Enter')
     const selector = page.getByLabel('切换世界')
     await expect(selector).toBeVisible()
     await expect(selector).toBeDisabled()

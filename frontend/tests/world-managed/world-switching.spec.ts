@@ -138,7 +138,7 @@ test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ 
   }
   expect(groupContexts[1].role_prefix_hash).not.toBe(groupContexts[0].role_prefix_hash)
 
-  await page.getByTitle('点击管理运行世界与存储').click()
+  await page.getByRole('button', { name: /管理运行世界与存储/ }).click()
   const selector = page.getByLabel('切换世界')
   await expect(selector).toBeEnabled()
   await expect(selector).toHaveValue('alpha')

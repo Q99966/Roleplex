@@ -180,6 +180,13 @@ test.describe('M2 single chat', () => {
     await expect(replyBubble.locator('strong')).toHaveText('加粗内容')
     await expect(replyBubble.locator('code')).toContainText('const answer = 42')
 
+    await page.getByLabel('消息输入框').fill('[危险链接](javascript:alert(1)) <script>window.__roleplex_xss = true</script>')
+    await page.getByLabel('发送消息').click()
+    const securityReply = page.getByTestId('chat-message').last()
+    await expect(securityReply.getByRole('link', { name: '危险链接' })).toHaveAttribute('href', '#', { timeout: 20_000 })
+    await expect(securityReply.locator('script')).toHaveCount(0)
+    await expect(securityReply).toContainText('<script>window.__roleplex_xss = true</script>')
+
     await page.screenshot({ path: 'test-results/m2-markdown-render.png', fullPage: true })
   })
 })

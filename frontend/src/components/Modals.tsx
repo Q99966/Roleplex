@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
-import { 
-  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server
+import {
+  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server,
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { type Conversation, type Role } from '../api/client'
@@ -59,24 +59,42 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh] shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh] shadow-2xl"
+      >
         {/* 标题栏 */}
         <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between">
           <div className="flex items-center gap-2 text-indigo-400">
             <Settings2 size={18} />
-            <h3 className="font-bold text-white text-base">系统与环境设置</h3>
+            <h3 id="settings-title" className="font-bold text-white text-base">系统与环境设置</h3>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭系统与环境设置"
+            className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition"
+          >
             <X size={18} />
           </button>
         </div>
 
         {/* 选项卡导航 */}
-        <div className="flex border-b border-slate-800 bg-slate-950/40 px-6 gap-2 pt-2">
+        <div
+          role="tablist"
+          aria-label="设置分类"
+          className="flex shrink-0 gap-2 overflow-x-auto border-b border-slate-800 bg-slate-950/40 px-6 pt-2"
+        >
           <button
             type="button"
+            id="settings-tab-models"
+            role="tab"
+            aria-selected={activeTab === 'models'}
+            aria-controls="settings-panel-models"
             onClick={() => setActiveTab('models')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
               activeTab === 'models'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
@@ -84,13 +102,17 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
           >
             <Cpu size={14} />
             <span>大模型密钥</span>
-            <span className="rounded-full bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-400">{modelConfigs.length}</span>
+            <span className="rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">{modelConfigs.length}</span>
           </button>
 
           <button
             type="button"
+            id="settings-tab-worlds"
+            role="tab"
+            aria-selected={activeTab === 'worlds'}
+            aria-controls="settings-panel-worlds"
             onClick={() => setActiveTab('worlds')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
               activeTab === 'worlds'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
@@ -99,16 +121,20 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
             <Globe2 size={14} />
             <span>运行世界与存储</span>
             {worldSwitchingSupported ? (
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
             ) : (
-              <span className="rounded bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-500">单世界</span>
+              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-500">单世界</span>
             )}
           </button>
 
           <button
             type="button"
+            id="settings-tab-account"
+            role="tab"
+            aria-selected={activeTab === 'account'}
+            aria-controls="settings-panel-account"
             onClick={() => setActiveTab('account')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
               activeTab === 'account'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
@@ -116,7 +142,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
           >
             <Shield size={14} />
             <span>账号与安全</span>
-            <span className="rounded bg-indigo-950/80 border border-indigo-800/40 px-1.5 py-0.2 text-[10px] text-indigo-300">
+            <span className="rounded bg-indigo-950/80 border border-indigo-800/40 px-1.5 py-0.5 text-[10px] text-indigo-300">
               {user?.is_owner ? 'Owner' : 'Guest'}
             </span>
           </button>
@@ -125,7 +151,12 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
         {/* 选项卡内容区 */}
         <div className="flex-1 overflow-y-auto p-6">
           {activeTab === 'models' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div
+              id="settings-panel-models"
+              role="tabpanel"
+              aria-labelledby="settings-tab-models"
+              className="grid grid-cols-1 md:grid-cols-2 gap-6"
+            >
               {/* 左侧：已保存密钥 */}
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
@@ -240,7 +271,12 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
           )}
 
           {activeTab === 'worlds' && (
-            <div className="space-y-6 text-xs">
+            <div
+              id="settings-panel-worlds"
+              role="tabpanel"
+              aria-labelledby="settings-tab-worlds"
+              className="space-y-6 text-xs"
+            >
               {/* 当前运行状态卡片 */}
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="flex items-center justify-between">
@@ -264,7 +300,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
                   <div>
                     {worldSwitchingSupported ? (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-950/80 border border-emerald-800/60 px-3 py-1 text-[11px] font-medium text-emerald-400">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
                         包装器已接管 · 支持热切换
                       </span>
                     ) : (
@@ -363,7 +399,12 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
           )}
 
           {activeTab === 'account' && (
-            <div className="space-y-6 text-xs">
+            <div
+              id="settings-panel-account"
+              role="tabpanel"
+              aria-labelledby="settings-tab-account"
+              className="space-y-6 text-xs"
+            >
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white font-bold text-base shadow-lg shadow-indigo-600/30">

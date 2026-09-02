@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { 
   Bot, MessageCircle, Plus, Search, Users, WandSparkles, 
-  Trash2, Pin, Archive, ChevronRight, ChevronDown, LogOut, Settings2, PanelLeftClose, Sparkles, Globe2
+  Trash2, Pin, Archive, ChevronRight, LogOut, Settings2, PanelLeftClose, Sparkles, Globe2
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { usePetStore } from '../store/pet'
@@ -20,8 +20,7 @@ interface SidebarProps {
 
 /** 侧边栏组件。 */
 export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenRoleModal, onOpenConvModal, onOpenRecycleBin }: SidebarProps) {
-  const { conversations, activeConversationId, roles, user, logout, worldName, worlds, worldSwitchingSupported, switchingWorld } = useAppStore()
-  const switchWorld = useAppStore((state) => state.switchWorld)
+  const { conversations, activeConversationId, roles, user, logout, worldName, worldSwitchingSupported } = useAppStore()
   const [searchTerm, setSearchTerm] = useState('')
   const [failedAvatars, setFailedAvatars] = useState<number[]>([])
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
@@ -70,13 +69,15 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
 
       {/* 运行世界状态胶囊（点击打开综合设置中心管理/切换世界） */}
       <div className="border-b border-slate-800/80 px-4 py-3">
-        <div
+        <button
+          type="button"
           onClick={() => onOpenSettings('worlds')}
           title="点击管理运行世界与存储"
-          className="group flex items-center justify-between gap-2.5 rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 hover:border-indigo-500/40 hover:bg-slate-900/80 cursor-pointer transition-all shadow-sm"
+          aria-label={`管理运行世界与存储，当前世界 ${worldName}`}
+          className="group flex w-full items-center justify-between gap-2.5 rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 text-left shadow-sm transition-all hover:border-indigo-500/40 hover:bg-slate-900/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/70 motion-reduce:transition-none"
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-950/70 border border-indigo-500/20 text-indigo-400 shrink-0 group-hover:scale-105 transition-transform">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-950/70 border border-indigo-500/20 text-indigo-400 shrink-0 group-hover:scale-105 transition-transform motion-reduce:transform-none motion-reduce:transition-none">
               <Globe2 size={16} />
             </div>
             <div className="min-w-0">
@@ -91,7 +92,7 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
           <div className="shrink-0 flex items-center gap-1">
             {worldSwitchingSupported ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-950/70 border border-emerald-800/50 px-2 py-0.5 text-[9px] font-medium text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
                 可热切换
               </span>
             ) : (
@@ -100,7 +101,7 @@ export function Sidebar({ isCollapsed, onToggleCollapse, onOpenSettings, onOpenR
               </span>
             )}
           </div>
-        </div>
+        </button>
       </div>
 
       {/* 搜索栏 */}

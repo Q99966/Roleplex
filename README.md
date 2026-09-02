@@ -274,6 +274,10 @@ npm install
 npm run dev
 ```
 
+开发服务器和 `npm run preview` 默认将浏览器的同源 `/api` 请求代理到
+`http://127.0.0.1:8000`；后端端口不同时可在启动前设置 `VITE_PROXY_TARGET`。部署纯静态
+`dist/` 时应由同源网关转发 `/api`，或在构建时通过 `VITE_API_URL` 写入可公开访问的后端地址。
+
 每个世界首次注册的账号是该世界 Owner。正常运行数据写入 `worlds/<世界名>/`；显式测试数据库仍写入
 `data/`。API Key 使用所在世界的实例密钥加密，世界目录和密钥文件都不应提交到 Git。
 

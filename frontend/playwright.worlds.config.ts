@@ -51,7 +51,8 @@ export default defineConfig({
     {
       command: `npm run dev -- --host 127.0.0.1 --port ${WEB_PORT}`,
       cwd: '.',
-      env: { VITE_API_URL: API_ORIGIN },
+      // 世界切换测试也必须覆盖同源代理，避免直接 API 地址掩盖代理配置错误。
+      env: { VITE_PROXY_TARGET: API_ORIGIN },
       url: WEB_ORIGIN,
       reuseExistingServer: false,
       timeout: 60_000,

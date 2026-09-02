@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, Check, ExternalLink } from 'lucide-react'
 
@@ -48,12 +48,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
  * @returns 安全的链接地址或安全降级占位。
  */
 function sanitizeHref(href?: string): string {
-  if (!href) return '#'
-  const normalized = href.trim().toLowerCase()
-  if (normalized.startsWith('javascript:') || normalized.startsWith('data:text/html') || normalized.startsWith('vbscript:')) {
-    return '#'
-  }
-  return href
+  return defaultUrlTransform(href ?? '') || '#'
 }
 
 /** 代码块组件：展示语言标签、一键复制按钮与横向滚动代码区。 */
@@ -129,34 +124,34 @@ export function MarkdownRenderer({ content, isGenerating = false, className = ''
   const customComponents = useMemo(() => ({
     // 标题系统：层级清晰且第一行无多余上边距
     h1: ({ children }: { children?: React.ReactNode }) => (
-      <h1 className="mt-3.5 mb-2 text-base font-bold text-white border-b border-slate-800/80 pb-1.5 first:mt-0 tracking-tight">
-        {children}
-      </h1>
-    ),
-    h2: ({ children }: { children?: React.ReactNode }) => (
-      <h2 className="mt-3 mb-1.5 text-sm font-bold text-white border-b border-slate-800/50 pb-1 first:mt-0 tracking-tight">
-        {children}
-      </h2>
-    ),
-    h3: ({ children }: { children?: React.ReactNode }) => (
-      <h3 className="mt-2.5 mb-1 text-xs font-bold text-slate-100 first:mt-0 tracking-tight">
+      <h3 className="mt-3.5 mb-2 text-base font-bold text-white border-b border-slate-800/80 pb-1.5 first:mt-0 tracking-tight">
         {children}
       </h3>
     ),
-    h4: ({ children }: { children?: React.ReactNode }) => (
-      <h4 className="mt-2 mb-1 text-xs font-semibold text-slate-200 first:mt-0">
+    h2: ({ children }: { children?: React.ReactNode }) => (
+      <h4 className="mt-3 mb-1.5 text-sm font-bold text-white border-b border-slate-800/50 pb-1 first:mt-0 tracking-tight">
         {children}
       </h4>
     ),
-    h5: ({ children }: { children?: React.ReactNode }) => (
-      <h5 className="mt-1.5 mb-0.5 text-xs font-medium text-slate-300 first:mt-0">
+    h3: ({ children }: { children?: React.ReactNode }) => (
+      <h5 className="mt-2.5 mb-1 text-xs font-bold text-slate-100 first:mt-0 tracking-tight">
         {children}
       </h5>
     ),
-    h6: ({ children }: { children?: React.ReactNode }) => (
-      <h6 className="mt-1.5 mb-0.5 text-xs font-medium text-slate-400 first:mt-0">
+    h4: ({ children }: { children?: React.ReactNode }) => (
+      <h6 className="mt-2 mb-1 text-xs font-semibold text-slate-200 first:mt-0">
         {children}
       </h6>
+    ),
+    h5: ({ children }: { children?: React.ReactNode }) => (
+      <div role="heading" aria-level={6} className="mt-1.5 mb-0.5 text-xs font-medium text-slate-300 first:mt-0">
+        {children}
+      </div>
+    ),
+    h6: ({ children }: { children?: React.ReactNode }) => (
+      <div role="heading" aria-level={6} className="mt-1.5 mb-0.5 text-xs font-medium text-slate-400 first:mt-0">
+        {children}
+      </div>
     ),
 
     // 段落
@@ -270,9 +265,9 @@ export function MarkdownRenderer({ content, isGenerating = false, className = ''
     if (isGenerating) {
       return (
         <div className="flex items-center gap-1 text-indigo-400 py-0.5">
-          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse" />
-          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse [animation-delay:200ms]" />
-          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse [animation-delay:400ms]" />
+          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse motion-reduce:animate-none" />
+          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse [animation-delay:200ms] motion-reduce:animate-none" />
+          <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 animate-pulse [animation-delay:400ms] motion-reduce:animate-none" />
         </div>
       )
     }
@@ -285,7 +280,7 @@ export function MarkdownRenderer({ content, isGenerating = false, className = ''
         {content}
       </ReactMarkdown>
       {isGenerating && (
-        <span className="inline-block h-3.5 w-1.5 bg-indigo-400 ml-0.5 align-middle animate-pulse" />
+        <span className="inline-block h-3.5 w-1.5 bg-indigo-400 ml-0.5 align-middle animate-pulse motion-reduce:animate-none" />
       )}
     </div>
   )

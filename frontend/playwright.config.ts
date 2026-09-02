@@ -72,8 +72,8 @@ export default defineConfig({
     {
       command: `npm run dev -- --host 127.0.0.1 --port ${E2E_WEB_PORT}`,
       cwd: '.',
-      // 显式指定后端地址，避免 localhost 在 Windows 上解析到 IPv6 而后端只监听 IPv4。
-      env: { VITE_API_URL: E2E_API_ORIGIN },
+      // 浏览器保持同源访问 /api，由 Vite 代理到独立后端端口，覆盖实际开发代理链路。
+      env: { VITE_PROXY_TARGET: E2E_API_ORIGIN },
       url: E2E_WEB_ORIGIN,
       reuseExistingServer: false,
       timeout: 60_000,
