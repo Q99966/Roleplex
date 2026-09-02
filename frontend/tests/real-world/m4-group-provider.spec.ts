@@ -26,10 +26,12 @@ test('runs two real provider roles serially inside one managed-world chain', asy
 
   const messages = page.getByTestId('chat-message')
   await expect(messages).toHaveCount(3, { timeout: 120_000 })
+  await expect(messages.nth(1).getByText('生成中…')).toBeHidden({ timeout: 90_000 })
   await expect(messages.nth(1)).toContainText(roleNames[0])
-  await expect(messages.nth(1)).toContainText(collaborationCode)
+  await expect(messages.nth(1)).toContainText(collaborationCode, { timeout: 60_000 })
+  await expect(messages.nth(2).getByText('生成中…')).toBeHidden({ timeout: 90_000 })
   await expect(messages.nth(2)).toContainText(roleNames[1])
-  await expect(messages.nth(2)).toContainText(collaborationCode)
+  await expect(messages.nth(2)).toContainText(collaborationCode, { timeout: 60_000 })
 
   const contexts = (await waitForRunEvents((event) => event.event === 'context.loaded', 2)).slice(-2)
   expect(contexts.map((event) => event.context_message_count)).toEqual([0, 1])

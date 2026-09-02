@@ -161,4 +161,25 @@ test.describe('M2 single chat', () => {
     await expect(page.getByText(/当前消息与角色基础配置超过模型上下文上限/)).toBeVisible({ timeout: 20_000 })
     await page.screenshot({ path: 'test-results/context-budget-error.png', fullPage: true })
   })
+
+  test('renders markdown formatting and code blocks in AI replies', async ({ page }) => {
+    await ensureOwnerSession(page)
+    await seedConversation(page, 'Markdown 格式渲染测试')
+    await page.reload()
+
+    await page.getByText('Markdown 格式渲染测试').first().click()
+    await expect(page.getByLabel('消息输入框')).toBeEnabled()
+
+    // 发送包含 Markdown 标记的提示词，fake provider 会回显该文本并由前端 MarkdownRenderer 渲染
+    await page.getByLabel('消息输入框').fill('**加粗内容** 与 `const answer = 42`')
+    await page.getByLabel('发送消息').click()
+
+    // 验证 AI 回复中的 Markdown HTML 节点正确生成
+    const replyBubble = page.getByTestId('chat-message').last()
+    await expect(replyBubble).toContainText('这是 M2 fake provider 的确定性回复。', { timeout: 20_000 })
+    await expect(replyBubble.locator('strong')).toHaveText('加粗内容')
+    await expect(replyBubble.locator('code')).toContainText('const answer = 42')
+
+    await page.screenshot({ path: 'test-results/m2-markdown-render.png', fullPage: true })
+  })
 })

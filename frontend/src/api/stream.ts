@@ -6,10 +6,16 @@ type StreamHandlers = {
   onStatusChange?: (status: 'connecting' | 'open' | 'closed') => void
 }
 
-/** 把 HTTP 后端地址转换为同源的 WebSocket 地址。 */
+/** 把 HTTP 后端地址转换为同源的 WebSocket 地址；若未配置独立后端地址则使用当前页面主机。 */
 function toWebSocketUrl(): string {
-  const base = getApiUrl().replace(/^http/, 'ws')
-  return `${base}/api/ws`
+  const apiUrl = getApiUrl()
+  if (apiUrl) {
+    const base = apiUrl.replace(/^http/, 'ws')
+    return `${base}/api/ws`
+  }
+  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8000'
+  return `${protocol}//${host}/api/ws`
 }
 
 /**

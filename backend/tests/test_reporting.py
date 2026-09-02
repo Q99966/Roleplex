@@ -45,11 +45,11 @@ def test_scope_distinguishes_full_and_partial_without_persisting_keyword():
 
 def test_database_summary_uses_repository_relative_path():
     """summary 不暴露开发机绝对目录，仓库内数据库使用相对路径。"""
-    from reporting import database_display_path
+    from reporting import REPOSITORY_ROOT, database_display_path
 
-    assert database_display_path(
-        "sqlite+aiosqlite:////home/chen/workspace/Roleplex/data/roleplex-test.db"
-    ) == "data/roleplex-test.db"
+    repo_db = (REPOSITORY_ROOT / "data" / "roleplex-test.db").as_posix()
+    assert database_display_path(f"sqlite+aiosqlite:///{repo_db}") == "data/roleplex-test.db"
+    assert database_display_path("sqlite+aiosqlite:////outside/path/roleplex-test.db") == "roleplex-test.db"
 
 
 def test_assertion_failure_records_structured_exception_type():
