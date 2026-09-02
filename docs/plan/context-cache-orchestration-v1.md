@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | 已批准；C0-C2、M4a 已完成；W0/E0/W1a-W1c/W2a-W3 分层顺序已确认，当前待 W0 复核 |
+| 状态 | C0-C2、M4a 已完成；W0 已确认；E0 已实现待人工验收；W1a 尚未开始 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-02 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
@@ -22,7 +22,7 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
   M4a 已于 2026-09-01 经用户人工验收；2026-09-01 已确认先定义 W0 工作区/Shell 契约，再实施 E0，随后
   以 W1a 原生文件、W1b 结构化命令、W1c 审批 Shell 逐层跑通单角色闭环，最后才进入 Repository、worktree
   和 M4b fan-out。
-  上述新阶段的编码、迁移和协议变化尚未开始。
+  E0 已完成编码与自动验证，当前等待人工验收；W1a 及后续阶段尚未开始。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -555,10 +555,16 @@ E0 采用一张新的 `agent_executions` 表作为执行身份、父子关系、
 `INDEX(conversation_id, status)`、`INDEX(parent_execution_id, dispatch_order, attempt)` 和 `INDEX(chain_id)`。
 迁移命名为 `0005_agent_executions`，必须验证 SQLite 升降级、外键完整性和 PostgreSQL 离线 SQL。
 
-M4b 起，single、group_role、orchestrator 和 subagent 的新 generation 都先创建 execution 行；旧数据库中已经
-终结的 generation 不从 `queue_jobs.payload_json` 反向猜测回填。旧进程遗留任务仍按现有规则在启动时降级，
-从迁移后的新请求开始保证执行表完整。数据模型协议必须明确：queue payload 只是唤醒参数，不再是 execution
-身份的权威来源。
+E0 起，single/group_role 的新 generation 先创建 execution 行；M4b 才增加 orchestrator/subagent。旧数据库中
+已经终结的 generation 不从 `queue_jobs.payload_json` 反向猜测回填。旧进程遗留任务仍按现有规则在启动时
+降级，从迁移后的新请求开始保证执行表完整。数据模型协议必须明确：queue payload 只是唤醒参数，不再是
+execution 身份的权威来源。
+
+E0 实现验证（2026-09-02）：后端 `101 passed, 3 skipped, 8 deselected`；迁移完成 SQLite upgrade/downgrade、
+ORM metadata、外键完整性和 PostgreSQL 离线 SQL；fake managed-world E2E 1 passed，world-switch 后 active
+execution 为 0；真实 DeepSeek managed-world E2E 2 passed，两个 group_role 和两个 single execution 全部
+completed。当前只实现 single/group_role、attempt=1 和中断收口；parent/dispatch/task/context hint 仍为空，
+不能据此宣称 M4b 已实现。
 
 ### 10.3 两阶段编排与稳定顺序
 

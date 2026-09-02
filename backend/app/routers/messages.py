@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..realtime.events import current_epoch
-from ..models import Conversation, ConversationMember, Generation, Message, QueueJob, Role, User
+from ..models import AgentExecution, Conversation, ConversationMember, Generation, Message, QueueJob, Role, User
 from ..config.logging import current_request_id, set_log_context
 from ..schemas import MessageCreate
 from ..security.tokens import get_current_user
@@ -121,6 +121,7 @@ async def send_message(
 
     jobs: list[QueueJob] = []
     generations: list[Generation] = []
+    executions: list[AgentExecution] = []
     for role in target_roles:
         generation = Generation(
             conversation_id=conversation_id,
@@ -131,18 +132,27 @@ async def send_message(
         session.add(generation)
         await session.flush()
         execution_id = chat.new_run_id()
+        execution_kind = "single" if conversation.type == "single" else "group_role"
+        execution = AgentExecution(
+            execution_id=execution_id,
+            conversation_id=conversation_id,
+            generation_id=generation.id,
+            chain_id=run_id,
+            role_id=role.id,
+            execution_kind=execution_kind,
+            attempt=1,
+            status="queued",
+            created_at=now,
+        )
+        session.add(execution)
         job = QueueJob(
             conversation_id=conversation_id,
             generation_id=generation.id,
             status="queued",
             payload_json={
                 "current_message_id": message.id,
-                "target_role_id": role.id,
                 "triggered_by_user_id": user.id,
-                "execution_id": execution_id,
-                "chain_id": run_id,
                 "allow_dangerous": user.is_owner,
-                "execution_kind": "single" if conversation.type == "single" else "group_role",
                 "request_id": current_request_id(),
             },
             attempts=0,
@@ -151,6 +161,7 @@ async def send_message(
         )
         session.add(job)
         generations.append(generation)
+        executions.append(execution)
         jobs.append(job)
 
     conversation.last_message_at = now
@@ -164,20 +175,21 @@ async def send_message(
     )
     await session.commit()
     await session.refresh(message)
-    for generation, job in zip(generations, jobs, strict=True):
+    for generation, execution, job in zip(generations, executions, jobs, strict=True):
         await session.refresh(generation)
+        await session.refresh(execution)
         await session.refresh(job)
     await event_store.publish_events(created_event)
 
-    for job in jobs:
+    for execution, job in zip(executions, jobs, strict=True):
         logger.info(
             "generation.created",
             extra={
                 "conversation_id": conversation_id,
                 "generation_id": job.generation_id,
-                "chain_id": run_id,
-                "execution_id": job.payload_json["execution_id"],
-                "role_id": job.payload_json["target_role_id"],
+                "chain_id": execution.chain_id,
+                "execution_id": execution.execution_id,
+                "role_id": execution.role_id,
             },
         )
         await conversation_scheduler.enqueue(conversation_id, job.id)

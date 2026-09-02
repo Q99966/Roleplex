@@ -132,6 +132,9 @@ def test_runtime_routes_categories_and_error_copy_keeps_same_event_identity(tmp_
     )
     logging.getLogger("roleplex.auth").info("auth.login_failed", extra={"username": "missing"})
     logging.getLogger("roleplex.chat").info("provider.call_completed", extra={"duration_ms": 12})
+    logging.getLogger("roleplex.scheduler.conversation").info(
+        "execution.interrupted", extra={"error_code": "EXECUTION_INTERRUPTED"}
+    )
     logging.getLogger("roleplex.http").info("http.completed", extra={"status_code": 200})
     logging.getLogger("roleplex.chat").error(
         "provider.call_failed", extra={"error_code": "PROVIDER_TIMEOUT"}
@@ -144,7 +147,11 @@ def test_runtime_routes_categories_and_error_copy_keeps_same_event_identity(tmp_
     }
     assert [item["event"] for item in _json_lines(day / "app.jsonl")] == ["auth.login_failed"]
     assert [item["event"] for item in _json_lines(day / "access.jsonl")] == ["http.completed"]
-    agent_error = _json_lines(day / "agent.jsonl")[-1]
+    agent_events = _json_lines(day / "agent.jsonl")
+    assert [item["event"] for item in agent_events[0:2]] == [
+        "provider.call_completed", "execution.interrupted",
+    ]
+    agent_error = agent_events[-1]
     copied_error = _json_lines(day / "errors.jsonl")[-1]
     assert agent_error == copied_error
     assert copied_error["category"] == "agent"

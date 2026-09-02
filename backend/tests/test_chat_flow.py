@@ -67,9 +67,11 @@ async def _wait_for_role_status(
 
 @pytest.mark.anyio
 async def test_single_chat_streams_and_persists():
-    """发送消息后 fake 生成应完成，并留下事件序列及明确为空的用量日志。"""
+    """发送消息后 fake 生成应完成，并留下持久 execution、事件序列和空用量日志。"""
+    from sqlalchemy import select
     from app.main import app
     from app.db import SessionLocal, engine
+    from app.models import AgentExecution, Generation, QueueJob
     from app.realtime import store as event_store
 
     records: list[logging.LogRecord] = []
@@ -95,6 +97,7 @@ async def test_single_chat_streams_and_persists():
             )
             assert send.status_code == 202, send.text
             assert send.json()["generation_id"] is not None
+            generation_id = send.json()["generation_id"]
 
             # 重复提交同一 client_message_id 必须幂等，不创建第二条用户消息。
             duplicate = await client.post(
@@ -119,6 +122,11 @@ async def test_single_chat_streams_and_persists():
 
             async with SessionLocal() as session:
                 backlog = await event_store.read_backlog(session, conversation_id, 0)
+                generation = await session.get(Generation, generation_id)
+                execution = await session.scalar(select(AgentExecution).where(
+                    AgentExecution.generation_id == generation_id,
+                ))
+                job = await session.scalar(select(QueueJob).where(QueueJob.generation_id == generation_id))
             types = [event.type for event in backlog]
             seqs = [event.event_seq for event in backlog]
             assert types[0] == "message_created"
@@ -128,6 +136,25 @@ async def test_single_chat_streams_and_persists():
 
             deltas = [event for event in backlog if event.type == "message_delta"]
             assert [event.delta_seq for event in deltas] == list(range(1, len(deltas) + 1))
+            assert generation is not None
+            assert execution is not None
+            assert execution.conversation_id == conversation_id
+            assert execution.generation_id == generation_id
+            assert execution.chain_id == generation.run_id
+            assert execution.role_id == ctx["role_id"]
+            assert execution.execution_kind == "single"
+            assert execution.attempt == 1
+            assert execution.status == "completed"
+            assert execution.parent_execution_id is None
+            assert execution.dispatch_order is None
+            assert execution.task_text is None
+            assert execution.context_hint_text is None
+            assert execution.started_at is not None
+            assert execution.ended_at is not None
+            assert job is not None
+            assert set(job.payload_json) == {
+                "current_message_id", "triggered_by_user_id", "allow_dangerous", "request_id",
+            }
 
     chat_logger.removeHandler(handler)
     provider_call = next(record for record in records if record.getMessage() == "provider.call_completed")

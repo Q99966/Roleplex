@@ -121,7 +121,7 @@ async def test_group_without_mentions_persists_message_without_generation():
     """群聊无 mentions 时只保存真人消息，不创建 generation 或调用 Provider。"""
     from app.db import SessionLocal, engine
     from app.main import app
-    from app.models import Generation, Message
+    from app.models import AgentExecution, Generation, Message
 
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -139,10 +139,14 @@ async def test_group_without_mentions_persists_message_without_generation():
                 generations = (await session.scalars(select(Generation).where(
                     Generation.conversation_id == group["conversation_id"],
                 ))).all()
+                executions = (await session.scalars(select(AgentExecution).where(
+                    AgentExecution.conversation_id == group["conversation_id"],
+                ))).all()
                 messages = (await session.scalars(select(Message).where(
                     Message.conversation_id == group["conversation_id"],
                 ))).all()
     assert generations == []
+    assert executions == []
     assert [(message.sender_type, message.mentions_json) for message in messages] == [("user", [])]
     await engine.dispose()
 
@@ -252,7 +256,7 @@ async def test_mentions_run_strictly_in_request_order_and_later_role_sees_prior_
     from app.agent.domain import MessageDone, TextDelta
     from app.db import SessionLocal, engine
     from app.main import app
-    from app.models import Generation, Message
+    from app.models import AgentExecution, Generation, Message
     from app.services import chat
 
     timeline: list[str] = []
@@ -295,6 +299,9 @@ async def test_mentions_run_strictly_in_request_order_and_later_role_sees_prior_
                 generations = (await session.scalars(select(Generation).where(
                     Generation.conversation_id == group["conversation_id"],
                 ).order_by(Generation.id))).all()
+                executions = (await session.scalars(select(AgentExecution).where(
+                    AgentExecution.conversation_id == group["conversation_id"],
+                ).order_by(AgentExecution.generation_id))).all()
                 user_message = await session.scalar(select(Message).where(
                     Message.conversation_id == group["conversation_id"],
                     Message.sender_type == "user",
@@ -306,7 +313,377 @@ async def test_mentions_run_strictly_in_request_order_and_later_role_sees_prior_
     assert len({generation.run_id for generation in generations}) == 1
     assert user_message is not None and user_message.chain_id == generations[0].run_id
     assert [job.status for job in jobs] == ["completed", "completed"]
-    assert len({job.payload_json["execution_id"] for job in jobs}) == 2
+    assert len({execution.execution_id for execution in executions}) == 2
+    assert [execution.role_id for execution in executions] == [role_a, role_b]
+    assert [execution.execution_kind for execution in executions] == ["group_role", "group_role"]
+    assert [execution.status for execution in executions] == ["completed", "completed"]
+    assert len({execution.chain_id for execution in executions}) == 1
+    assert all(execution.attempt == 1 for execution in executions)
+    assert all(set(job.payload_json) == {
+        "current_message_id", "triggered_by_user_id", "allow_dangerous", "request_id",
+    } for job in jobs)
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_scheduler_start_interrupts_stale_executions_without_replaying_provider():
+    """服务重启只中断遗留 execution 并取消 job，不能重新调用 Provider。"""
+    from app.db import SessionLocal, engine, now_utc
+    from app.main import app
+    from app.models import AgentExecution, Generation, QueueJob
+    from app.realtime.events import current_epoch
+    from app.scheduling.conversation import ConversationScheduler
+
+    provider_calls = 0
+
+    async def forbidden_runner(**_kwargs: Any) -> None:
+        """记录任何不应发生的 Provider 重放。
+
+        Args:
+            **_kwargs：调度器传入的 generation 参数。
+        """
+        nonlocal provider_calls
+        provider_calls += 1
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            group = await _create_group(client)
+            async with SessionLocal() as session:
+                generation = Generation(
+                    conversation_id=group["conversation_id"],
+                    stream_epoch=current_epoch(),
+                    status="running",
+                    run_id="restart-chain",
+                    started_at=now_utc(),
+                )
+                session.add(generation)
+                await session.flush()
+                execution = AgentExecution(
+                    execution_id="restart-execution",
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    chain_id="restart-chain",
+                    role_id=group["role_ids"][0],
+                    execution_kind="group_role",
+                    attempt=1,
+                    status="running",
+                    created_at=now_utc(),
+                    started_at=now_utc(),
+                )
+                job = QueueJob(
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    status="running",
+                    payload_json={
+                        "current_message_id": 1,
+                        "triggered_by_user_id": 1,
+                        "allow_dangerous": True,
+                        "request_id": "restart-request",
+                    },
+                    attempts=1,
+                    cancel_requested=False,
+                    created_at=now_utc(),
+                    started_at=now_utc(),
+                )
+                session.add_all([execution, job])
+                orphan_generation = Generation(
+                    conversation_id=group["conversation_id"],
+                    stream_epoch=current_epoch(),
+                    status="stopped",
+                    run_id="orphan-execution-chain",
+                    started_at=now_utc(),
+                    ended_at=now_utc(),
+                )
+                session.add(orphan_generation)
+                await session.flush()
+                orphan_execution = AgentExecution(
+                    execution_id="orphan-running-execution",
+                    conversation_id=group["conversation_id"],
+                    generation_id=orphan_generation.id,
+                    chain_id="orphan-execution-chain",
+                    role_id=group["role_ids"][1],
+                    execution_kind="group_role",
+                    attempt=1,
+                    status="running",
+                    created_at=now_utc(),
+                    started_at=now_utc(),
+                )
+                session.add(orphan_execution)
+                await session.commit()
+                generation_id = generation.id
+                job_id = job.id
+                orphan_generation_id = orphan_generation.id
+
+            scheduler = ConversationScheduler()
+            await scheduler.start(forbidden_runner)
+            await scheduler.shutdown()
+
+            async with SessionLocal() as session:
+                generation = await session.get(Generation, generation_id)
+                execution = await session.scalar(select(AgentExecution).where(
+                    AgentExecution.generation_id == generation_id,
+                ))
+                orphan_execution = await session.scalar(select(AgentExecution).where(
+                    AgentExecution.generation_id == orphan_generation_id,
+                ))
+                job = await session.get(QueueJob, job_id)
+
+    assert provider_calls == 0
+    assert generation is not None and generation.status == "stopped"
+    assert execution is not None and execution.status == "interrupted"
+    assert execution.error_code == "EXECUTION_INTERRUPTED"
+    assert execution.ended_at is not None
+    assert orphan_execution is not None and orphan_execution.status == "interrupted"
+    assert orphan_execution.error_code == "EXECUTION_INTERRUPTED"
+    assert orphan_execution.ended_at is not None
+    assert job is not None and job.status == "cancelled"
+    assert job.cancel_requested is True
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_scheduler_refuses_generation_without_persisted_execution():
+    """queue job 缺少 execution 权威行时必须失败，不能相信 payload 或调用 Provider。"""
+    from app.db import SessionLocal, engine, now_utc
+    from app.main import app
+    from app.models import Generation, QueueJob
+    from app.realtime.events import current_epoch
+    from app.scheduling.conversation import ConversationScheduler
+
+    provider_calls = 0
+
+    async def forbidden_runner(**_kwargs: Any) -> None:
+        """记录任何越过 execution 完整性检查的调用。
+
+        Args:
+            **_kwargs：本用例不应收到的 generation 参数。
+        """
+        nonlocal provider_calls
+        provider_calls += 1
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            group = await _create_group(client)
+            scheduler = ConversationScheduler()
+            await scheduler.start(forbidden_runner)
+            async with SessionLocal() as session:
+                generation = Generation(
+                    conversation_id=group["conversation_id"],
+                    stream_epoch=current_epoch(),
+                    status="queued",
+                    run_id="missing-execution-chain",
+                )
+                session.add(generation)
+                await session.flush()
+                job = QueueJob(
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    status="queued",
+                    payload_json={
+                        "current_message_id": 1,
+                        "triggered_by_user_id": 1,
+                        "allow_dangerous": True,
+                        "request_id": "missing-execution-request",
+                    },
+                    attempts=0,
+                    cancel_requested=False,
+                    created_at=now_utc(),
+                )
+                session.add(job)
+                await session.commit()
+                generation_id = generation.id
+                job_id = job.id
+
+            await scheduler.enqueue(group["conversation_id"], job_id)
+            await _wait_for_queue_jobs(group["conversation_id"], 1, {"failed"})
+            await scheduler.shutdown()
+            async with SessionLocal() as session:
+                generation = await session.get(Generation, generation_id)
+                job = await session.get(QueueJob, job_id)
+
+    assert provider_calls == 0
+    assert generation is not None and generation.status == "failed"
+    assert generation.error_code == "REQUEST_FAILED"
+    assert job is not None and job.status == "failed"
+    assert job.ended_at is not None
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_scheduler_fails_all_states_when_runner_returns_without_generation_terminal():
+    """runner 未写 generation 终态时，job/generation/execution 必须一起失败。"""
+    from app.db import SessionLocal, engine, now_utc
+    from app.main import app
+    from app.models import AgentExecution, Generation, QueueJob
+    from app.realtime.events import current_epoch
+    from app.scheduling.conversation import ConversationScheduler
+
+    runner_calls = 0
+
+    async def incomplete_runner(**_kwargs: Any) -> None:
+        """模拟违反 generation reducer 契约、直接返回的 runner。
+
+        Args:
+            **_kwargs：调度器传入的 generation 参数。
+        """
+        nonlocal runner_calls
+        runner_calls += 1
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            group = await _create_group(client)
+            scheduler = ConversationScheduler()
+            await scheduler.start(incomplete_runner)
+            async with SessionLocal() as session:
+                generation = Generation(
+                    conversation_id=group["conversation_id"],
+                    stream_epoch=current_epoch(),
+                    status="queued",
+                    run_id="incomplete-runner-chain",
+                )
+                session.add(generation)
+                await session.flush()
+                execution = AgentExecution(
+                    execution_id="incomplete-runner-execution",
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    chain_id="incomplete-runner-chain",
+                    role_id=group["role_ids"][0],
+                    execution_kind="group_role",
+                    attempt=1,
+                    status="queued",
+                    created_at=now_utc(),
+                )
+                job = QueueJob(
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    status="queued",
+                    payload_json={
+                        "current_message_id": 1,
+                        "triggered_by_user_id": 1,
+                        "allow_dangerous": True,
+                        "request_id": "incomplete-runner-request",
+                    },
+                    attempts=0,
+                    cancel_requested=False,
+                    created_at=now_utc(),
+                )
+                session.add_all([execution, job])
+                await session.commit()
+                generation_id = generation.id
+                job_id = job.id
+
+            await scheduler.enqueue(group["conversation_id"], job_id)
+            await _wait_for_queue_jobs(group["conversation_id"], 1, {"failed"})
+            await scheduler.shutdown()
+            async with SessionLocal() as session:
+                generation = await session.get(Generation, generation_id)
+                execution = await session.scalar(select(AgentExecution).where(
+                    AgentExecution.generation_id == generation_id,
+                ))
+                job = await session.get(QueueJob, job_id)
+
+    assert runner_calls == 1
+    assert generation is not None and generation.status == "failed"
+    assert generation.error_code == "REQUEST_FAILED"
+    assert generation.ended_at is not None
+    assert execution is not None and execution.status == "failed"
+    assert execution.error_code == "REQUEST_FAILED"
+    assert execution.ended_at is not None
+    assert job is not None and job.status == "failed"
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_scheduler_shutdown_reconciles_active_execution_after_runner_stops_generation():
+    """服务关闭取消 runner 后，应立即把 active execution/job 与 stopped generation 对齐。"""
+    from app.db import SessionLocal, engine, now_utc
+    from app.main import app
+    from app.models import AgentExecution, Generation, QueueJob
+    from app.realtime.events import current_epoch
+    from app.scheduling.conversation import ConversationScheduler
+
+    runner_started = asyncio.Event()
+
+    async def stopping_runner(**kwargs: Any) -> None:
+        """模拟 chat reducer 在取消时先把 generation 写成 stopped。
+
+        Args:
+            **kwargs：包含待收口 generation ID 的调度参数。
+        """
+        runner_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            async with SessionLocal() as session:
+                generation = await session.get(Generation, int(kwargs["generation_id"]))
+                assert generation is not None
+                generation.status = "stopped"
+                generation.ended_at = now_utc()
+                await session.commit()
+            raise
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            group = await _create_group(client)
+            scheduler = ConversationScheduler()
+            await scheduler.start(stopping_runner)
+            async with SessionLocal() as session:
+                generation = Generation(
+                    conversation_id=group["conversation_id"],
+                    stream_epoch=current_epoch(),
+                    status="queued",
+                    run_id="shutdown-chain",
+                )
+                session.add(generation)
+                await session.flush()
+                execution = AgentExecution(
+                    execution_id="shutdown-execution",
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    chain_id="shutdown-chain",
+                    role_id=group["role_ids"][0],
+                    execution_kind="group_role",
+                    attempt=1,
+                    status="queued",
+                    created_at=now_utc(),
+                )
+                job = QueueJob(
+                    conversation_id=group["conversation_id"],
+                    generation_id=generation.id,
+                    status="queued",
+                    payload_json={
+                        "current_message_id": 1,
+                        "triggered_by_user_id": 1,
+                        "allow_dangerous": True,
+                        "request_id": "shutdown-request",
+                    },
+                    attempts=0,
+                    cancel_requested=False,
+                    created_at=now_utc(),
+                )
+                session.add_all([execution, job])
+                await session.commit()
+                generation_id = generation.id
+                job_id = job.id
+
+            await scheduler.enqueue(group["conversation_id"], job_id)
+            await asyncio.wait_for(runner_started.wait(), timeout=2)
+            await scheduler.shutdown()
+            async with SessionLocal() as session:
+                generation = await session.get(Generation, generation_id)
+                execution = await session.scalar(select(AgentExecution).where(
+                    AgentExecution.generation_id == generation_id,
+                ))
+                job = await session.get(QueueJob, job_id)
+
+    assert generation is not None and generation.status == "stopped"
+    assert execution is not None and execution.status == "stopped"
+    assert execution.error_code is None
+    assert execution.ended_at is not None
+    assert job is not None and job.status == "cancelled"
+    assert job.cancel_requested is True
+    assert job.ended_at is not None
     await engine.dispose()
 
 
@@ -436,7 +813,7 @@ async def test_stop_cancels_current_generation_and_all_later_jobs(monkeypatch: p
     from app.agent.domain import TextDelta
     from app.db import SessionLocal, engine
     from app.main import app
-    from app.models import Generation, Message, QueueJob
+    from app.models import AgentExecution, Generation, Message, QueueJob
     from app.services import chat
 
     first_started = asyncio.Event()
@@ -488,6 +865,9 @@ async def test_stop_cancels_current_generation_and_all_later_jobs(monkeypatch: p
                 jobs = (await session.scalars(select(QueueJob).where(
                     QueueJob.conversation_id == group["conversation_id"],
                 ).order_by(QueueJob.id))).all()
+                executions = (await session.scalars(select(AgentExecution).where(
+                    AgentExecution.conversation_id == group["conversation_id"],
+                ).order_by(AgentExecution.generation_id))).all()
                 assistant_messages = (await session.scalars(select(Message).where(
                     Message.conversation_id == group["conversation_id"],
                     Message.sender_type == "role",
@@ -495,5 +875,8 @@ async def test_stop_cancels_current_generation_and_all_later_jobs(monkeypatch: p
     assert role_messages[0]["status"] == "stopped"
     assert [generation.status for generation in generations] == ["stopped", "stopped"]
     assert [job.status for job in jobs] == ["cancelled", "cancelled"]
+    assert [execution.status for execution in executions] == ["stopped", "stopped"]
+    assert all(execution.error_code is None for execution in executions)
+    assert all(execution.ended_at is not None for execution in executions)
     assert len(assistant_messages) == 1
     await engine.dispose()

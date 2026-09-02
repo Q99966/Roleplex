@@ -41,7 +41,7 @@ docs/protocol/
 | Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |
 | 分页与兼容性 | 预留/总则 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
-| Agent 运行时（领域事件、工具安全、MCP） | 内部/原型 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
+| Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
 | 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |
 
 ## 认证

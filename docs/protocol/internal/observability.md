@@ -8,7 +8,7 @@
 | 维护者 | Roleplex |
 | 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
 | 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-02 |
 
 本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
 统一引用详细规范，不在本文复制第二份权威定义。
@@ -34,9 +34,10 @@ runtime active 文件按 10 MiB、一小时或跨日轮转；关闭片段使用�
 Roleplex 只使用现有业务 Trace 模型：消息 chain 是整条 trace，Agent/工具 execution 是 span，父 execution
 表达父 span。上下文通过 contextvars 跨 HTTP、WS、数据库、后台任务和工具调用传播。
 
-M4a 队列把原 HTTP request ID、共享 chain ID 和每角色独立 execution ID 写入持久 job，并在创建会话 worker
-子任务时显式绑定；不同 chain 复用同一 worker 时不得继承上一条请求的日志上下文。队列终态使用
-`generation.queue_job_completed`，只记录 generation 身份和 success/failed/cancelled，不保存任务 payload。
+M4a 队列把原 HTTP request ID 和安全唤醒参数写入持久 job；E0 后共享 chain、每角色独立 execution ID、role
+和 execution kind 从 `agent_executions` 读取，并在创建会话 worker 子任务时显式绑定。不同 chain 复用同一
+worker 时不得继承上一条请求的日志上下文。队列终态使用 `generation.queue_job_completed`，只记录身份和
+success/failed/cancelled，不保存任务 payload；启动降级另记 `execution.interrupted`，不伪造 Provider 调用。
 
 WebSocket/流式事件继续关联 stream epoch、event seq、message revision、delta seq 和工具审计标识；流式
 文本不逐 token 写日志。
@@ -44,7 +45,7 @@ WebSocket/流式事件继续关联 stream epoch、event seq、message revision�
 ## 分类与错误
 
 - app：进程、认证、世界、数据库、会话、消息与 WebSocket。
-- agent：generation、provider、context 和工具调用。
+- agent：generation、execution、provider、context 和工具调用。
 - access：自定义 HTTP 完成/失败事件；默认 Uvicorn access 不再持久化或重复输出。
 - errors：仅 ERROR、CRITICAL 和未处理异常的原样索引副本；WARNING 不进入。
 

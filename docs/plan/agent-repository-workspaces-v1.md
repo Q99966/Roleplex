@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端、工具安全与测试维护者 |
-| 状态 | 分层顺序已确认；W0、E0、W1a/W1b/W1c、W2a/W2b/W3 待逐阶段实施，当前未编码 |
+| 状态 | W0 已确认；E0 已实现并通过自动验证，等待人工验收；W1a 尚未开始 |
 | 计划版本 | 1 |
 | 上游计划 | [上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-02 |
 
 本文定义 Orchestrator fan-out 之前必须具备的代码协作基础：持久 execution 身份、Owner 授权的本地 Git
 仓库、受边界约束的文件/Git 工具、命令执行和每次写执行独占的 Git worktree。本文是这些能力的范围、
@@ -149,6 +149,13 @@ E0 单独验收：
 - 启动时把遗留 queued/running execution 降级为 interrupted，不恢复 Provider 调用；
 - SQLite 升降级、外键检查和 PostgreSQL 离线 SQL 通过；
 - E0 完成后先人工验收，不顺带开放任何文件或命令工具。
+
+E0 已于 2026-09-02 完成实现：新增 `0005_agent_executions`，single/group_role 创建和 scheduler 生命周期已
+改为读取规范化 execution；queue payload 不再复制 execution/role/chain/kind。后端完整回归
+`101 passed, 3 skipped, 8 deselected`，SQLite 升降级、ORM metadata、外键检查和 PostgreSQL 离线 SQL 均通过；
+fake managed-world E2E 1 passed，world-switch 后 alpha 的 active execution 数为 0。当前等待用户人工验收，
+真实 DeepSeek managed-world E2E 2 passed，两个 group_role 和两个 single execution 全部 completed、active 为 0。
+未创建 Workspace Binding，也未开放任何文件、命令或 Shell 工具。
 
 ## 五、W1a-W1c：单角色工作区、文件、命令与 Shell
 

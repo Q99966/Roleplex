@@ -4,7 +4,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 ## 当前阶段
 
-已完成 M0/M1 基础骨架、M2 单聊闭环和 M4a 群聊：
+已完成 M0/M1 基础骨架、M2 单聊闭环、M4a 群聊，并已实现 E0 持久 execution 身份：
 
 - SQLite + SQLAlchemy 2 async，WAL、busy timeout、外键约束、单进程单 worker 边界
 - Owner 原子初始化模型、JWT 7 天有效期与 token version 撤销
@@ -15,6 +15,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 单聊消息发送、客户端幂等键、真实模型流式回复、停止生成；自动化测试使用确定性 fake provider
 - 单聊通过统一 ContextBuilder 读取终态历史；角色上下文窗口默认 200K 并可由 Owner 配置
 - 群聊支持角色成员管理、可访问的 @ 补全、无 @ 静默记录、mentions 串行回复、停止整条 chain 和工具过程卡片
+- single/group_role generation 拥有一对一持久 execution；队列只保存唤醒参数，启动中断不重放 Provider
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
@@ -26,7 +27,8 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
-富媒体产物、Orchestrator 与 MCP 产品接入将在后续里程碑完成。
+下一阶段是当前 World 工作区与单角色原生文件工具（W1a）；富媒体产物、Orchestrator 与 MCP 产品接入仍在
+后续里程碑。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 

@@ -207,6 +207,55 @@ class Generation(Base):
     __table_args__ = (Index("ix_generations_conversation_status", "conversation_id", "status"),)
 
 
+class AgentExecution(Base):
+    """一次 Agent 实际执行的持久身份、归属和终态。
+
+    `generations` 继续拥有消息流生命周期；本表负责 execution ID、角色、chain、
+    execution kind 和后续 M4b 父子关系，队列 JSON 与日志不得替代本表。
+    """
+
+    __tablename__ = "agent_executions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    execution_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.execution_id", ondelete="CASCADE")
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    generation_id: Mapped[int] = mapped_column(
+        ForeignKey("generations.id", ondelete="CASCADE"), nullable=False
+    )
+    chain_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
+    execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    dispatch_order: Mapped[int | None] = mapped_column(Integer)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    task_text: Mapped[str | None] = mapped_column(Text)
+    context_hint_text: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("execution_id", name="uq_agent_executions_execution_id"),
+        UniqueConstraint("generation_id", name="uq_agent_executions_generation"),
+        UniqueConstraint(
+            "parent_execution_id", "dispatch_order", "attempt",
+            name="uq_agent_execution_dispatch_attempt",
+        ),
+        Index("ix_agent_executions_conversation_status", "conversation_id", "status"),
+        Index(
+            "ix_agent_executions_parent_order_attempt",
+            "parent_execution_id", "dispatch_order", "attempt",
+        ),
+        Index("ix_agent_executions_chain_id", "chain_id"),
+    )
+
+
 class EventLog(Base):
     """持久化会话事件；实时 EventHub 只负责提交后的进程内广播。"""
 
@@ -230,7 +279,7 @@ class EventLog(Base):
 
 
 class QueueJob(Base):
-    """单进程会话队列的持久化任务状态。"""
+    """单进程会话队列的持久化唤醒任务；execution 身份另存规范化表。"""
 
     __tablename__ = "queue_jobs"
 

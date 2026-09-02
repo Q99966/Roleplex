@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 内部（不承诺客户端兼容性） |
-| 状态 | 部分已实现（M0 Agent 基础与 M4a 会话调度） |
+| 状态 | 部分已实现（M0 Agent 基础、M4a 会话调度与 E0 execution 身份） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-02 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -52,6 +52,20 @@ M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同
   校验，成员变化后不能靠旧 job 恢复权限。
 - 停止按 chain 标记 queued job cancelled、queued generation stopped，并取消当前子执行；其他 chain 与会话
   不受影响。服务重启不重新调用 Provider，遗留 queued/running job 降级为取消状态。
+
+## E0 持久 execution 身份
+
+- 每个迁移后新建的 single/group_role generation 在同一请求短事务中创建唯一 `agent_executions` 行；任一写入
+  失败整条消息接收事务回滚，不能留下只有 generation 没有 execution 的半状态。
+- scheduler 通过 `generation_id` 读取 execution 的 `execution_id/role_id/chain_id/execution_kind`；queue payload
+  只负责当前消息、触发用户、权限类别和 request ID，不是执行身份来源。
+- job 开始、正常完成、失败和停止时，execution 与 queue job 在同一调度事务更新；generation/message 仍由
+  唯一消息 reducer 管理，调度器不抢写流式消息。
+- 服务关闭先取消实际 active runner；若 generation 已由 reducer 收口为 stopped/completed/failed，同一 shutdown
+  流程立即对齐 execution/job。runner 未收口则 execution 记 interrupted，不能遗留假 running。
+- 服务启动独立扫描所有 queued/running execution，即使旧 generation 已先成为 stopped 也会改为 interrupted，
+  写入 `EXECUTION_INTERRUPTED` 和 ended_at；active generation/job 沿用 stopped/cancelled，Provider 不重放。
+- E0 不为迁移前已经结束的 generation 解析 JSON 回填 execution；M4b 父子、dispatch 和 attempt>1 尚未实现。
 
 角色上下文窗口默认 200K，并受部署 ceiling 约束。未知 tokenizer 使用明确标记的保守 UTF-8 估算，不能
 冒充 Provider usage。预算不足时产生 `CONTEXT_BUDGET_EXCEEDED`，在调用模型前失败。

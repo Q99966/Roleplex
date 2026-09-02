@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-08-31 |
+| 复核日期 | 2026-09-02 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -38,6 +38,7 @@
 | `conversation_members` | 会话成员（用户/角色）与个人偏好 | 已实现 |
 | `messages` | 会话消息 | 已实现 |
 | `generations` | 一次 Agent 生成的状态机 | 已实现 |
+| `agent_executions` | Agent 执行身份、generation 一对一关系及后续父子树 | E0 已实现 |
 | `event_log` | 持久化事件流，断线恢复的唯一可靠来源 | 已实现 |
 | `queue_jobs` | 会话串行队列的持久化任务 | M4a 已实现 |
 | `invites` | 邀请码与使用次数 | 预留 |
@@ -196,6 +197,31 @@ Agent 角色定义，是"联系人"的数据来源。
 
 查"当前是否有生成在跑"就是查本表 `status IN ('queued','running')`，索引 `ix_generations_conversation_status` 就是为此建的。
 
+## agent_executions
+
+E0 起的 Agent 执行身份权威。`generations` 负责消息流生命周期，execution 负责执行身份、角色、类型、chain、
+attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本表。
+
+| 字段 | 含义 |
+|---|---|
+| `execution_id` | 最长 64 字符的唯一链路标识；日志使用该值，不使用自增主键冒充执行身份 |
+| `parent_execution_id` | 可空的自引用；E0 single/group_role 为空，M4b 子执行才使用 |
+| `conversation_id` | 所属会话；会话硬删除时级联删除执行树 |
+| `generation_id` | 非空且唯一；一次实际 execution 对应一个 generation，generation 删除时级联删除 |
+| `chain_id` | 真人消息触发的 chain，等于 generation `run_id` |
+| `role_id` | 本次实际执行角色；角色真正硬删除时置空，墓碑不改历史执行身份 |
+| `execution_kind` | E0 已使用 `single/group_role`；`orchestrator/subagent` 为 M4b 预留值，不代表已实现 |
+| `dispatch_order` | 子执行在父 execution 内的稳定序号；E0 为空 |
+| `attempt` | 从 1 开始；E0 固定为 1，M4b 重试才递增 |
+| `task_text/context_hint_text` | M4b 子任务输入预留；E0 必须为空，不进入日志 |
+| `status` | `queued/running/completed/failed/stopped/interrupted` |
+| `error_code` | E0 启动/未收口关闭降级使用 `EXECUTION_INTERRUPTED`；其他终态与 generation 稳定错误一致 |
+| `created_at/started_at/ended_at` | execution 生命周期时间，不能从日志时间反推 |
+
+约束：`generation_id` 唯一；`(parent_execution_id, dispatch_order, attempt)` 唯一；按
+`(conversation_id,status)`、`(parent_execution_id,dispatch_order,attempt)` 和 `chain_id` 建索引。E0 不反向解析
+历史 `queue_jobs.payload_json` 来伪造旧 execution；迁移后的新 generation 才保证一对一完整。
+
 ## event_log
 
 持久化的会话事件流。**断线重连的唯一可靠恢复来源**：事件先写本表并提交，再广播给在线连接；内存广播器只服务在线订阅者，不承诺补齐。
@@ -216,14 +242,15 @@ Agent 角色定义，是"联系人"的数据来源。
 
 ## queue_jobs
 
-M4a 单进程会话串行队列的持久化任务状态。内存队列负责当前进程内唤醒和顺序，表记录任务身份、目标角色、
-执行 ID 与终态；重启不恢复调用 Provider，遗留 queued/running 任务统一降级为取消/中断状态。
+M4a 单进程会话串行队列的持久化任务状态。内存队列负责当前进程内唤醒和顺序，表只记录唤醒参数与任务终态；
+execution 身份、目标角色、chain 和 execution kind 必须通过 generation 关联 `agent_executions` 读取。重启不恢复
+调用 Provider，遗留 queued/running 任务统一降级为取消状态，对应 execution 变为 interrupted。
 
 | 字段 | 含义 |
 |---|---|
 | `conversation_id` / `generation_id` | 任务归属 |
 | `status` | `queued` / `running` / `completed` / `failed` / `cancelled` |
-| `payload_json` | `current_message_id`、`target_role_id`、`triggered_by_user_id`、`execution_id`、`chain_id` 与权限类别；不保存 Prompt 或工具原始参数 |
+| `payload_json` | 只保存 `current_message_id`、`triggered_by_user_id`、权限类别和 `request_id`；不复制 execution/role/chain，不保存 Prompt 或工具原始参数 |
 | `attempts` | 已尝试次数，用于重试上限 |
 | `cancel_requested` | 是否已请求取消 |
 | `created_at` / `started_at` / `ended_at` | 生命周期时间戳 |
@@ -296,9 +323,11 @@ M4a 单进程会话串行队列的持久化任务状态。内存队列负责当�
 ```sql
 SELECT m.id, m.sender_type, m.status, m.revision, m.chain_id,
        g.status AS generation_status, g.error_code,
+       x.execution_id, x.execution_kind, x.status AS execution_status,
        (SELECT COUNT(*) FROM event_log e WHERE e.generation_id = g.id) AS event_count
 FROM messages m
 LEFT JOIN generations g ON g.assistant_message_id = m.id
+LEFT JOIN agent_executions x ON x.generation_id = g.id
 WHERE m.conversation_id = 1
 ORDER BY m.id;
 ```

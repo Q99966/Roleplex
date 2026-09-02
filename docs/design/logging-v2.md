@@ -7,7 +7,7 @@
 | 设计版本 | 2 |
 | 当前实现 | [日志、请求关联与异步链路观测](../protocol/internal/observability.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-02 |
 
 本文定义并约束当前日志 v2 的目录、文件职责、轮转方式和字段结构；现状摘要与事实来源见
 `docs/protocol/internal/observability.md`。该版本已于 2026-08-27 经用户人工验收，后续兼容变更必须同步
@@ -277,7 +277,7 @@ generation.created           generation.started
 generation.completed         generation.failed
 generation.cancelled
 generation.skipped           generation.queue_job_completed
-generation.queue_job_failed
+generation.queue_job_failed  execution.interrupted
 provider.built               provider.call_started
 provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed

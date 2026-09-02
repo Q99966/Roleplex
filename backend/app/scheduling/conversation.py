@@ -1,7 +1,7 @@
 """M4a 每会话串行调度器。
 
-内存队列只负责当前进程内的唤醒与顺序；`queue_jobs` 保存任务身份和终态，
-不会被误用成全库写锁。不同会话拥有独立 worker，可以并行执行。
+内存队列只负责当前进程内的唤醒与顺序；`queue_jobs` 保存唤醒参数和任务终态，
+`agent_executions` 保存执行身份。二者都不会被误用成全库写锁，不同会话 worker 可以并行。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 
 from ..db import SessionLocal
 from ..config.logging import log_context
-from ..models import Generation, QueueJob
+from ..models import AgentExecution, Generation, QueueJob
 
 logger = logging.getLogger("roleplex.scheduler.conversation")
 
@@ -51,12 +51,15 @@ class ConversationScheduler:
         """
         await self.shutdown()
         self._runner = runner
-        self._accepting = True
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
             stale_ids = list((await session.scalars(select(Generation.id).where(
                 Generation.status.in_(["queued", "running"]),
             ))).all())
+            # execution 有自己的终态事实；即使旧版本已先把 generation 写成 stopped，活跃 execution 也必须收口。
+            stale_executions = (await session.scalars(select(AgentExecution).where(
+                AgentExecution.status.in_(["queued", "running"]),
+            ).order_by(AgentExecution.id))).all()
             if stale_ids:
                 await session.execute(
                     update(Generation)
@@ -71,21 +74,119 @@ class ConversationScheduler:
                     )
                     .values(status="cancelled", cancel_requested=True, ended_at=now)
                 )
+            if stale_executions:
+                await session.execute(
+                    update(AgentExecution)
+                    .where(AgentExecution.id.in_([execution.id for execution in stale_executions]))
+                    .values(status="interrupted", error_code="EXECUTION_INTERRUPTED", ended_at=now)
+                )
+            if stale_ids or stale_executions:
                 await session.commit()
+            if stale_executions:
+                for execution in stale_executions:
+                    logger.info(
+                        "execution.interrupted",
+                        extra={
+                            "conversation_id": execution.conversation_id,
+                            "generation_id": execution.generation_id,
+                            "chain_id": execution.chain_id,
+                            "execution_id": execution.execution_id,
+                            "role_id": execution.role_id,
+                            "execution_kind": execution.execution_kind,
+                            "status": "cancelled",
+                            "error_code": "EXECUTION_INTERRUPTED",
+                        },
+                    )
+        self._accepting = True
 
     async def shutdown(self) -> None:
         """停止接收新任务，取消当前执行并回收全部会话 worker。"""
         self._accepting = False
-        for active in list(self._active.values()):
+        active_runs = list(self._active.values())
+        for active in active_runs:
             active.task.cancel()
         for worker in list(self._workers.values()):
             worker.cancel()
         if self._workers:
             await asyncio.gather(*self._workers.values(), return_exceptions=True)
+        if active_runs:
+            await self._reconcile_shutdown_runs(active_runs)
         self._queues.clear()
         self._workers.clear()
         self._active.clear()
         self._runner = None
+
+    async def _reconcile_shutdown_runs(self, active_runs: list[_ActiveRun]) -> None:
+        """把服务关闭时被取消的 active run 收敛到 generation 对应终态。
+
+        Args:
+            active_runs：shutdown 开始前由本调度器实际持有的运行任务；不能全库扫描并影响其他调度器。
+        """
+        generation_ids = sorted({active.generation_id for active in active_runs})
+        now = datetime.now(timezone.utc)
+        interrupted: list[AgentExecution] = []
+        async with SessionLocal() as session:
+            generations = {
+                generation.id: generation
+                for generation in (await session.scalars(select(Generation).where(
+                    Generation.id.in_(generation_ids),
+                ))).all()
+            }
+            executions = (await session.scalars(select(AgentExecution).where(
+                AgentExecution.generation_id.in_(generation_ids),
+                AgentExecution.status.in_(["queued", "running"]),
+            ))).all()
+            execution_by_generation = {execution.generation_id: execution for execution in executions}
+            jobs = (await session.scalars(select(QueueJob).where(
+                QueueJob.generation_id.in_(generation_ids),
+                QueueJob.status.in_(["queued", "running"]),
+            ))).all()
+            for generation_id in generation_ids:
+                generation = generations.get(generation_id)
+                execution = execution_by_generation.get(generation_id)
+                if generation is None or execution is None:
+                    continue
+                if generation.status == "completed":
+                    execution.status = "completed"
+                    execution.error_code = None
+                elif generation.status == "failed":
+                    execution.status = "failed"
+                    execution.error_code = generation.error_code or "REQUEST_FAILED"
+                elif generation.status == "stopped":
+                    execution.status = "stopped"
+                    execution.error_code = None
+                else:
+                    # runner 未能在取消边界写终态时，不伪造 stopped 成功收口，明确记录进程中断。
+                    generation.status = "stopped"
+                    generation.ended_at = now
+                    execution.status = "interrupted"
+                    execution.error_code = "EXECUTION_INTERRUPTED"
+                    interrupted.append(execution)
+                execution.ended_at = generation.ended_at or now
+            for job in jobs:
+                generation = generations.get(int(job.generation_id)) if job.generation_id else None
+                job.status = {
+                    "completed": "completed",
+                    "failed": "failed",
+                }.get(generation.status if generation else "", "cancelled")
+                job.cancel_requested = job.status == "cancelled"
+                job.ended_at = now
+            await session.commit()
+
+        for execution in interrupted:
+            logger.info(
+                "execution.interrupted",
+                extra={
+                    "conversation_id": execution.conversation_id,
+                    "generation_id": execution.generation_id,
+                    "chain_id": execution.chain_id,
+                    "execution_id": execution.execution_id,
+                    "role_id": execution.role_id,
+                    "execution_kind": execution.execution_kind,
+                    "status": "cancelled",
+                    "error_code": "EXECUTION_INTERRUPTED",
+                },
+            )
 
     async def enqueue(self, conversation_id: int, job_id: int) -> None:
         """把已提交的持久任务放入所属会话队列。
@@ -131,6 +232,14 @@ class ConversationScheduler:
                 if generation.status == "queued":
                     generation.status = "stopped"
                     generation.ended_at = now
+            await session.execute(
+                update(AgentExecution)
+                .where(
+                    AgentExecution.generation_id.in_(generation_ids),
+                    AgentExecution.status == "queued",
+                )
+                .values(status="stopped", error_code=None, ended_at=now)
+            )
             jobs = (await session.scalars(select(QueueJob).where(
                 QueueJob.generation_id.in_(generation_ids),
                 QueueJob.status.in_(["queued", "running"]),
@@ -197,12 +306,10 @@ class ConversationScheduler:
                 job.ended_at = datetime.now(timezone.utc)
                 await session.commit()
                 return
-            payload = dict(job.payload_json or {})
-            required = (
-                "current_message_id", "target_role_id", "triggered_by_user_id",
-                "execution_id", "chain_id", "allow_dangerous",
-            )
-            if not all(key in payload for key in required):
+            execution = await session.scalar(select(AgentExecution).where(
+                AgentExecution.generation_id == generation.id,
+            ))
+            if execution is None:
                 job.status = "failed"
                 job.ended_at = datetime.now(timezone.utc)
                 generation.status = "failed"
@@ -210,9 +317,33 @@ class ConversationScheduler:
                 generation.ended_at = job.ended_at
                 await session.commit()
                 return
+            payload = dict(job.payload_json or {})
+            required = (
+                "current_message_id", "triggered_by_user_id", "allow_dangerous", "request_id",
+            )
+            execution_valid = (
+                execution.status == "queued"
+                and execution.conversation_id == conversation_id
+                and execution.chain_id == generation.run_id
+                and execution.role_id is not None
+            )
+            if not all(key in payload for key in required) or not execution_valid:
+                job.status = "failed"
+                job.ended_at = datetime.now(timezone.utc)
+                generation.status = "failed"
+                generation.error_code = "REQUEST_FAILED"
+                generation.ended_at = job.ended_at
+                execution.status = "failed"
+                execution.error_code = "REQUEST_FAILED"
+                execution.ended_at = job.ended_at
+                await session.commit()
+                return
             job.status = "running"
             job.started_at = datetime.now(timezone.utc)
             job.attempts += 1
+            execution.status = "running"
+            execution.error_code = None
+            execution.started_at = job.started_at
             await session.commit()
 
         with log_context(
@@ -220,24 +351,24 @@ class ConversationScheduler:
             user_id=payload["triggered_by_user_id"],
             conversation_id=conversation_id,
             generation_id=job.generation_id,
-            chain_id=payload["chain_id"],
-            execution_id=payload["execution_id"],
-            role_id=payload["target_role_id"],
+            chain_id=execution.chain_id,
+            execution_id=execution.execution_id,
+            role_id=execution.role_id,
         ):
             task = asyncio.create_task(
                 self._runner(
                     generation_id=int(job.generation_id),
                     conversation_id=conversation_id,
                     current_message_id=int(payload["current_message_id"]),
-                    target_role_id=int(payload["target_role_id"]),
+                    target_role_id=int(execution.role_id),
                     triggered_by_user_id=int(payload["triggered_by_user_id"]),
                     allow_dangerous=bool(payload["allow_dangerous"]),
-                    execution_id=str(payload["execution_id"]),
-                    execution_kind=str(payload.get("execution_kind", "group_role")),
+                    execution_id=execution.execution_id,
+                    execution_kind=execution.execution_kind,
                 )
             )
         active = _ActiveRun(
-            chain_id=str(payload["chain_id"]),
+            chain_id=execution.chain_id,
             generation_id=int(job.generation_id),
             task=task,
         )
@@ -255,8 +386,17 @@ class ConversationScheduler:
         async with SessionLocal() as session:
             job = await session.get(QueueJob, job_id)
             generation = await session.get(Generation, job.generation_id) if job and job.generation_id else None
+            execution = await session.scalar(select(AgentExecution).where(
+                AgentExecution.generation_id == job.generation_id,
+            )) if job and job.generation_id else None
             if job is None:
                 return
+            finished_at = datetime.now(timezone.utc)
+            if generation is not None and generation.status not in {"completed", "failed", "stopped"}:
+                # runner 违反 reducer 契约直接返回时必须收敛三张状态表，不能留下 queued/running 假活跃记录。
+                generation.status = "failed"
+                generation.error_code = "REQUEST_FAILED"
+                generation.ended_at = finished_at
             if generation is None:
                 final_status = "failed"
             else:
@@ -267,7 +407,19 @@ class ConversationScheduler:
                 }.get(generation.status, "failed")
             job.status = final_status
             job.cancel_requested = job.cancel_requested or final_status == "cancelled"
-            job.ended_at = datetime.now(timezone.utc)
+            job.ended_at = finished_at
+            if execution is not None:
+                execution.status = {
+                    "completed": "completed",
+                    "failed": "failed",
+                    "cancelled": "stopped",
+                }[final_status]
+                execution.error_code = (
+                    generation.error_code or "REQUEST_FAILED"
+                    if generation and final_status == "failed"
+                    else None
+                )
+                execution.ended_at = job.ended_at
             await session.commit()
             logger.info(
                 "generation.queue_job_completed",
@@ -275,9 +427,9 @@ class ConversationScheduler:
                     "request_id": payload.get("request_id"),
                     "conversation_id": conversation_id,
                     "generation_id": job.generation_id,
-                    "chain_id": payload["chain_id"],
-                    "execution_id": payload["execution_id"],
-                    "role_id": payload["target_role_id"],
+                    "chain_id": execution.chain_id if execution else None,
+                    "execution_id": execution.execution_id if execution else None,
+                    "role_id": execution.role_id if execution else None,
                     "status": "cancelled" if final_status == "cancelled" else (
                         "success" if final_status == "completed" else "failed"
                     ),
@@ -298,10 +450,17 @@ class ConversationScheduler:
             job.status = "failed"
             job.ended_at = now
             generation = await session.get(Generation, job.generation_id) if job.generation_id else None
+            execution = await session.scalar(select(AgentExecution).where(
+                AgentExecution.generation_id == job.generation_id,
+            )) if job.generation_id else None
             if generation is not None and generation.status in {"queued", "running"}:
                 generation.status = "failed"
                 generation.error_code = "REQUEST_FAILED"
                 generation.ended_at = now
+            if execution is not None and execution.status in {"queued", "running"}:
+                execution.status = "failed"
+                execution.error_code = "REQUEST_FAILED"
+                execution.ended_at = now
             await session.commit()
 
 

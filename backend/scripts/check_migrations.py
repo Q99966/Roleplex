@@ -76,6 +76,12 @@ def check_sqlite_foreign_keys(sqlite_path: Path) -> list[str]:
     expected = {
         "conversations": {("orchestrator_role_id", "roles")},
         "tool_calls": {("role_id", "roles")},
+        "agent_executions": {
+            ("parent_execution_id", "agent_executions"),
+            ("conversation_id", "conversations"),
+            ("generation_id", "generations"),
+            ("role_id", "roles"),
+        },
     }
     failures: list[str] = []
     engine = create_engine(f"sqlite:///{sqlite_path.as_posix()}")
