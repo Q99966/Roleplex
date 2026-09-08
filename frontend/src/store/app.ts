@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, Conversation, getPasswordResetRequired, Role, setPasswordResetRequired, setToken, User, ModelConfig, WorldSummary } from '../api/client'
+import { api, Conversation, getPasswordResetRequired, Role, setPasswordResetRequired, setToken, User, ModelConfig, WorldSummary, WorkspaceBinding, WorkspaceCapabilities } from '../api/client'
 import { navigateToConversation } from '../router'
 
 type AppState = {
@@ -17,6 +17,8 @@ type AppState = {
   /** 回收站中的会话，仅在打开回收站时按需加载。 */
   deletedConversations: Conversation[]
   modelConfigs: ModelConfig[]
+  workspaceBindings: WorkspaceBinding[]
+  workspaceCapabilities: WorkspaceCapabilities | null
   activeConversationId: number | null
   loading: boolean
   error: string | null
@@ -28,6 +30,11 @@ type AppState = {
   loadWorkspace: () => Promise<void>
   loadWorlds: () => Promise<void>
   switchWorld: (name: string) => Promise<void>
+  loadWorkspaceBindings: () => Promise<void>
+  createWorkspaceBinding: (body: Parameters<typeof api.createWorkspace>[0]) => Promise<void>
+  updateWorkspaceBinding: (id: number, body: Parameters<typeof api.updateWorkspace>[1]) => Promise<void>
+  validateWorkspaceBinding: (id: number) => Promise<void>
+  deleteWorkspaceBinding: (id: number) => Promise<void>
 
   // 模型配置操作
   createModelConfig: (body: Parameters<typeof api.createModelConfig>[0]) => Promise<void>
@@ -59,6 +66,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   conversations: [],
   deletedConversations: [],
   modelConfigs: [],
+  workspaceBindings: [],
+  workspaceCapabilities: null,
   activeConversationId: null,
   loading: true,
   error: null,
@@ -137,7 +146,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: () => {
     setToken(null)
     setPasswordResetRequired(false)
-    set({ user: null, passwordResetRequired: false, roles: [], roleDirectory: {}, conversations: [], deletedConversations: [], modelConfigs: [], activeConversationId: null })
+    set({ user: null, passwordResetRequired: false, roles: [], roleDirectory: {}, conversations: [], deletedConversations: [], modelConfigs: [], workspaceBindings: [], workspaceCapabilities: null, activeConversationId: null })
   },
 
   /** 加载世界列表；兼容数据库模式仍显示当前世界，但切换控件保持禁用。 */
@@ -178,17 +187,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       window.alert(message)
     }
   },
+
+  /** 重新读取当前 World 的能力与 Workspace Binding；切换 World 后不得复用旧列表。 */
+  loadWorkspaceBindings: async () => {
+    if (!get().user?.is_owner) {
+      set({ workspaceBindings: [], workspaceCapabilities: null })
+      return
+    }
+    const [capabilities, bindings] = await Promise.all([
+      api.workspaceCapabilities(),
+      api.workspaces(),
+    ])
+    set({ workspaceCapabilities: capabilities, workspaceBindings: bindings })
+  },
+  createWorkspaceBinding: async (body) => {
+    await api.createWorkspace(body)
+    await get().loadWorkspaceBindings()
+  },
+  updateWorkspaceBinding: async (id, body) => {
+    await api.updateWorkspace(id, body)
+    await get().loadWorkspaceBindings()
+  },
+  validateWorkspaceBinding: async (id) => {
+    await api.validateWorkspace(id)
+    await get().loadWorkspaceBindings()
+  },
+  deleteWorkspaceBinding: async (id) => {
+    await api.deleteWorkspace(id)
+    await Promise.all([get().loadWorkspaceBindings(), get().loadWorkspace()])
+  },
   
   // 保留已有的当前会话，否则将最新会话设为当前会话。
   loadWorkspace: async () => {
     try {
       const user = get().user
-      const [roles, conversations, modelConfigs] = await Promise.all([
+      const [roles, conversations, modelConfigs, workspaceData] = await Promise.all([
         api.roles(),
         api.conversations(),
         user?.is_owner 
           ? api.modelConfigs().catch(() => []) 
-          : Promise.resolve([])
+          : Promise.resolve([]),
+        user?.is_owner
+          ? Promise.all([api.workspaceCapabilities(), api.workspaces()]).catch(() => null)
+          : Promise.resolve(null),
       ])
       // 服务端会连墓碑一起返回：查找表保留全部角色用于历史消息展示，
       // 列表只保留存活角色，避免墓碑出现在侧边栏和成员选择器里。
@@ -197,6 +238,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         roleDirectory: Object.fromEntries(roles.map((role) => [role.id, role])),
         conversations,
         modelConfigs,
+        workspaceCapabilities: workspaceData?.[0] ?? null,
+        workspaceBindings: workspaceData?.[1] ?? [],
       })
       
       // 如果 activeConversationId 不存在或在会话列表中找不到，则回到工作台空态

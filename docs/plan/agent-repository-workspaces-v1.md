@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端、工具安全与测试维护者 |
-| 状态 | W0 已确认；E0 已实现并通过自动验证，等待人工验收；W1a 尚未开始 |
+| 状态 | W0、E0 已完成并经人工验收；W1a Owner 绝对根版本已实现并通过自动/真实验证，等待人工验收 |
 | 计划版本 | 1 |
 | 上游计划 | [上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-08 |
 
 本文定义 Orchestrator fan-out 之前必须具备的代码协作基础：持久 execution 身份、Owner 授权的本地 Git
 仓库、受边界约束的文件/Git 工具、命令执行和每次写执行独占的 Git worktree。本文是这些能力的范围、
@@ -17,9 +17,9 @@
 
 ## 一、调整原因与当前事实
 
-当前 Agent 循环和工具领域事件已经存在，角色也能保存 `builtin_tools`/MCP 配置，但正常生成链路实际向
-`guard_tools` 传入空工具集合。MCP manager 只完成生命周期风险验证，尚未接入产品工具；项目也没有仓库
-绑定、文件工具、命令执行或 Git worktree。此时先实现 M4b，只能并行生成文字意见，不能形成“读取代码 →
+当前 Agent 循环和工具领域事件已经存在，W1a 已把当前 World Workspace Binding 与原生文件工具接入单角色
+链路；MCP manager 仍只完成生命周期风险验证，项目尚没有命令执行、仓库绑定或 Git worktree。此时先实现
+M4b 仍只能并行生成有限文字/文件意见，不能形成“读取代码 →
 修改 → 测试 → 比较 diff → 汇总”的真实协作闭环。
 
 2026-09-01 经两轮评审后确认把实施顺序拆细为：
@@ -48,8 +48,9 @@ M4b 的 planning/final 与并行子任务在 W3 验收之后实现。不得把�
 
 - **World**：现有物理数据目录、数据库和加密密钥边界。它继续承载用户、角色、会话和消息，不新增通用
   `workspace_id`，也不改变 ContextBuilder 的世界 scope。
-- **Workspace Binding**：当前 World 的 Owner 在后端允许根目录内登记的一个工作目录。列表和会话绑定保存在
-  当前 World 数据库，切换 World 后必须重新读取；它不是跨 World 全局资源。
+- **Workspace Binding**：当前 World 的 Owner 在前端登记的一个主机绝对工作目录。列表和会话绑定保存在
+  当前 World 数据库；一个 World 可以拥有多个根目录各不相同的 Workspace，切换 World 后必须重新读取。
+  它不是跨 World 全局资源，也不受部署级目录白名单限制。
 - **Repository Binding**：W2a 为某个 Workspace Binding 增加的 Git 身份与 base ref；不是另一套会话工作区。
 - **Execution Workspace**：一次 Agent execution 对 Workspace Binding 的租用记录。W1 先直接使用已登记的
   `managed_directory`；W3 才增加该 Repository 的独立 `git_worktree`。两者不能回退到后端 cwd。
@@ -85,7 +86,8 @@ backend/app/
 ```
 
 服务端执行层统一组合“触发用户、角色配置、会话绑定、execution/workspace 状态和审批”；工具适配层不能
-自行扩大权限。前端只通过 REST/WS 管理 binding、审批和 retained worktree，不直接访问宿主文件路径。
+自行扩大权限。前端只通过 REST/WS 管理 binding、审批和 retained worktree；绝对根只向当前 World Owner
+显示和提交，前端不直接读写宿主文件。
 
 ## 三、W0：工作区与 Shell 设置契约
 
@@ -93,7 +95,7 @@ W0 是当前计划确认阶段，只更新设计、配置契约和测试门槛�
 
 | 设置 | 首版规则 |
 |---|---|
-| allowed roots | 后端部署配置维护稳定 root key → 规范绝对路径；前端只能在允许根内登记子目录 |
+| workspace root | 每个 Workspace 由当前 World Owner 在前端手动输入绝对目录；后端规范化并验证，不设部署级 allowed-root 白名单 |
 | workspace kind | W1 只允许 `managed_directory`；`git_repository/git_worktree` 到 W2a/W3 才开放 |
 | shell kind | 部署配置允许 `auto/bash/powershell`，后端解析实际可执行文件；Owner/模型不能保存任意 executable |
 | approval mode | 任意 Shell 固定 `per_call`；不能由角色、Owner 身份、Orchestrator 或 Prompt 改成自动批准 |
@@ -109,13 +111,13 @@ W0 同时冻结分层工具名：W1a 的 `workspace_list/read/write`、W1b 的 `
 绑定 execution/workspace，并在审批前不创建子进程。Shell 文本属于 Owner-only 业务数据，只能进入审批记录
 和实际 shell stdin，不能进入进程标题、日志、工具摘要、E2E summary 或测试失败文件。
 
-部署配置拥有 allowed roots、允许的 shell kind 和所有硬上限；角色配置只决定是否暴露工具，Owner 每次
+部署配置拥有允许的 shell kind 和所有硬上限；Workspace 根由当前 World Owner 配置，角色配置只决定是否暴露工具，Owner 每次
 审批只决定“这份 script 是否执行”，不能修改 cwd、环境、shell 或硬上限。前端能力接口可以显示解析后的
 shell 类型和限制，但不返回可执行文件绝对路径。
 
-本项目开发和 E2E 的唯一 allowed root 已由用户指定为 `/home/chen/workspace/testworkspace`。该路径属于本地
-开发配置，不硬编码进产品默认值；W1 实现前应通过配置赋予稳定 root key。Roleplex 源码目录
-`/home/chen/workspace/Roleplex` 不在允许根内，不能被前端登记为工作区。
+`/home/chen/workspace/testworkspace` 只用于本项目开发和 E2E，目的是在验证 containment 失效时降低误改
+Roleplex 源码的风险；它不是产品默认值或所有用户的工作区上界，只记录在测试配置与测试文档中。产品 Owner
+可以登记多个彼此无关的绝对目录。测试仍禁止把 `/home/chen/workspace/Roleplex` 登记为工作区。
 
 已按数据库测试目录风格创建第一组空工作区夹具：
 
@@ -128,7 +130,7 @@ shell 类型和限制，但不返回可执行文件绝对路径。
     └── default/
 ```
 
-它们不属于 Git 仓库，也不包含项目源码。后续测试每轮使用新 stamp 创建相同结构，World 名与工作区相对路径
+它们不属于 Git 仓库，也不包含项目源码。后续测试每轮使用新 stamp 创建相同结构，World 名与测试工作区路径
 一一对应；不能复用上一轮目录或把未带 stamp 的宽目录交给 Shell。
 
 W0 经确认后，才允许开始 E0；后续若修改 workspace root、审批模式、环境继承或清理边界，必须先回到本文
@@ -150,10 +152,10 @@ E0 单独验收：
 - SQLite 升降级、外键检查和 PostgreSQL 离线 SQL 通过；
 - E0 完成后先人工验收，不顺带开放任何文件或命令工具。
 
-E0 已于 2026-09-02 完成实现：新增 `0005_agent_executions`，single/group_role 创建和 scheduler 生命周期已
-改为读取规范化 execution；queue payload 不再复制 execution/role/chain/kind。后端完整回归
+E0 已于 2026-09-02 完成实现并经用户人工验收：新增 `0005_agent_executions`，single/group_role 创建和
+scheduler 生命周期已改为读取规范化 execution；queue payload 不再复制 execution/role/chain/kind。后端完整回归
 `101 passed, 3 skipped, 8 deselected`，SQLite 升降级、ORM metadata、外键检查和 PostgreSQL 离线 SQL 均通过；
-fake managed-world E2E 1 passed，world-switch 后 alpha 的 active execution 数为 0。当前等待用户人工验收，
+fake managed-world E2E 1 passed，world-switch 后 alpha 的 active execution 数为 0。
 真实 DeepSeek managed-world E2E 2 passed，两个 group_role 和两个 single execution 全部 completed、active 为 0。
 未创建 Workspace Binding，也未开放任何文件、命令或 Shell 工具。
 
@@ -169,14 +171,13 @@ W1a 先新增 `workspace_bindings`、`execution_workspaces`，并给 conversatio
 | `id` | 标准整数主键；只在当前 World 数据库内有意义 |
 | `created_by` | 当前 World Owner；Owner 删除时级联 |
 | `display_name` | Owner 设置的可读名称；同一 Owner 的 active 名称唯一 |
-| `allowed_root_key` | 指向部署配置中的允许根，不保存模型传入或未经批准的绝对根 |
-| `relative_path` | 允许根下的规范相对目录；拒绝绝对路径、`..`、符号链接逃逸和空值 |
+| `root_path` | Owner 从前端输入、经后端 canonicalize 的绝对工作目录；当前 World 内唯一，仅向 Owner 返回 |
 | `workspace_kind` | W1 固定 `managed_directory` |
 | `file_tools_enabled` | W1a 原生文件工具开关，默认 false |
 | `basic_commands_enabled` | W1b 结构化命令开关，默认 false；W1b 完成前不可启用 |
 | `shell_enabled` | W1c 任意 Shell 开关，默认 false；W1c 完成前不可启用 |
 | `active` | 禁用后不能新绑定会话或创建 execution lease，历史记录保留 |
-| `last_validated_at` | 后端最近一次确认目录仍存在且位于允许根内的时间 |
+| `last_validated_at` | 后端最近一次确认规范绝对根仍存在且可用的时间 |
 | `created_at/updated_at` | 生命周期时间 |
 
 conversations 的 `workspace_binding_id` 使用 `ON DELETE SET NULL`，绑定/解绑使用 `expected_revision` 乐观锁。
@@ -189,13 +190,13 @@ conversations 的 `workspace_binding_id` 使用 `ON DELETE SET NULL`，绑定/�
 | `execution_id` | 非空、唯一，外键到 `agent_executions.execution_id` |
 | `workspace_binding_id` | 非空，外键到当前 World 的 Workspace Binding |
 | `workspace_kind` | W1 固定 `managed_directory`，表示直接租用已登记目录 |
-| `relative_path_snapshot` | execution 开始时捕获的相对路径；运行中更改绑定不能把 cwd 切到别处 |
+| `root_path_snapshot` | execution 开始时捕获的规范绝对根；运行中更改绑定不能把 cwd 切到别处，也不得进入日志 |
 | `status` | `creating/ready/retained/cleaned/failed` |
 | `error_code` | 创建、命令或清理失败的稳定错误码 |
 | `created_at/ended_at/cleaned_at` | 生命周期时间 |
 
-Owner 可在前端设置中登记允许根内的现有子目录，也可以请求创建一个新的空子目录；创建只接受规范相对名称，
-后端在精确目标不存在时执行一次目录创建，不能覆盖或接管已有非空目录。登记现有目录需要醒目确认其中内容
+Owner 可在前端设置中手动输入绝对路径登记现有目录，也可以请求创建一个新的空目录；后端 canonicalize
+路径，创建时只在精确目标不存在且父目录存在时执行一次目录创建，不能覆盖已有目标。登记现有目录需要醒目确认其中内容
 可能被外部模型读取或被批准的 Shell 修改。
 
 进程重启时不恢复工具或 Provider 调用：运行中的 execution 变 interrupted，execution lease 标记 retained 供
@@ -203,11 +204,11 @@ Owner 检查，但 Workspace Binding 和物理目录继续存在，不猜测文�
 
 ### 5.2 前端设置与当前 World 列表
 
-现有设置弹窗从单一“模型密钥管理”调整为语义明确的 `模型配置 / 工作区` 两个页签，继续复用当前深色、紧凑
-视觉体系，不引入新 UI 库或全局样式系统。工作区页的标志性交互是一条只读边界轨迹：
+现有设置中心已包含“大模型密钥 / 运行世界与存储 / 账号与安全”三个页签；W1a 在其中新增“工作区”页签，
+继续复用当前深色、紧凑视觉体系，不引入新 UI 库或全局样式系统。工作区页的标志性交互是一条只读边界轨迹：
 
 ```text
-当前 World → Allowed Root → Workspace Binding
+当前 World → Workspace Binding → 绝对根目录
 ```
 
 它让 Owner 在创建或批准 Shell 前始终看见命令属于哪个 World 和目录边界，不用依靠绝对路径猜测。
@@ -216,19 +217,19 @@ Owner 检查，但 Workspace Binding 和物理目录继续存在，不猜测文�
 
 - 顶部显示当前 World；切换 World 后清空旧列表状态并重新请求，不能短暂展示前一 World 的工作区。
 - 当前 World 可用工作区列表：显示名称、`managed_directory` 类型、available/unavailable/busy/disabled 状态、
-  allowed root 标签、规范相对路径、文件/基础命令/Shell 三层能力状态、最近复核时间和会话绑定安全摘要。
-- Owner-only 主操作“添加工作区”：选择后端允许 root，输入显示名与相对子目录，可选择登记现有目录或创建
-  空目录；提交前显示“文件内容可能发送给模型、获批 Shell 可以修改目录”的明确说明。
+  规范绝对根、文件/基础命令/Shell 三层能力状态、最近复核时间和会话绑定安全摘要；绝对根只向 Owner 显示。
+- Owner-only 主操作“添加工作区”：输入显示名与绝对目录，可选择登记现有目录或创建空目录；提交前显示
+  “文件内容可能发送给模型、获批 Shell 可以修改目录”的明确说明。
 - 行操作包括复核、启用/禁用、当前已实现能力的开关和解除登记。W1a/W1b 不能提前显示可用的 Shell 开关；
   解除登记只删除数据库绑定并让会话 FK 置空，W1 不删除物理目录。
-- Guest 不显示设置入口，也不能通过 API 枚举工作区、allowed root、路径、Shell 状态或绑定关系。
+- Guest 不显示设置入口，也不能通过 API 枚举工作区、绝对路径、Shell 状态或绑定关系。
 - 会话创建/设置只列出当前 World 中 active + available 的 Workspace Binding；W1 只允许 single 会话选择，
   群聊入口显示“后续阶段开放”而不发送预留字段。
 
-列表需要 loading、空态、复核失败和 allowed root 不可用状态；按钮使用真实 button 语义、可见焦点、完整
+列表需要 loading、空态和根目录复核失败状态；按钮使用真实 button 语义、可见焦点、完整
 accessible name，状态不能只靠颜色。移动端保持单列信息层级，危险说明和 Owner 审批不能藏在 hover 中。
 
-API 领域按资源拆分：Owner 管理 Workspace Binding 与 allowed-root 能力视图；会话端只通过 revision 绑定已
+API 领域按资源拆分：Owner 管理 Workspace Binding；会话端只通过 revision 绑定已
 登记 workspace。具体 JSON、错误码和删除语义在 W1 编码前写入公开 REST/WS 协议，不能从前端表单倒推契约。
 
 ### 5.3 W1a：原生目录、读取与写入
@@ -262,7 +263,7 @@ Roleplex secret 目录进入系统拒绝集。路径组件、深度和列表条�
 耗时和稳定错误码。崩溃残留临时文件必须同时匹配 W1a 固定前缀、workspace 与 execution 后才能清理。
 
 三个工具都要求 single 会话、Owner 触发、active 角色显式启用、会话绑定 active/available workspace、
-execution lease ready，并在每次操作前重新解析 allowed root + relative path。文件读写仍属于 dangerous：
+execution lease ready，并在每次操作前重新解析 Workspace 的规范绝对根。文件读写仍属于 dangerous：
 Owner 对角色和 workspace 的显式启用是授权，W1a 不增加逐文件审批；Guest 和群聊均看不到工具。
 
 W1a 的最小真实流程固定为：列根目录 → 新建 `hello.txt` → 读取并取得 hash → 携带 hash 更新 → 再读确认 →
@@ -325,7 +326,7 @@ Owner。脚本只在生成 pending、Owner 展示和批准后执行三个受控�
 ```text
 模型请求 Shell
 → 服务端二次授权并持久化 pending（此时不得创建子进程）
-→ WS/UI 向 Owner 展示完整脚本、World、allowed root 标签和 workspace
+→ WS/UI 向 Owner 展示完整脚本、World、workspace 和规范绝对根
 → Owner approve/reject，或 5 分钟 expired
 → approve 后启动唯一 shell 并有界返回 stdout/stderr/exit code
 → 工具结果回到同一 Agent 循环，角色基于真实结果收尾
@@ -360,15 +361,26 @@ W1c 只在 W1a/W1b 已通过
 
 - **W1a Red**：当前 World 列表、路径逃逸、exclusive 新建、两个相同旧 hash 并发更新只有一个成功、外部改动
   后 revision 冲突、Guest/群聊不可见测试先失败；
-  Green 后 fake managed-world 在 alpha/beta 各自工作区完成写读且互不可见。
+  Green 后 fake managed-world 在 alpha/beta 各自工作区完成写读且互不可见；随后通过 W1a 专用真实 Provider
+  managed-world 命令，在独立 default World 和对应外部工作区完成真实工具发现、调用、文件结果回读与回答。
 - **W1b Red**：command allowlist、参数拒绝、cwd、最小环境、非零 exit、截断、timeout/取消/进程树先失败；
   Green 后不得出现任意 shell fallback。
 - **W1c Red**：pending 前无进程、digest 绑定、reject/expire、修改后重批、重启不自动执行、Shell stdin/no-profile
   和停止传播先失败；Green 后 fake 浏览器完成完整审批闭环。
 
-W1c 最后使用独立真实 Provider 命令显式验证一次“请求简单 Shell → Owner 审批 → 根据真实输出回答”；运行前
+W1a 的真实 Provider managed-world 是本切片必过验收，不得以 fake 结果替代或推迟到 W1c。W1c 仍需使用独立
+真实 Provider 命令显式验证一次“请求简单 Shell → Owner 审批 → 根据真实输出回答”；每次真实测试运行前
 说明联网和费用，使用外部空测试目录并关闭 trace/video。W1a、W1b、W1c 各自人工验收和独立提交；W1c
 通过前不得开始 Repository Binding、Git、补丁或 worktree。
+
+W1a 实现验证（2026-09-02，2026-09-08 按 Owner 绝对根契约复核）：新增 `0006_world_workspaces`、Owner
+工作区 REST、single 会话 revision 绑定、设置中心第四页签、execution lease 和 `workspace_list/read/write`。
+后端全量回归 `107 passed, 3 skipped, 8 deselected`；迁移通过 SQLite 升降级、ORM metadata、外键完整性和 PostgreSQL 离线 SQL。普通浏览器
+E2E `20 passed`；fake managed-world 在 alpha/beta 各自外部工作区完成五次工具调用、hash 更新和切换隔离；
+真实 DeepSeek managed-world 专用 W1a smoke 通过，实际完成 list → write → read → write → read 与最终回答，
+Provider 共 5 次调用，汇总 input/output/total/cache hit=`8811/954/9765/7168`，实际脱敏 base URL 为
+`https://api.deepseek.com`。文件名、两版内容和宿主绝对路径未进入结构化日志。当前等待用户人工验收，
+不得开始 W1b。
 
 ## 六、W2a：Repository Binding
 
@@ -387,8 +399,8 @@ W1c 最后使用独立真实 Provider 命令显式验证一次“请求简单 Sh
 | `created_at/updated_at` | 生命周期时间 |
 
 约束至少包括 `UNIQUE(workspace_binding_id)` 和当前 World 内的 `UNIQUE(git_common_dir)`。实际 root path 每次
-由 Workspace Binding 的 `allowed_root_key + relative_path` 重新解析；未来 World 备份或分发到另一台机器时，
-allowed root 不存在即标记 unavailable，必须由接收方 Owner 显式重新绑定，不得尝试旧主机绝对路径，也不得
+由 Workspace Binding 的 `root_path` 重新解析；未来 World 备份或分发到另一台机器时，根目录不存在即标记
+unavailable，必须由接收方 Owner 显式重新配置，不得猜测或尝试其他路径，也不得
 把外部仓库内容塞进 World 包。
 
 会话继续只绑定一个 Workspace Binding，不新增第二个 repository FK。Owner 把已登记 workspace 复核为 Git
@@ -399,8 +411,8 @@ base commit，不能被中途切换到另一目录或仓库。
 
 Owner 把 Workspace Binding 启用为仓库时，服务端必须：
 
-1. 只读取已登记 binding，不接受新的绝对路径、`~`、环境变量、glob 或命令替换；
-2. 重新解析 allowed root + relative path，确认目录存在、仍在允许根内且是 Git worktree；
+1. 只读取已登记 binding，不接受模型传入路径、`~`、环境变量、glob 或命令替换；
+2. 重新 canonicalize `root_path`，确认目录存在、与登记根一致且是 Git worktree；
 3. 使用无 shell 的 Git argv 读取 `--show-toplevel`、common dir、HEAD 和 worktree 状态；
 4. 检测 bare repo、嵌套/重复绑定、Git 安全目录错误和当前 dirty 状态；
 5. 只保存必要路径事实，日志仅记录 repository ID、路径不可逆指纹、状态和错误码。
@@ -459,7 +471,7 @@ W3 通过迁移 `0009_git_execution_workspaces` 扩展 W1 已有的 `execution_w
 |---|---|
 | `repository_binding_id` | 外键到绑定仓库；禁用绑定不删除历史 workspace |
 | `workspace_kind` | 在既有 `managed_directory` 外增加 `git_worktree` |
-| `relative_path_snapshot` | W3 对 worktree 捕获 Roleplex 管理根下的相对目录，不保存任意删除目标 |
+| `root_path_snapshot` | W3 对 worktree 捕获 Roleplex 管理目录下的规范绝对根；不进入日志，也不作为宽删除目标 |
 | `base_commit` | 创建时解析的完整 commit ID |
 | `branch_name` | 服务端生成的 `roleplex/<chain>/<execution>` 分支名；只用于本地工作树 |
 | `status` | 在既有状态中增加 `dirty`；仍由同一 workspace 行记录生命周期 |
@@ -534,7 +546,7 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 
 ### 11.1 后端与安全测试
 
-- W1a/W1b/W1c 每轮只登记 allowed root 内带 stamp 的空测试目录；W2a/W2b/W3 才增加临时 Git 仓库和 worktree，
+- W1a/W1b/W1c 每轮只登记 `/home/chen/workspace/testworkspace` 下带 stamp 的空测试目录；W2a/W2b/W3 才增加临时 Git 仓库和 worktree，
   不读取真实用户文件或 Roleplex 源码；
 - 覆盖绝对路径、`..`、符号链接/junction 逃逸、`.git`、敏感文件、二进制、大文件和输出截断；
 - 覆盖 Owner/Guest、角色工具配置、会话 repository 绑定和执行时二次授权矩阵；
@@ -551,8 +563,7 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 - W1a Playwright 覆盖设置页当前 World 列表、single 会话绑定和角色 list/read/write；W1b 再覆盖结构化命令的
   cwd/输出/超时/取消；W1c 最后覆盖 Shell pending/approve/reject/expire 和返回结果。三个切片均不创建 Git 仓库。
 - W1a-W1c fake/real 浏览器测试分别使用带时间戳的独立测试 World 和独立 workspace 目录；World 路径从项目根
-  解析，workspace 路径从 allowed-root 配置解析，并分别校验：World 位于项目 `data/`，workspace 位于配置的
-  `/home/chen/workspace/testworkspace` allowed root。
+  解析，测试 workspace 绝对路径固定落在 `/home/chen/workspace/testworkspace`，但该目录不进入产品默认配置。
   禁止出现 `backend/..data`、workspace 落入项目目录或 canonical path 逃逸。测试账号、World 和 workspace
   使用同一 stamp 可追溯，最近若干轮保留供人工登录检查，更早轮次在下一轮开始时清理。
 - W2a/W2b/W3 再使用测试创建的临时仓库，通过真实前后端完成 Owner 注册/绑定、读取、搜索、创建 worktree、应用
@@ -560,7 +571,10 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 - 关键失败路径分层覆盖：W1a 为 World/Guest/路径/hash 隔离，W1b 为 command/参数/进程边界，W1c 为审批与
   任意 Shell；W2a/W2b/W3 再覆盖宿主路径隐藏、敏感文件、dirty base 和 worktree 清理保护。
 - 普通浏览器 E2E 使用 fake provider，不能让测试访问项目仓库或真实用户目录；
-- W1a/W1b 使用 fake Provider 固定输出；W1c 才使用独立真实 Provider 命令验证一次简单 Shell 闭环。
+- W1a 同时要求 fake managed-world 和专用真实 Provider managed-world：fake 固定覆盖路径、权限、hash 并发与
+  World 隔离，真实测试必须由模型实际调用 `workspace_list/read/write`，并从工具返回的真实文件内容形成回答。
+  两层分别使用同 stamp 的独立 World 与外部 workspace，不能复用上一轮目录，也不能让测试接触 Roleplex 源码。
+- W1b 的确定性进程边界以 fake Provider 为主；W1c 另用独立真实 Provider 命令验证一次简单 Shell 闭环。
   W2a/W2b/W3 的安全和 Git 生命周期以 fake/临时仓库为主。M4b 接入后再用 real-world 验证真实模型在临时
   仓库完成“读取 → 补丁 → 测试 → diff → 汇总”。所有
   真实测试运行前说明联网和费用，关闭 trace/video，凭据不进入浏览器或 workspace。
@@ -569,7 +583,8 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 
 - **W0**：设置、工具 schema、权限、日志和测试门槛完成文档确认，不产生产品提交。
 - **E0**：持久 execution 身份和重启降级通过，人工验收后独立提交。
-- **W1a**：当前 World 工作区列表、single 绑定、原生 list/read/write、原子写与 hash 冲突通过，独立提交。
+- **W1a**：当前 World 工作区列表、single 绑定、原生 list/read/write、原子写与 hash 冲突通过；fake 与真实
+  Provider managed-world 均完成独立目录的工具闭环，人工验收后独立提交。
 - **W1b**：结构化 command allowlist、cwd/环境/输出/超时/取消/进程树通过，独立提交。
 - **W1c**：Shell 审批、stdin/no-profile、拒绝/过期/重启和真实 Provider smoke 通过，独立提交。
 - **W2a**：Owner 仓库注册/复核/绑定、主机迁移 unavailable 和 dirty 提示通过，独立提交。

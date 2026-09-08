@@ -193,7 +193,7 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
     return
   }
 
-  if (event.type === 'member_updated') {
+  if (event.type === 'member_updated' || event.type === 'conversation_updated') {
     // 其他浏览器或窗口调整成员时刷新共享会话；服务端 revision 决定最终状态。
     void useAppStore.getState().loadWorkspace()
   }

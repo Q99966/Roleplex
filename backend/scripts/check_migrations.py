@@ -74,13 +74,25 @@ def check_sqlite_foreign_keys(sqlite_path: Path) -> list[str]:
     from sqlalchemy import create_engine
 
     expected = {
-        "conversations": {("orchestrator_role_id", "roles")},
-        "tool_calls": {("role_id", "roles")},
+        "tool_calls": {
+            ("role_id", "roles"),
+            ("execution_id", "agent_executions"),
+            ("workspace_binding_id", "workspace_bindings"),
+        },
         "agent_executions": {
             ("parent_execution_id", "agent_executions"),
             ("conversation_id", "conversations"),
             ("generation_id", "generations"),
             ("role_id", "roles"),
+        },
+        "conversations": {
+            ("orchestrator_role_id", "roles"),
+            ("workspace_binding_id", "workspace_bindings"),
+        },
+        "workspace_bindings": {("created_by", "users")},
+        "execution_workspaces": {
+            ("execution_id", "agent_executions"),
+            ("workspace_binding_id", "workspace_bindings"),
         },
     }
     failures: list[str] = []

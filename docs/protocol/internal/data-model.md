@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-08 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -39,6 +39,8 @@
 | `messages` | 会话消息 | 已实现 |
 | `generations` | 一次 Agent 生成的状态机 | 已实现 |
 | `agent_executions` | Agent 执行身份、generation 一对一关系及后续父子树 | E0 已实现 |
+| `workspace_bindings` | 当前 World Owner 从前端登记的绝对根工作目录 | W1a 已实现 |
+| `execution_workspaces` | execution 对 managed directory 的租用与路径快照 | W1a 已实现 |
 | `event_log` | 持久化事件流，断线恢复的唯一可靠来源 | 已实现 |
 | `queue_jobs` | 会话串行队列的持久化任务 | M4a 已实现 |
 | `invites` | 邀请码与使用次数 | 预留 |
@@ -130,6 +132,7 @@ Agent 角色定义，是"联系人"的数据来源。
 | `type` | `single`（单聊）或 `group`（群聊，M4 接入） |
 | `title` | 会话标题 |
 | `orchestrator_enabled` / `orchestrator_role_id` | 是否启用编排主 Agent 及其角色（预留，M4b） |
+| `workspace_binding_id` | 当前 World 可空工作区绑定；删除 binding 时置空，W1a 只允许 single 会话使用 |
 | `created_by` | 创建者 |
 | `last_message_at` | 最后一条消息时间，用于会话列表排序 |
 | `revision` | 会话级版本，发送消息时递增。当前只作为变更计数，尚未参与冲突检测 |
@@ -222,6 +225,40 @@ attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本�
 `(conversation_id,status)`、`(parent_execution_id,dispatch_order,attempt)` 和 `chain_id` 建索引。E0 不反向解析
 历史 `queue_jobs.payload_json` 来伪造旧 execution；迁移后的新 generation 才保证一对一完整。
 
+## workspace_bindings
+
+当前 World Owner 从前端登记的工作目录。数据库保存后端 canonicalize 后的绝对根，仅通过 Owner-only 接口
+返回；产品没有部署级 allowed-root 白名单。一个 World 可以登记多个根目录各不相同的 Workspace。
+
+| 字段 | 含义 |
+|---|---|
+| `created_by` | 当前 World Owner；删除 Owner 时级联清除绑定 |
+| `display_name` | Owner 可读名称；active 行按 Owner 唯一 |
+| `root_path` | 当前主机的规范绝对根；当前 World 内唯一，不能进入日志或 Guest 响应 |
+| `workspace_kind` | W1a 固定 `managed_directory` |
+| `file_tools_enabled` | 是否允许满足完整执行授权矩阵的 W1a 原生文件工具 |
+| `basic_commands_enabled` / `shell_enabled` | W1a 固定 false，分别到 W1b/W1c 才开放 |
+| `active` | 停用后不能绑定新会话或继续执行工具调用 |
+| `last_validated_at` | 后端最近一次成功 canonical 复核目录的时间 |
+| `created_at` / `updated_at` | 生命周期时间 |
+
+解除登记只删除本行并让 `conversations.workspace_binding_id` 置空，不删除物理目录。
+
+## execution_workspaces
+
+一次 execution 对 binding 的持久租用。W1a 同一 binding 同时最多有一个 `ready` 写执行；进程重启不恢复
+工具调用，遗留 `creating/ready` 统一变为 `retained + EXECUTION_INTERRUPTED`。
+
+| 字段 | 含义 |
+|---|---|
+| `execution_id` | 唯一外键到 `agent_executions.execution_id` |
+| `workspace_binding_id` | 当前租用的 Workspace Binding |
+| `workspace_kind` | W1a 固定 `managed_directory` |
+| `root_path_snapshot` | execution 开始时捕获的规范绝对根；每次调用必须与当前 binding 一致且不得进入日志 |
+| `status` | `creating/ready/retained/cleaned/failed`；W1a 正常终态保留为 retained |
+| `error_code` | 创建、重启中断或后续清理失败的稳定错误码 |
+| `created_at/ended_at/cleaned_at` | 租用生命周期时间 |
+
 ## event_log
 
 持久化的会话事件流。**断线重连的唯一可靠恢复来源**：事件先写本表并提交，再广播给在线连接；内存广播器只服务在线订阅者，不承诺补齐。
@@ -308,6 +345,7 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 |---|---|
 | `conversation_id` / `message_id` / `role_id` | 发生位置与执行角色 |
 | `triggered_by_user_id` | 触发链路的真人，Guest 配额和危险工具拦截按它判定 |
+| `execution_id` / `workspace_binding_id` | W1a 起关联实际 execution 与可选 workspace；解除登记后 workspace 可置空 |
 | `tool_name` | 工具名 |
 | `args_summary` | 参数摘要，**不得写入凭据或敏感参数原文** |
 | `status` | 执行结果状态：`ok`（正常返回）、`rejected`（危险级别被执行层拒绝）、`error`（工具自身失败） |

@@ -7,7 +7,7 @@
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py`、`backend/app/scheduling/` |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-08 |
 
 本文是稳定 `error_code` 的跨领域权威注册表。各领域协议负责说明“哪个接口或事件会返回哪些错误码”；
 错误码本身的名称、含义、终态和重试语义只在本文定义，避免同一含义散落后漂移。
@@ -128,12 +128,39 @@ WebSocket error frame 使用：
 | `CHAIN_LIMIT_EXCEEDED` | 已实现 | REST | 422 | rejected | conditional | 一条 mentions chain 展开后超过 20 个角色 |
 | `TEXT_PART_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 当前消息发送接口要求至少一个非空 text part |
 | `ARTIFACT_NOT_FOUND` | 已实现（读取原型） | REST | 404 | rejected | conditional | Artifact、版本不存在或请求者不是会话成员；不得泄露差异 |
+| `SINGLE_CHAT_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 工作区绑定或工具能力只允许 single 会话，群聊不得提交预留字段 |
 
 `CONVERSATION_HAS_NO_ROLE` 在消息落库前的 REST 拒绝和生成期防御检查中复用同一语义。
 消息与 WS 适用范围见 [消息协议](public/messaging/messages.md) 与
 [WebSocket 会话事件流](public/websocket/conversation-stream.md)。
 
-## 八、Provider 与生成错误码
+## 八、当前 World 工作区错误码
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `WORKSPACE_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 工作区不存在或不属于当前 Owner；不得泄露差异 |
+| `WORKSPACE_ROOT_PATH_INVALID` | 已实现 | REST | 422 | rejected | conditional | Owner 提交的 Workspace 根不是合法绝对路径，或包含未展开变量/glob |
+| `WORKSPACE_ROOT_NOT_AVAILABLE` | 已实现 | REST/工具 | 409/— | rejected | conditional | 已登记的规范绝对根不存在、类型错误或当前不可访问 |
+| `WORKSPACE_PATH_INVALID` | 已实现 | REST/工具 | 422/— | rejected | conditional | 路径不是允许的规范 UTF-8 相对路径或超过固定边界 |
+| `WORKSPACE_PATH_OUTSIDE_ROOT` | 已实现 | 工具 | — | rejected | no | 工具参数 canonicalize 后越出本 execution 的 Workspace 根 |
+| `WORKSPACE_PATH_SENSITIVE` | 已实现 | REST/工具 | 422/— | rejected | no | 路径命中系统敏感文件或目录拒绝集 |
+| `WORKSPACE_DIRECTORY_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 登记既有目录时目标不存在或不是目录 |
+| `WORKSPACE_DIRECTORY_EXISTS` | 已实现 | REST | 409 | rejected | conditional | 请求创建空目录时精确目标已经存在 |
+| `WORKSPACE_EXISTING_CONTENT_ACK_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 登记既有目录前未确认文件内容可能发送给模型 |
+| `WORKSPACE_NAME_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 Owner 已有同名工作区 |
+| `WORKSPACE_PATH_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 World 已登记相同 canonical Workspace 根 |
+| `WORKSPACE_UNAVAILABLE` | 已实现 | REST/工具 | 409/— | rejected | conditional | 工作区被禁用、目录复核失败或当前状态不可租用 |
+| `WORKSPACE_BUSY` | 已实现 | REST/工具 | 409/— | rejected | yes | 同一 managed directory 已被另一个写 execution 租用 |
+| `WORKSPACE_FILE_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 目标普通文件不存在 |
+| `WORKSPACE_FILE_NOT_TEXT` | 已实现 | 工具 | — | rejected | no | 文件不是合法 UTF-8 普通文本或目标类型不支持 |
+| `WORKSPACE_FILE_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 文件或待写内容超过 W1a 固定 1 MiB 上限 |
+| `WORKSPACE_FILE_REVISION_CONFLICT` | 已实现 | 工具 | — | rejected | yes | 目标已存在但未提供匹配 hash，或并发更新后 hash 已变化 |
+| `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不存在；W1a 不自动创建父目录 |
+| `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现（内部） | 工具 | — | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
+
+适用接口和路径隐藏规则见 [当前 World 工作区](public/rest/workspaces.md)。
+
+## 九、Provider 与生成错误码
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
 |---|---|---|---:|---|---|---|
@@ -148,7 +175,7 @@ WebSocket error frame 使用：
 Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime.md)。原始厂商错误不得回显给客户端，
 因为异常文本可能包含打码 Key、URL query 或 SDK 请求信息。
 
-## 九、世界错误码
+## 十、世界错误码
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
 |---|---|---|---:|---|---|---|
@@ -159,7 +186,7 @@ Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime
 
 世界目录、包装器和启动兼容规则见 [世界存档与切换](public/rest/worlds.md)。
 
-## 十、预留错误码
+## 十一、预留错误码
 
 以下名称存在于总体协议或后续里程碑计划，但当前没有完整服务端处理和客户端行为，不得当作已实现：
 
@@ -171,7 +198,7 @@ Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime
 
 新增预留项不能仅靠计划文本进入“已实现”表，必须等路由、事件、客户端降级和测试全部存在。
 
-## 十一、日志 v2 使用规则
+## 十二、日志 v2 使用规则
 
 日志设计稿见 [日志目录与字段规范 v2](../design/logging-v2.md)。日志中的 `error_code`：
 
@@ -190,7 +217,7 @@ Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime
 {"event":"provider.call_failed","status":"timeout","error_code":"PROVIDER_TIMEOUT"}
 ```
 
-## 十二、代码集中化要求（待实现）
+## 十三、代码集中化要求（待实现）
 
 当前错误码仍以字符串分散在 router、security、Agent 和服务层。后续实现应增加单一代码注册入口，例如：
 
@@ -209,7 +236,7 @@ class ErrorCode(StrEnum):
 3. 新错误码必须有领域测试，证明触发条件、状态码、信息隐藏与重试语义。
 4. CI/pytest 增加注册表一致性检查，防止未登记字符串重新进入代码。
 
-## 十三、当前已知缺口
+## 十四、当前已知缺口
 
 1. 尚无代码级 `ErrorCode`/registry，本文先统一协议语义。
 2. `MODEL_CONFIG_NOT_FOUND` 在不同 endpoint 使用 404/422；这是现状，是否统一需独立兼容评审。

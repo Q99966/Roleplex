@@ -12,7 +12,7 @@ import { type Role } from '../api/client'
 interface SidebarProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
-  onOpenSettings: (initialTab?: 'models' | 'worlds' | 'account') => void
+  onOpenSettings: (initialTab?: 'models' | 'worlds' | 'workspaces' | 'account') => void
   onOpenRoleModal: (role?: Role) => void
   onOpenConvModal: () => void
   onOpenRecycleBin: () => void

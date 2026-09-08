@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { ensureOwnerSession } from '../owner'
 import {
   expectManagedWorldLayout,
@@ -8,6 +10,66 @@ import {
 } from '../e2e-log-assertions'
 
 const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8003'
+const workspaceRoot = process.env.ROLEPLEX_E2E_WORKSPACE_ROOT ?? '/home/chen/workspace/testworkspace'
+const workspaceRelativeRoot = process.env.ROLEPLEX_E2E_WORKSPACE_RELATIVE_ROOT ?? 'missing'
+
+/** 通过设置中心登记并开启当前 World 的原生文件能力。 */
+async function registerWorkspace(page: Page, world: 'alpha' | 'beta'): Promise<string> {
+  const displayName = `${world.toUpperCase()} E2E 工作区`
+  await page.getByRole('button', { name: /管理运行世界与存储/ }).click()
+  await page.getByRole('tab', { name: '工作区', exact: true }).click()
+  await page.getByLabel('显示名称').fill(displayName)
+  await page.getByLabel('工作区绝对路径').fill(path.join(workspaceRoot, workspaceRelativeRoot, world))
+  await page.getByLabel(/我确认该目录的文件内容可能/).check()
+  await page.getByRole('button', { name: '添加工作区', exact: true }).click()
+  await expect(page.getByRole('heading', { name: displayName })).toBeVisible()
+  await page.getByRole('button', { name: /原生文件读写 · 关闭/ }).click()
+  await expect(page.getByRole('button', { name: /原生文件读写 · 已开启/ })).toBeVisible()
+  await page.getByRole('button', { name: '关闭系统与环境设置' }).click()
+  return displayName
+}
+
+/** 创建启用 W1a 三工具的角色，并从 UI 创建绑定工作区的 single 会话。 */
+async function runWorkspaceFlow(page: Page, world: 'alpha' | 'beta', workspaceName: string): Promise<void> {
+  const roleName = await page.evaluate(async ({ base, suffix }) => {
+    const token = localStorage.getItem('roleplex_token')
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    const post = async (route: string, body: unknown) => {
+      const response = await fetch(`${base}${route}`, { method: 'POST', headers, body: JSON.stringify(body) })
+      if (!response.ok) throw new Error(`${route} failed: ${response.status}`)
+      return response.json()
+    }
+    const config = await post('/api/model-configs', {
+      name: `w1a-${suffix}`, provider_type: 'openai_compatible', api_key: 'sk-e2e-placeholder',
+    })
+    const role = await post('/api/roles', {
+      name: `W1a 文件助手 ${suffix}`,
+      system_prompt: '按用户要求使用当前 execution 绑定的工作区工具。',
+      model_config_id: config.id,
+      model_name: 'fake-model',
+      builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write'],
+    })
+    return role.name as string
+  }, { base: backend, suffix: `${world}-${Date.now()}` })
+
+  await page.reload()
+  await page.getByRole('button', { name: '新建会话' }).click()
+  await page.getByLabel('会话名称 (必填)').fill(`${world.toUpperCase()} W1a 工具闭环`)
+  await page.getByRole('button', { name: new RegExp(roleName) }).click()
+  const workspaceSelect = page.getByLabel('会话工作区')
+  const workspaceValue = await workspaceSelect.locator('option').filter({ hasText: workspaceName }).getAttribute('value')
+  expect(workspaceValue).not.toBeNull()
+  await workspaceSelect.selectOption(workspaceValue!)
+  await page.getByRole('button', { name: '确认开启会话' }).click()
+  await page.getByLabel('消息输入框').fill('[W1A_FAKE_E2E] 完成 hello.txt 写读更新验收')
+  await page.getByLabel('发送消息').click()
+  await expect(page.getByText('W1a 工作区工具闭环完成。')).toBeVisible({ timeout: 30_000 })
+  for (const toolName of ['workspace_list', 'workspace_write', 'workspace_read']) {
+    await expect(page.getByText(toolName).first()).toBeVisible()
+  }
+  const content = await readFile(path.join(workspaceRoot, workspaceRelativeRoot, world, 'hello.txt'), 'utf-8')
+  expect(content).toBe('W1a 第二版')
+}
 
 /**
  * 在当前受托管世界中创建 fake 角色和单聊会话。
@@ -83,15 +145,23 @@ test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ 
   expect(healthBefore.world_name).toBe('alpha')
   await expectManagedWorldLayout((process.env.ROLEPLEX_E2E_WORLDS ?? '').split(',')[0])
 
+  const alphaWorkspace = await registerWorkspace(page, 'alpha')
+  await runWorkspaceFlow(page, 'alpha', alphaWorkspace)
+
   const conversationId = await seedFakeConversation(page, 'Fake 世界 C2 验证')
   await page.reload()
   await page.getByText('Fake 世界 C2 验证').first().click()
+  await expect(page.getByRole('heading', { name: 'Fake 世界 C2 验证' })).toBeVisible()
   await expect(page.getByLabel('消息输入框')).toBeEnabled()
 
   const prompts = ['Fake 世界第一轮', 'Fake 世界第二轮']
   for (const prompt of prompts) {
-    await page.getByLabel('消息输入框').fill(prompt)
-    await page.getByLabel('发送消息').click()
+    const input = page.getByLabel('消息输入框')
+    await input.fill(prompt)
+    await expect(input).toHaveValue(prompt)
+    // 提交后按钮会立即切换为“停止生成”；force 只跳过节点稳定等待，不绕过应用的 disabled 状态。
+    await expect(page.getByLabel('发送消息')).toBeEnabled()
+    await page.getByLabel('发送消息').click({ force: true })
     await expect(page.getByText(`已收到你的消息：${prompt}`)).toBeVisible({ timeout: 20_000 })
   }
 
@@ -156,5 +226,12 @@ test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ 
   // beta 是物理独立的新库；同名 Owner 需要重新创建，随后顶栏显示 beta。
   await ensureOwnerSession(page)
   await expect(page.getByText('beta', { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: /管理运行世界与存储/ }).click()
+  await page.getByRole('tab', { name: '工作区', exact: true }).click()
+  await expect(page.getByText('当前 World 尚未登记工作区。')).toBeVisible()
+  await page.getByRole('button', { name: '关闭系统与环境设置' }).click()
+  const betaWorkspace = await registerWorkspace(page, 'beta')
+  await runWorkspaceFlow(page, 'beta', betaWorkspace)
+  expect(await readFile(path.join(workspaceRoot, workspaceRelativeRoot, 'alpha', 'hello.txt'), 'utf-8')).toBe('W1a 第二版')
   await page.screenshot({ path: 'test-results/world-switching-beta.png', fullPage: true })
 })

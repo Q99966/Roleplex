@@ -7,7 +7,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-08 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -139,6 +139,20 @@ trace/video，具体运行与留存约定见 README。
   input/cache 为 `229/128`、`264/128`，证明真实世界路径与兼容数据库 smoke 使用同一 ContextBuilder，
   但缓存数字仍只属于该次 Provider 观测。
 
+## W1a 原生工作区工具
+
+- 只在 Owner 触发的 single 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease ready
+  时暴露 `workspace_list/read/write`；Guest、群聊、未绑定和能力关闭时连工具 schema 都不可见。
+- ContextBuilder 在 Provider 调用前按实际暴露集合把 W1a 工具策略计入预算和 `tool_policy_hash`；随机
+  execution ID 不进入稳定 hash。
+- 每次实际调用重新读取 execution、Owner、角色、会话、binding 和 lease，重新 canonicalize Workspace 绝对根；
+  注册时通过不能替代执行时授权。
+- list 稳定分页并只报告 symlink，read/write 不跟随；write 使用 exclusive create 或 expected hash +
+  同目录临时文件 + fsync + atomic replace。
+- 工具输入/结果只回模型。日志和 `tool_calls.args_summary` 只保存路径 SHA-256、字节数、分页/offset、hash
+  是否提供、workspace/execution ID、状态与耗时，不保存目录名、文件正文、写入内容或绝对路径。
+- 服务启动不重放文件操作；遗留 ready lease 记为 retained/interrupted，物理目录保持原样供 Owner 检查。
+
 ## 工具危险分级与审计
 
 - `safe` 是显式白名单，只包含只读或纯生成类内置工具；MCP 工具、未知工具和有副作用的
@@ -178,3 +192,4 @@ Windows 实测结论（mcp 1.2.1）：
 - 确定性模型：`app/agent/fake_provider.py`
 - MCP 生命周期：`app/mcp/manager.py`
 - 生成链路与审计写入：`app/services/chat.py`
+- W1a 路径、文件与工具：`app/workspaces/`

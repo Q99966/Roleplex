@@ -9,6 +9,7 @@ process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP ||= [
 ].join('')
 const STAMP = process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP
 const WORLD_ROOT = `../data/roleplex-real-world-e2e-${STAMP}`
+const WORKSPACE_ROOT = process.env.ROLEPLEX_E2E_WORKSPACE_ROOT || '/home/chen/workspace/testworkspace'
 const LOG_RUN = ensureE2ELogRun('real')
 
 const WEB_PORT = 51177
@@ -17,12 +18,15 @@ const WEB_ORIGIN = `http://127.0.0.1:${WEB_PORT}`
 const API_ORIGIN = `http://127.0.0.1:${API_PORT}`
 process.env.ROLEPLEX_E2E_API_ORIGIN = API_ORIGIN
 process.env.ROLEPLEX_E2E_WORLDS = `data/roleplex-real-world-e2e-${STAMP}/default`
+process.env.ROLEPLEX_E2E_WORKSPACE_ROOT = WORKSPACE_ROOT
+process.env.ROLEPLEX_E2E_WORKSPACE_RELATIVE_ROOT = `roleplex-real-world-e2e-${STAMP}`
 
 export default defineConfig({
   testDir: './tests/real-world',
   timeout: 150_000,
   fullyParallel: false,
   workers: 1,
+  globalSetup: './tests/real-world/global-setup.ts',
   globalTeardown: './tests/real-world/global-teardown.ts',
   reporter: [['list'], ['./tests/log-reporter.ts', { mode: 'real' }]],
   use: {

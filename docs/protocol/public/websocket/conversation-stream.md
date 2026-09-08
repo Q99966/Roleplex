@@ -8,7 +8,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/realtime/websocket.py`、`backend/app/realtime/events.py`、`backend/app/realtime/store.py` |
 | 关联测试 | `backend/tests/test_ws_recovery.py`、`backend/tests/test_group_chat.py`、`frontend/tests/m4-group-chat.spec.ts` |
-| 复核日期 | 2026-08-30 |
+| 复核日期 | 2026-09-08 |
 
 ## 范围
 
@@ -96,11 +96,13 @@ ws(s)://<host>/api/ws
 | `message_done` | 生成完成、停止或失败 | `{"message": {}, "error_code": null}` |
 | `message_part_update` | 工具过程 part 开始或结束 | `{"message": {}}` |
 | `member_updated` | Owner 修改群聊角色成员 | `{"role_ids":[2,1],"revision":3}` |
+| `conversation_updated` | Owner 绑定或解绑 single 会话工作区 | `{"workspace_binding_id":1,"revision":4}` |
 
 `message_done` 的终态体现在消息 `status`（`done | stopped | error`）；`error_code` 仅在失败时非空。
 `message_part_update` 携带完整消息，客户端按 message revision 替换；M4a 用它显示不含原始参数/输出的工具名、
 `running/success/failed/rejected` 状态和可选耗时。`member_updated.revision` 是会话共享 revision，客户端可刷新
-会话成员并忽略旧 revision。`message_regenerated`、`conversation_updated`、`conversation_state` 属于后续
+会话成员并忽略旧 revision。`conversation_updated` 使客户端刷新共享会话配置并忽略旧 revision。
+`message_regenerated`、`conversation_state` 属于后续
 里程碑预留，当前不会下发。
 
 ## 客户端幂等要求

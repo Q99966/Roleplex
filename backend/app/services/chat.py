@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Conversation, ConversationMember, Generation, Message, ModelConfig, Role, ToolCall
+from ..models import Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall
 from ..config.logging import set_log_context
 from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
 from ..context.domain import ContextBuildError, ContextBuildResult
@@ -20,6 +20,7 @@ from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
 from ..realtime import store as event_store
+from ..workspaces.tools import create_workspace_tools, retain_execution_workspace
 
 logger = logging.getLogger("roleplex.chat")
 
@@ -162,10 +163,11 @@ async def _record_tool_call(
     message_id: int | None,
     role_id: int | None,
     triggered_by_user_id: int | None,
+    execution_id: str,
 ) -> None:
     """把一次工具调用写入审计表。
 
-    审计要能回答"谁通过哪个角色调了什么工具、结果如何"；参数与输出只保存截断摘要，
+    审计要能回答"谁通过哪个角色调了什么工具、结果如何"；参数与输出只保存专用允许字段摘要，
     不保存凭据或完整敏感内容。
 
     Args:
@@ -175,14 +177,20 @@ async def _record_tool_call(
         message_id：本次生成的角色消息。
         role_id：执行工具的角色。
         triggered_by_user_id：触发本条链路的真人，权限与配额按它判定。
+        execution_id：本次持久 execution 身份，用于关联 workspace lease。
     """
     async with SessionLocal() as session:
+        lease = await session.scalar(select(ExecutionWorkspace).where(
+            ExecutionWorkspace.execution_id == execution_id,
+        ))
         session.add(
             ToolCall(
                 conversation_id=conversation_id,
                 message_id=message_id,
                 role_id=role_id,
                 triggered_by_user_id=triggered_by_user_id,
+                execution_id=execution_id,
+                workspace_binding_id=lease.workspace_binding_id if lease else None,
                 tool_name=event.tool_name,
                 args_summary=args_summary,
                 status=event.status,
@@ -437,6 +445,14 @@ async def run_scheduled_generation(
             model, tools = await build_agent_inputs(
                 session, role, context.current_message, allow_dangerous=allow_dangerous,
             )
+            tools.extend(await create_workspace_tools(
+                session,
+                execution_id=execution_id,
+                conversation_id=conversation_id,
+                role=role,
+                triggered_by_user_id=triggered_by_user_id,
+                allow_dangerous=allow_dangerous,
+            ))
         if settings.agent_use_fake_provider:
             logger.info(
                 "provider.built",
@@ -498,6 +514,7 @@ async def run_scheduled_generation(
                     event, args_summary=tool_args.pop(event.call_id, ""),
                     conversation_id=conversation_id, message_id=assistant_id,
                     role_id=role_id, triggered_by_user_id=triggered_by_user_id,
+                    execution_id=execution_id,
                 )
                 await _update_tool_part(
                     conversation_id=conversation_id,
@@ -673,6 +690,8 @@ async def run_scheduled_generation(
                 **terminal,
             },
         )
+    finally:
+        await retain_execution_workspace(execution_id)
 
 
 async def build_snapshot(session, conversation_id: int) -> dict:

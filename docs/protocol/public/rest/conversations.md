@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊与 M4a 群聊；Orchestrator 未实现） |
-| 协议版本 | 2（兼容新增群聊成员管理与 revision） |
+| 状态 | 已实现（单聊、M4a 群聊与 W1a 工作区绑定；Orchestrator 未实现） |
+| 协议版本 | 3（兼容新增可空工作区绑定） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/conversations.py`、`backend/app/schemas.py`、`backend/app/services/retention.py` |
 | 关联测试 | `backend/tests/test_delete_semantics.py`、`backend/tests/test_group_chat.py`、`frontend/tests/recycle-and-tombstone.spec.ts`、`frontend/tests/m4-group-chat.spec.ts` |
-| 复核日期 | 2026-08-30 |
+| 复核日期 | 2026-09-08 |
 
 ## 范围
 
@@ -31,6 +31,7 @@
   "title": "占位会话",
   "orchestrator_enabled": false,
   "orchestrator_role_id": null,
+  "workspace_binding_id": null,
   "role_ids": [1],
   "revision": 0,
   "last_message_at": null,
@@ -45,6 +46,8 @@
 
 `pinned` / `archived` 是请求者的个人偏好，不是会话的共享状态。
 `revision` 是共享会话配置的乐观锁版本；成员变化会递增，个人偏好不会递增。
+`workspace_binding_id` 是当前 World 的可空 Workspace Binding；详细绑定规则见
+[当前 World 工作区](workspaces.md)。
 
 ## 列表
 
@@ -61,7 +64,7 @@ POST /api/conversations
 ```
 
 ```json
-{"type":"single","title":"占位会话","role_ids":[1],"orchestrator_enabled":false,"orchestrator_role_id":null}
+{"type":"single","title":"占位会话","role_ids":[1],"orchestrator_enabled":false,"orchestrator_role_id":null,"workspace_binding_id":null}
 ```
 
 单聊必须且只能绑定一个角色；群聊至少绑定两个角色。绑定的角色必须属于同一 Owner 且处于启用状态；

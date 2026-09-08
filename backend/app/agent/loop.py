@@ -18,7 +18,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
-from .tools import REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output
+from .tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output
 
 logger = logging.getLogger("roleplex.agent.loop")
 
@@ -189,6 +189,8 @@ def _tool_status(output: Any) -> str:
     text = getattr(output, "content", output)
     if isinstance(text, str) and text.startswith(REJECTED_OUTPUT_PREFIX):
         return "rejected"
+    if isinstance(text, str) and text.startswith(FAILED_OUTPUT_PREFIX):
+        return "error"
     if getattr(output, "status", "success") == "error":
         return "error"
     return "ok"

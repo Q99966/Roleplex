@@ -25,7 +25,7 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import artifacts, auth, conversations, messages, model_configs, roles, worlds
+from .routers import artifacts, auth, conversations, messages, model_configs, roles, workspaces, worlds
 from .services import retention
 from .services import chat
 from .scheduling import conversation_scheduler
@@ -166,6 +166,7 @@ app.include_router(conversations.router)
 app.include_router(messages.router)
 app.include_router(artifacts.router)
 app.include_router(worlds.router)
+app.include_router(workspaces.router)
 app.include_router(ws_router)
 
 

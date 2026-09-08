@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | C0-C2、M4a 已完成；W0 已确认；E0 已实现待人工验收；W1a 尚未开始 |
+| 状态 | C0-C2、M4a、W0、E0 已完成；W1a Owner 绝对根版本已实现待人工验收 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-08 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
@@ -16,13 +16,14 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
 的本地 Git 仓库与 execution worktree 只以[Agent 仓库工作区计划](agent-repository-workspaces-v1.md)为权威，
 不得与 Memory scope 混用。
 
-## 当前实施进度（2026-09-01）
+## 当前实施进度（2026-09-08）
 
 - C0/C1 已实现并于 2026-08-29 经用户人工验收，提交 `4ea6312`；C2 已于 2026-08-30 经用户人工验收；
   M4a 已于 2026-09-01 经用户人工验收；2026-09-01 已确认先定义 W0 工作区/Shell 契约，再实施 E0，随后
   以 W1a 原生文件、W1b 结构化命令、W1c 审批 Shell 逐层跑通单角色闭环，最后才进入 Repository、worktree
   和 M4b fan-out。
-  E0 已完成编码与自动验证，当前等待人工验收；W1a 及后续阶段尚未开始。
+  E0 已完成编码、自动验证和用户人工验收；W1a 已按用户确认修订为“每个 World Owner 在前端为多个
+  Workspace 分别配置绝对根”，并已通过 fake/真实 managed-world 验证，当前等待人工验收；W1b 及后续阶段尚未开始。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -75,8 +76,8 @@ C3 和 C4 完成。
 
 ### 2.1 当前事实
 
-- 当前实现中，一个世界是一个物理目录和数据库，尚不存在额外的 Workspace 表或 `workspace_id`；W1 计划的
-  Repository Binding 是主机本地代码能力，不是 Memory Workspace，也不改变世界物理 scope。
+- 当前实现中，一个世界是一个物理目录和数据库，并可保存多个 Owner 配置的主机本地 Workspace Binding；
+  它们不是 Memory Workspace，也不改变世界物理 scope。W2 计划的 Repository Binding 继续建立在该资源上。
 - 默认部署继续使用 SQLite、单进程、单 worker；不为了缓存或记忆引入外部数据库服务。
 - 当前生成服务已通过唯一 ContextBuilder 向 `run_agent()` 传入终态历史和预算诊断。
 - `messages` 已有 sender、reply、mentions、parts、status、revision、chain 和 meta 字段。
@@ -629,7 +630,9 @@ M4b 编码前再更新 Agent 内部协议、公开会话/消息/WS 协议和错�
 1. **E0 持久执行树**：迁移、ORM、所有新 generation 的 execution 行、父子/attempt 状态和启动中断降级；
    独立人工验收和提交，不开放仓库工具。
 2. **W0/W1a-W1c 单角色最小闭环**：先确认设置契约，再依次完成当前 World 工作区/原生读写、结构化命令和
-   Owner 审批 Shell；不接 Git 或 worktree，每个切片独立人工验收和提交。
+   Owner 审批 Shell；不接 Git 或 worktree，每个切片独立人工验收和提交。W1a 必须同时通过 fake
+   managed-world 与专用真实 Provider managed-world 工具闭环；测试工作区使用外部 testworkspace，但产品
+   Workspace 根由各 World Owner 在前端独立配置，不设全局 allowed-root 限制。不得把真实 API 验证推迟到 W1c。
 3. **W2a/W2b/W3 代码协作扩展**：按独立计划依次完成 Repository Binding、只读文件/Git 和 worktree/补丁；
    每个切片独立人工验收和提交。
 4. **M4b-1 确定性 fan-out**：领域 dispatch 请求、防腐层映射、稳定占位顺序、共同 base boundary、最大 4 并行。

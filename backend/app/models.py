@@ -113,6 +113,9 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     orchestrator_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     orchestrator_role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
+    workspace_binding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workspace_bindings.id", ondelete="SET NULL")
+    )
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -256,6 +259,60 @@ class AgentExecution(Base):
     )
 
 
+class WorkspaceBinding(Base):
+    """当前 World Owner 从前端登记的主机绝对工作目录。"""
+
+    __tablename__ = "workspace_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    root_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    workspace_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="managed_directory")
+    file_tools_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    basic_commands_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    shell_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_workspace_owner_name_active", "created_by", "display_name", unique=True,
+            sqlite_where=text("active IS TRUE"), postgresql_where=text("active IS TRUE"),
+        ),
+        UniqueConstraint("root_path", name="uq_workspace_root_path"),
+        Index("ix_workspace_bindings_owner_active", "created_by", "active"),
+    )
+
+
+class ExecutionWorkspace(Base):
+    """一次 Agent execution 对 managed directory 的持久租用快照。"""
+
+    __tablename__ = "execution_workspaces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    execution_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_executions.execution_id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_binding_id: Mapped[int] = mapped_column(
+        ForeignKey("workspace_bindings.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    root_path_snapshot: Mapped[str] = mapped_column(String(2048), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("execution_id", name="uq_execution_workspaces_execution_id"),
+        Index("ix_execution_workspaces_binding_status", "workspace_binding_id", "status"),
+    )
+
+
 class EventLog(Base):
     """持久化会话事件；实时 EventHub 只负责提交后的进程内广播。"""
 
@@ -349,10 +406,19 @@ class ToolCall(Base):
     message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
     triggered_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_executions.execution_id", ondelete="SET NULL")
+    )
+    workspace_binding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workspace_bindings.id", ondelete="SET NULL")
+    )
     tool_name: Mapped[str] = mapped_column(String(256), nullable=False)
     args_summary: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (Index("ix_tool_calls_conversation_id_id", "conversation_id", "id"),)
+    __table_args__ = (
+        Index("ix_tool_calls_conversation_id_id", "conversation_id", "id"),
+        Index("ix_tool_calls_execution_id", "execution_id"),
+    )

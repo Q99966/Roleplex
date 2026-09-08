@@ -18,9 +18,9 @@
 | 后端 pytest | `pytest -q` | fake | 每轮独立 SQLite DB | 否 | 服务、权限、状态机、迁移相关业务行为 |
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
 | 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 单聊、M4a 群聊与其他浏览器用户流程 |
-| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 | 否 | C2/M4a 世界链路、包装器重启、世界隔离和重新登录 |
+| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 + 外部工作区 | 否 | W1a/C2/M4a、包装器重启、世界与工作区隔离 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
-| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 | 是 | C2 单聊、M4a 两角色串行与正常世界全链路 |
+| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 + 外部工作区 | 是 | W1a 真实工具、C2、M4a 与正常世界全链路 |
 
 默认开发回归只需要：
 
@@ -163,10 +163,15 @@ data/roleplex-real-world-e2e-<时间戳>/
     └── files/
 ```
 
-该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行 C2 两轮验证码单聊，以及 M4a
+该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行 W1a 真实 Provider
+`workspace_list/read/write` 闭环、C2 两轮验证码单聊，以及 M4a
 两个真实角色的同 chain 串行群聊；协作码只放进 A 的 system prompt，B 必须从 A 已提交回复中复述。测试
 同时核对真实 usage、稳定层、history、独立 execution 和 Prompt 不落日志。它不切换世界；切换语义由
 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
+
+W1a 工作区与 World 使用同一 stamp，但位于两个根：World 在项目 `data/`，工作区在
+`/home/chen/workspace/testworkspace/roleplex-real-world-e2e-<时间戳>/default`。测试必须断言两者没有落入
+同一物理目录，真实 Key 只进入 World 加密数据库，不得进入浏览器或工作区。
 
 ## 三、端口矩阵
 
@@ -190,6 +195,9 @@ fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
 | real E2E | `data/roleplex-real-e2e-<时间戳>.db` | `realtest<时间戳>` | `Roleplex-Real-E2E-1` | 5 轮 |
 | fake worlds | `data/roleplex-world-e2e-<时间戳>/{alpha,beta}` | `test<时间戳>` | `Roleplex-Test-1234` | 5 轮 |
 | real-world | `data/roleplex-real-world-e2e-<时间戳>/default` | `realtest<时间戳>` | `Roleplex-Real-E2E-1` | 5 轮 |
+
+fake worlds 与 real-world 的外部工作区按相同 stamp 保存在
+`/home/chen/workspace/testworkspace/{roleplex-world-e2e-,roleplex-real-world-e2e-}<时间戳>/`，同样保留最近五轮。
 
 contract 测试不依赖产品会话数据，也不播种测试账号；父级 pytest 基础设施仍会为该轮分配隔离数据库名。
 测试数据库/世界都被 `.gitignore` 排除。real/real-world 包含加密后的真实 Key；世界目录还包含解密所需

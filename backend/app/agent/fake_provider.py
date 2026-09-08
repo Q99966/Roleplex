@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
@@ -105,4 +106,32 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if "[W1A_FAKE_E2E]" in prompt:
+        first = "W1a 第一版"
+        first_hash = hashlib.sha256(first.encode("utf-8")).hexdigest()
+        return ScriptedChatModel(
+            turns=[
+                ScriptedTurn(tool_calls=[{
+                    "name": "workspace_list", "args": {"path": ".", "limit": 200}, "id": "w1a_list",
+                }]),
+                ScriptedTurn(tool_calls=[{
+                    "name": "workspace_write",
+                    "args": {"path": "hello.txt", "content": first, "expected_sha256": None},
+                    "id": "w1a_create",
+                }]),
+                ScriptedTurn(tool_calls=[{
+                    "name": "workspace_read", "args": {"path": "hello.txt"}, "id": "w1a_read_first",
+                }]),
+                ScriptedTurn(tool_calls=[{
+                    "name": "workspace_write",
+                    "args": {"path": "hello.txt", "content": "W1a 第二版", "expected_sha256": first_hash},
+                    "id": "w1a_update",
+                }]),
+                ScriptedTurn(tool_calls=[{
+                    "name": "workspace_read", "args": {"path": "hello.txt"}, "id": "w1a_read_final",
+                }]),
+                ScriptedTurn(text="W1a 工作区工具闭环完成。"),
+            ],
+            delay=delay,
+        )
     return ScriptedChatModel(turns=[ScriptedTurn(text=FAKE_REPLY_TEMPLATE.format(prompt=prompt))], delay=delay)

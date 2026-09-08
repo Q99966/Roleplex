@@ -10,8 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..models import Conversation, ConversationMember, Role, User
 from ..realtime import store as event_store
-from ..schemas import ConversationCreate, ConversationMembersUpdate, ConversationResponse
+from ..schemas import (
+    ConversationCreate,
+    ConversationMembersUpdate,
+    ConversationResponse,
+    ConversationWorkspaceUpdate,
+)
 from ..security.tokens import get_current_user, require_owner
+from ..workspaces.service import available_workspace
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -53,6 +59,7 @@ async def response(session: AsyncSession, conversation: Conversation, member: Co
         id=conversation.id, type=conversation.type, title=conversation.title,
         orchestrator_enabled=conversation.orchestrator_enabled,
         orchestrator_role_id=conversation.orchestrator_role_id,
+        workspace_binding_id=conversation.workspace_binding_id,
         role_ids=list(role_members),
         revision=conversation.revision,
         last_message_at=conversation.last_message_at,
@@ -105,6 +112,8 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
         raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRES_ONE_ROLE")
     if payload.type == "group" and len(payload.role_ids) < 2:
         raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
+    if payload.type != "single" and payload.workspace_binding_id is not None:
+        raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRED")
     if not payload.role_ids:
         raise HTTPException(status_code=422, detail="ROLE_REQUIRED")
     if len(payload.role_ids) != len(set(payload.role_ids)):
@@ -120,11 +129,15 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
     roles_by_id = {role.id: role for role in roles}
     if payload.orchestrator_role_id and payload.orchestrator_role_id not in {role.id for role in roles}:
         raise HTTPException(status_code=422, detail="ORCHESTRATOR_MUST_BE_MEMBER")
+    if payload.workspace_binding_id is not None:
+        await available_workspace(session, payload.workspace_binding_id, user.id)
     now = datetime.now(timezone.utc)
     conversation = Conversation(
         type=payload.type, title=payload.title, created_by=user.id,
         orchestrator_enabled=payload.orchestrator_enabled,
-        orchestrator_role_id=payload.orchestrator_role_id, created_at=now,
+        orchestrator_role_id=payload.orchestrator_role_id,
+        workspace_binding_id=payload.workspace_binding_id,
+        created_at=now,
     )
     session.add(conversation)
     await session.flush()
@@ -136,6 +149,45 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
     await session.commit()
     await session.refresh(conversation)
     member = await require_member(session, conversation.id, user.id)
+    return await response(session, conversation, member)
+
+
+@router.put("/{conversation_id}/workspace", response_model=ConversationResponse)
+async def update_conversation_workspace(
+    conversation_id: int,
+    payload: ConversationWorkspaceUpdate,
+    user: Annotated[User, Depends(require_owner)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """按 revision 为 Owner 的 single 会话绑定或解绑当前 World 工作区。"""
+    conversation = await _owned_conversation(session, conversation_id, user.id)
+    if conversation.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+    if conversation.type != "single":
+        raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRED")
+    if payload.workspace_binding_id is not None:
+        await available_workspace(session, payload.workspace_binding_id, user.id)
+    next_revision = payload.expected_revision + 1
+    updated = await session.scalar(
+        update(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.revision == payload.expected_revision)
+        .values(workspace_binding_id=payload.workspace_binding_id, revision=next_revision)
+        .returning(Conversation.revision)
+    )
+    if updated is None:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="CONVERSATION_REVISION_CONFLICT")
+    pending = await event_store.append_event(
+        session,
+        conversation_id,
+        "conversation_updated",
+        {"workspace_binding_id": payload.workspace_binding_id, "revision": next_revision},
+        revision=next_revision,
+    )
+    await session.commit()
+    await event_store.publish_events(pending)
+    await session.refresh(conversation)
+    member = await require_member(session, conversation_id, user.id)
     return await response(session, conversation, member)
 
 

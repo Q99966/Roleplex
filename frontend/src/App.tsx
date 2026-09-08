@@ -24,7 +24,7 @@ export function App() {
   const [view, setView] = useState<'landing' | 'auth'>('landing')
   const [currentHash, setCurrentHash] = useState(typeof window !== 'undefined' ? window.location.hash || '#/' : '#/')
   const [showSettings, setShowSettings] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<'models' | 'worlds' | 'account'>('models')
+  const [settingsTab, setSettingsTab] = useState<'models' | 'worlds' | 'workspaces' | 'account'>('models')
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null)
   const [showConvModal, setShowConvModal] = useState(false)
@@ -32,7 +32,7 @@ export function App() {
   const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
-  const handleOpenSettings = (tab: 'models' | 'worlds' | 'account' = 'models') => {
+  const handleOpenSettings = (tab: 'models' | 'worlds' | 'workspaces' | 'account' = 'models') => {
     setSettingsTab(tab)
     setShowSettings(true)
   }

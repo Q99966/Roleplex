@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from collections.abc import Collection, Sequence
 from typing import Any
 
@@ -31,6 +32,7 @@ _SAFE_LABEL = re.compile(r"^[A-Za-z0-9_.+-]{1,32}$")
 
 # 被拒绝的工具结果以该前缀开头，防腐层据此把结束事件标记为 rejected。
 REJECTED_OUTPUT_PREFIX = "[工具被拒绝]"
+FAILED_OUTPUT_PREFIX = "[工具执行失败]"
 
 DANGER_SAFE = "safe"
 DANGER_DANGEROUS = "dangerous"
@@ -121,6 +123,27 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
     """
     if not isinstance(args, dict):
         return "{}"
+    if tool_name in {"workspace_list", "workspace_read", "workspace_write"}:
+        path = args.get("path")
+        summary: dict[str, int | str | bool] = {}
+        if isinstance(path, str):
+            summary["path_fingerprint"] = hashlib.sha256(path.encode("utf-8")).hexdigest()
+        if tool_name == "workspace_list":
+            limit = args.get("limit")
+            if isinstance(limit, int) and not isinstance(limit, bool):
+                summary["limit"] = limit
+            summary["has_cursor"] = isinstance(args.get("after_name"), str)
+        elif tool_name == "workspace_read":
+            for key in ("offset_bytes", "max_bytes"):
+                value = args.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    summary[key] = value
+        else:
+            content = args.get("content")
+            if isinstance(content, str):
+                summary["content_bytes"] = len(content.encode("utf-8"))
+            summary["has_expected_sha256"] = isinstance(args.get("expected_sha256"), str)
+        return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
     summary: dict[str, int | str] = {}
     for key in _TOOL_ARG_ALLOWLIST.get(tool_name, ()):
         value = args.get(key)

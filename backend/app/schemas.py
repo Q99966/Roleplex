@@ -143,6 +143,7 @@ class ConversationCreate(BaseModel):
     role_ids: list[int] = Field(default_factory=list, max_length=50)
     orchestrator_enabled: bool = False
     orchestrator_role_id: int | None = None
+    workspace_binding_id: int | None = None
 
 
 class ConversationResponse(BaseModel):
@@ -157,6 +158,7 @@ class ConversationResponse(BaseModel):
     title: str
     orchestrator_enabled: bool
     orchestrator_role_id: int | None
+    workspace_binding_id: int | None
     role_ids: list[int] = Field(default_factory=list)
     revision: int
     last_message_at: datetime | None
@@ -170,6 +172,47 @@ class ConversationMembersUpdate(BaseModel):
 
     role_ids: list[int] = Field(max_length=50)
     expected_revision: int = Field(ge=0)
+
+
+class ConversationWorkspaceUpdate(BaseModel):
+    """Owner 为 single 会话绑定或解绑当前 World 工作区的乐观锁请求。"""
+
+    workspace_binding_id: int | None
+    expected_revision: int = Field(ge=0)
+
+
+class WorkspaceCreate(BaseModel):
+    """Owner 登记主机绝对目录或创建精确空目录的请求。"""
+
+    display_name: str = Field(min_length=1, max_length=128)
+    root_path: str = Field(min_length=1, max_length=2048)
+    create_directory: bool = False
+    acknowledge_existing_content: bool = False
+
+
+class WorkspaceUpdate(BaseModel):
+    """W1a 只允许调整生命周期与原生文件能力。"""
+
+    active: bool | None = None
+    file_tools_enabled: bool | None = None
+
+
+class WorkspaceResponse(BaseModel):
+    """只向当前 World Owner 返回的 Workspace Binding 表示。"""
+
+    id: int
+    display_name: str
+    root_path: str
+    workspace_kind: str
+    file_tools_enabled: bool
+    basic_commands_enabled: bool
+    shell_enabled: bool
+    active: bool
+    availability: Literal["available", "unavailable", "busy", "disabled"]
+    last_validated_at: datetime | None
+    bound_conversation_count: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class Part(BaseModel):

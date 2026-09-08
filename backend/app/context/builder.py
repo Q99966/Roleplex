@@ -22,6 +22,7 @@ from .domain import (
 )
 from .fingerprint import stable_hash
 from .projection import parts_text, project_message
+from ..workspaces.tools import workspace_tool_policy
 
 _RUNTIME_POLICY = "你正在 Roleplex 会话中以指定角色身份回复。只以自己的身份发言，不伪造其他成员或系统消息。"
 _DEFAULT_OUTPUT_RESERVE = 1024
@@ -170,6 +171,12 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     role_prefix = _role_prefix(role)
     conversation_prefix = await _conversation_prefix(session, conversation)
     system_prompt = "\n".join((runtime_prefix, role_prefix, conversation_prefix))
+    tool_policy = await workspace_tool_policy(
+        session,
+        conversation=conversation,
+        role=role,
+        triggered_by_user_id=request.triggered_by_user_id,
+    )
 
     history_boundary = Message.id < current.id
     if request.execution_kind == "group_role" and current.chain_id:
@@ -196,6 +203,11 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     fixed_tokens = estimate_text_tokens(system_prompt, structural_tokens=8) + estimate_text_tokens(
         current_text, structural_tokens=8,
     )
+    if tool_policy["exposed_tools"]:
+        fixed_tokens += estimate_text_tokens(
+            json.dumps(tool_policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            structural_tokens=8,
+        )
     fixed_estimate = token_estimate(fixed_tokens)
     if fixed_estimate.estimated_tokens + fixed_estimate.safety_margin_tokens > input_budget:
         raise ContextBudgetExceeded(
@@ -225,8 +237,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         role_prefix_hash=stable_hash(role_prefix),
         conversation_prefix_hash=stable_hash(conversation_prefix),
         tool_policy_hash=stable_hash({
-            # C1 尚未把产品工具接入 Agent，请对实际暴露的空集合做 hash，不能把仅配置未提供的工具算进去。
-            "exposed_tools": [],
+            "policy": tool_policy,
             "triggered_by_owner": request.triggered_by_user_id == role.created_by,
         }),
     )

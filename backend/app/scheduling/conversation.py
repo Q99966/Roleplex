@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 
 from ..db import SessionLocal
 from ..config.logging import log_context
-from ..models import AgentExecution, Generation, QueueJob
+from ..models import AgentExecution, ExecutionWorkspace, Generation, QueueJob
 
 logger = logging.getLogger("roleplex.scheduler.conversation")
 
@@ -60,6 +60,9 @@ class ConversationScheduler:
             stale_executions = (await session.scalars(select(AgentExecution).where(
                 AgentExecution.status.in_(["queued", "running"]),
             ).order_by(AgentExecution.id))).all()
+            stale_leases = (await session.scalars(select(ExecutionWorkspace).where(
+                ExecutionWorkspace.status.in_(["creating", "ready"]),
+            ))).all()
             if stale_ids:
                 await session.execute(
                     update(Generation)
@@ -80,7 +83,13 @@ class ConversationScheduler:
                     .where(AgentExecution.id.in_([execution.id for execution in stale_executions]))
                     .values(status="interrupted", error_code="EXECUTION_INTERRUPTED", ended_at=now)
                 )
-            if stale_ids or stale_executions:
+            if stale_leases:
+                await session.execute(
+                    update(ExecutionWorkspace)
+                    .where(ExecutionWorkspace.id.in_([lease.id for lease in stale_leases]))
+                    .values(status="retained", error_code="EXECUTION_INTERRUPTED", ended_at=now)
+                )
+            if stale_ids or stale_executions or stale_leases:
                 await session.commit()
             if stale_executions:
                 for execution in stale_executions:

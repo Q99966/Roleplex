@@ -4,7 +4,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 ## 当前阶段
 
-已完成 M0/M1 基础骨架、M2 单聊闭环、M4a 群聊，并已实现 E0 持久 execution 身份：
+已完成 M0/M1 基础骨架、M2 单聊闭环、M4a 群聊和 E0 持久 execution 身份；W1a 当前 World 工作区与
+原生文件工具已进入验收：
 
 - SQLite + SQLAlchemy 2 async，WAL、busy timeout、外键约束、单进程单 worker 边界
 - Owner 原子初始化模型、JWT 7 天有效期与 token version 撤销
@@ -16,6 +17,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 单聊通过统一 ContextBuilder 读取终态历史；角色上下文窗口默认 200K 并可由 Owner 配置
 - 群聊支持角色成员管理、可访问的 @ 补全、无 @ 静默记录、mentions 串行回复、停止整条 chain 和工具过程卡片
 - single/group_role generation 拥有一对一持久 execution；队列只保存唤醒参数，启动中断不重放 Provider
+- Owner 可在前端为当前 World 登记多个绝对根各不相同的工作区，single execution 可按角色/工作区双开关使用
+  `workspace_list/read/write`；路径、symlink、敏感文件、原子写和 hash 并发由服务端执行层约束
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
@@ -27,8 +30,8 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
-下一阶段是当前 World 工作区与单角色原生文件工具（W1a）；富媒体产物、Orchestrator 与 MCP 产品接入仍在
-后续里程碑。
+W1a 完成人工验收后，下一阶段是无任意 Shell 的结构化基础命令（W1b）；富媒体产物、Orchestrator 与 MCP
+产品接入仍在后续里程碑。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 
@@ -47,6 +50,10 @@ cd backend
 python scripts/seed_dev_provider.py
 python scripts/run_world_server.py --world default --host 0.0.0.0 --port 8000
 ```
+
+Workspace 根由当前 World Owner 在设置中心手动输入绝对路径；一个 World 可以登记多个彼此无关的目录，
+不需要部署环境预先配置目录白名单。Owner 仍需为工作区和具体角色分别开启原生文件能力。文件内容可能
+发送给角色绑定的模型厂商；Agent 工具只能访问会话绑定的 Workspace 根以内。W1a 不提供 Bash、Git 或 worktree。
 
 脚本会把凭据按产品同一条路径加密落库，并创建/更新开发用的模型配置与角色；不打印任何 Key。
 界面里选中该角色即可与真实模型对话。
@@ -87,9 +94,10 @@ npm run test:e2e:real-world
 ```
 
 它会创建 `data/roleplex-real-world-e2e-<时间戳>/default/`，包含完整世界元数据、数据库、JWT/API Key
-双密钥和 files 目录，并保留最近 5 轮。该命令同样联网计费、关闭 trace/video，执行 C2 两轮真实单聊和
-M4a 两角色真实串行群聊，但不测试世界切换。世界切换由 fake Provider 的 `test:e2e:worlds` 确定性覆盖：
-它会在 alpha 世界完成 C2 单聊与 M4a 群聊断言，再执行 alpha→beta 切换。
+双密钥和 files 目录，并在 `/home/chen/workspace/testworkspace/roleplex-real-world-e2e-<时间戳>/default/`
+创建独立外部工作区，最近 5 轮一并保留。该命令同样联网计费、关闭 trace/video，执行 C2 两轮真实单聊、
+M4a 两角色真实串行群聊和 W1a 真实工具写读更新闭环，但不测试世界切换。世界切换由 fake Provider 的
+`test:e2e:worlds` 确定性覆盖：它会在 alpha/beta 各自外部工作区完成 W1a，并验证 C2/M4a 与切换隔离。
 
 真实 E2E 的 Owner 为 `realtest<时间戳>`，密码固定为 `Roleplex-Real-E2E-1`。数据库包含加密后的
 真实 Key，只能用于本机核对，不要分享或提交；离开当前实例密钥后其中的模型配置无法解密。

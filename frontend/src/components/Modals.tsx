@@ -1,9 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
-  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server,
+  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server, FolderKanban,
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { type Conversation, type Role } from '../api/client'
+import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 
 export interface ModalProps {
   onClose: () => void
@@ -11,12 +12,12 @@ export interface ModalProps {
 
 export interface SettingsModalProps {
   onClose: () => void
-  initialTab?: 'models' | 'worlds' | 'account'
+  initialTab?: 'models' | 'worlds' | 'workspaces' | 'account'
 }
 
 /** 综合系统与环境配置管理弹窗 (SettingsModal)。 */
 export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'models' | 'worlds' | 'account'>(initialTab)
+  const [activeTab, setActiveTab] = useState<'models' | 'worlds' | 'workspaces' | 'account'>(initialTab)
   const { 
     modelConfigs, createModelConfig, deleteModelConfig,
     worldName, worlds, worldSwitchingSupported, switchingWorld, switchWorld,
@@ -126,6 +127,25 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
               <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-500">单世界</span>
             )}
           </button>
+
+          {user?.is_owner && (
+            <button
+              type="button"
+              id="settings-tab-workspaces"
+              role="tab"
+              aria-selected={activeTab === 'workspaces'}
+              aria-controls="settings-panel-workspaces"
+              onClick={() => setActiveTab('workspaces')}
+              className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all ${
+                activeTab === 'workspaces'
+                  ? 'border-indigo-500 text-indigo-400 bg-slate-900/80 rounded-t-xl'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 rounded-t-xl'
+              }`}
+            >
+              <FolderKanban size={14} />
+              <span>工作区</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -441,6 +461,16 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
                   <li><strong>单世界数据隔离</strong>：所有会话、角色与模型配置均只保存在当前运行的物理世界数据库中。</li>
                 </ul>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'workspaces' && user?.is_owner && (
+            <div
+              id="settings-panel-workspaces"
+              role="tabpanel"
+              aria-labelledby="settings-tab-workspaces"
+            >
+              <WorkspaceSettingsPanel />
             </div>
           )}
         </div>
@@ -792,6 +822,25 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                 >
                   抓取 URL (fetch_url)
                 </button>
+                {([
+                  ['workspace_list', '列出工作区'],
+                  ['workspace_read', '读取工作区文件'],
+                  ['workspace_write', '写入工作区文件'],
+                ] as const).map(([tool, label]) => (
+                  <button
+                    key={tool}
+                    type="button"
+                    aria-pressed={form.builtin_tools.includes(tool)}
+                    onClick={() => toggleTool(tool)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
+                      form.builtin_tools.includes(tool)
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {label} ({tool})
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -857,14 +906,15 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
 
 /** 新建会话弹窗 (ConversationModal)。 */
 export function ConversationModal({ onClose }: ModalProps) {
-  const { roles, createConversation } = useAppStore()
+  const { roles, workspaceBindings, createConversation } = useAppStore()
   
   const [form, setForm] = useState({
     title: '',
     type: 'single' as 'single' | 'group',
     selected_role_ids: [] as number[],
     orchestrator_enabled: false,
-    orchestrator_role_id: 0
+    orchestrator_role_id: 0,
+    workspace_binding_id: 0,
   })
   
   const [busy, setBusy] = useState(false)
@@ -876,7 +926,8 @@ export function ConversationModal({ onClose }: ModalProps) {
       type: nextType, 
       selected_role_ids: [], 
       orchestrator_enabled: false, 
-      orchestrator_role_id: 0 
+      orchestrator_role_id: 0,
+      workspace_binding_id: 0,
     }))
   }
 
@@ -924,7 +975,8 @@ export function ConversationModal({ onClose }: ModalProps) {
       title: form.title,
       role_ids: form.selected_role_ids,
       orchestrator_enabled: form.type === 'group' ? form.orchestrator_enabled : false,
-      orchestrator_role_id: (form.type === 'group' && form.orchestrator_enabled) ? form.orchestrator_role_id || null : null
+      orchestrator_role_id: (form.type === 'group' && form.orchestrator_enabled) ? form.orchestrator_role_id || null : null,
+      workspace_binding_id: form.type === 'single' ? form.workspace_binding_id || null : null,
     }
 
     try {
@@ -1009,10 +1061,12 @@ export function ConversationModal({ onClose }: ModalProps) {
               {roles.map((role) => {
                 const isChecked = form.selected_role_ids.includes(role.id)
                 return (
-                  <div 
+                  <button
+                    type="button"
                     key={role.id}
                     onClick={() => handleRoleToggle(role.id)}
-                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-slate-900 border cursor-pointer transition ${
+                    aria-pressed={isChecked}
+                    className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-slate-900 border cursor-pointer transition ${
                       isChecked 
                         ? 'border-indigo-500/30 bg-indigo-950/20 text-white' 
                         : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -1025,7 +1079,7 @@ export function ConversationModal({ onClose }: ModalProps) {
                       <p className="text-xs font-bold text-slate-200 truncate">{role.name}</p>
                       <p className="text-[10px] text-slate-500 truncate mt-0.5">Model: {role.model_name}</p>
                     </div>
-                  </div>
+                  </button>
                 )
               })}
 
@@ -1043,6 +1097,30 @@ export function ConversationModal({ onClose }: ModalProps) {
                 群聊只有明确 @ 的角色会依次回复；没有 @ 时只记录消息。Orchestrator 将在 M4b 开放。
               </p>
             </div>
+          )}
+
+          {form.type === 'single' && (
+            <label className="block">
+              <span className="text-slate-400 font-medium">工作区（可选）</span>
+              <select
+                aria-label="会话工作区"
+                value={form.workspace_binding_id}
+                onChange={(event) => setForm({ ...form, workspace_binding_id: Number(event.target.value) })}
+                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value={0}>不绑定工作区</option>
+                {workspaceBindings
+                  .filter((workspace) => workspace.active && workspace.availability === 'available')
+                  .map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {workspace.display_name} · {workspace.root_path}
+                    </option>
+                  ))}
+              </select>
+              <span className="mt-1 block text-[10px] leading-relaxed text-slate-500">
+                仅当角色和工作区都开启原生文件能力时，Owner 消息才会向模型暴露文件工具。
+              </span>
+            </label>
           )}
 
           {errorMsg && (

@@ -12,7 +12,21 @@ export default async function globalTeardown() {
   } catch {
     return
   }
-  const runs = entries.filter((name) => name.startsWith('roleplex-real-world-e2e-')).sort()
+  const runs = entries.filter((name) => /^roleplex-real-world-e2e-\d{14}$/.test(name)).sort()
   const stale = runs.slice(0, Math.max(0, runs.length - KEEP_RUNS))
   await Promise.all(stale.map((name) => rm(path.join(dataDir, name), { recursive: true, force: true }).catch(() => undefined)))
+
+  const workspaceRoot = process.env.ROLEPLEX_E2E_WORKSPACE_ROOT
+  if (!workspaceRoot || path.resolve(workspaceRoot) === path.parse(path.resolve(workspaceRoot)).root) return
+  let workspaceEntries: string[]
+  try {
+    workspaceEntries = await readdir(workspaceRoot)
+  } catch {
+    return
+  }
+  const workspaceRuns = workspaceEntries.filter((name) => /^roleplex-real-world-e2e-\d{14}$/.test(name)).sort()
+  const staleWorkspaces = workspaceRuns.slice(0, Math.max(0, workspaceRuns.length - KEEP_RUNS))
+  await Promise.all(staleWorkspaces.map((name) => (
+    rm(path.join(workspaceRoot, name), { recursive: true, force: true }).catch(() => undefined)
+  )))
 }
