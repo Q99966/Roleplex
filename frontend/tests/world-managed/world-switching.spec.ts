@@ -13,7 +13,10 @@ const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8003'
 const workspaceRoot = process.env.ROLEPLEX_E2E_WORKSPACE_ROOT ?? '/home/chen/workspace/testworkspace'
 const workspaceRelativeRoot = process.env.ROLEPLEX_E2E_WORKSPACE_RELATIVE_ROOT ?? 'missing'
 
-/** 通过设置中心登记并开启当前 World 的原生文件能力。 */
+/** 通过设置中心登记并开启当前 World 的文件与命令能力。
+ * @param page 当前浏览器页面。
+ * @param world 本轮测试 World。
+ */
 async function registerWorkspace(page: Page, world: 'alpha' | 'beta'): Promise<string> {
   const displayName = `${world.toUpperCase()} E2E 工作区`
   await page.getByRole('button', { name: /管理运行世界与存储/ }).click()
@@ -25,11 +28,17 @@ async function registerWorkspace(page: Page, world: 'alpha' | 'beta'): Promise<s
   await expect(page.getByRole('heading', { name: displayName })).toBeVisible()
   await page.getByRole('button', { name: /原生文件读写 · 关闭/ }).click()
   await expect(page.getByRole('button', { name: /原生文件读写 · 已开启/ })).toBeVisible()
+  await page.getByRole('button', { name: /结构化命令 · 关闭/ }).click()
+  await expect(page.getByRole('button', { name: /结构化命令 · 已开启/ })).toBeVisible()
   await page.getByRole('button', { name: '关闭系统与环境设置' }).click()
   return displayName
 }
 
-/** 创建启用 W1a 三工具的角色，并从 UI 创建绑定工作区的 single 会话。 */
+/** 创建启用文件与命令的角色，并验证绑定 single 会话。
+ * @param page 当前浏览器页面。
+ * @param world 本轮测试 World。
+ * @param workspaceName 通过设置页登记的工作区名称。
+ */
 async function runWorkspaceFlow(page: Page, world: 'alpha' | 'beta', workspaceName: string): Promise<void> {
   const roleName = await page.evaluate(async ({ base, suffix }) => {
     const token = localStorage.getItem('roleplex_token')
@@ -47,7 +56,7 @@ async function runWorkspaceFlow(page: Page, world: 'alpha' | 'beta', workspaceNa
       system_prompt: '按用户要求使用当前 execution 绑定的工作区工具。',
       model_config_id: config.id,
       model_name: 'fake-model',
-      builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write'],
+      builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_run_command'],
     })
     return role.name as string
   }, { base: backend, suffix: `${world}-${Date.now()}` })
@@ -69,6 +78,16 @@ async function runWorkspaceFlow(page: Page, world: 'alpha' | 'beta', workspaceNa
   }
   const content = await readFile(path.join(workspaceRoot, workspaceRelativeRoot, world, 'hello.txt'), 'utf-8')
   expect(content).toBe('W1a 第二版')
+  await page.getByLabel('消息输入框').fill('[W1B_FAKE_E2E]')
+  await page.getByLabel('发送消息').click()
+  await expect(page.getByText('W1b 结构化命令流程结束。')).toBeVisible({ timeout: 30_000 })
+  for (const command of ['pwd', 'list', 'read', 'count']) {
+    await expect(page.getByText(`命令 ${command}`, { exact: true })).toBeVisible()
+  }
+  await expect(page.getByText('退出码 0', { exact: true })).toHaveCount(4)
+  await page.getByLabel('消息输入框').fill('[W1B_DENIED]')
+  await page.getByLabel('发送消息').click()
+  await expect(page.getByText('WORKSPACE_PATH_INVALID', { exact: true })).toBeVisible()
 }
 
 /**

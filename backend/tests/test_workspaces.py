@@ -54,7 +54,7 @@ async def test_owner_can_register_multiple_absolute_workspace_roots_and_guest_ca
                 "world_name": settings.world_name,
                 "workspace_kinds": ["managed_directory"],
                 "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
-                "basic_commands_available": False,
+                "basic_commands_available": True,
                 "shell_available": False,
             }
             no_ack = await client.post("/api/workspaces", headers=owner_headers, json={

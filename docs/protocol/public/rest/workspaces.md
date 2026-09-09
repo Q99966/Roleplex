@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | 已实现（W1a，等待里程碑人工验收） |
+| 状态 | 已实现（W1a/W1b 已验收；群聊绑定与聊天标题区摘要属于 W2a） |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-09 |
 
 ## 范围与安全边界
 
@@ -42,8 +42,8 @@ Owner 触发的 single 会话、角色显式启用、会话绑定 active/availab
 }
 ```
 
-`availability` 为 `available/unavailable/busy/disabled`。`basic_commands_enabled` 与 `shell_enabled` 在 W1a
-固定为 false，只用于显示分层能力尚未开放，客户端不得发送开启请求。
+`availability` 为 `available/unavailable/busy/disabled`。W1b 起 `basic_commands_enabled` 可由 Owner 开启，
+与文件开关独立；`shell_enabled` 仍固定 false。命令契约见 [结构化命令](../../internal/workspace-commands.md)。
 
 ## 能力视图
 
@@ -56,7 +56,7 @@ GET /api/workspaces/capabilities
   "world_name": "default",
   "workspace_kinds": ["managed_directory"],
   "file_tools": ["workspace_list","workspace_read","workspace_write"],
-  "basic_commands_available": false,
+  "basic_commands_available": true,
   "shell_available": false
 }
 ```
@@ -88,7 +88,8 @@ DELETE /api/workspaces/{workspace_id}
 - `root_path` 必须是当前后端主机上的绝对路径；拒绝空字节、`~`、未展开环境变量和 glob，并保存 canonical 路径。
 - `create_directory=true` 只在精确目标不存在且父目录已经存在时创建一个空目录；不接管或覆盖既有目标。
 - 登记既有目录必须设置 `acknowledge_existing_content=true`，确认其中内容可能发送给模型。
-- `PATCH` 只接受 `active` 与 `file_tools_enabled`；禁用后不能新建 execution lease。
+- `PATCH` 接受 `active`、`file_tools_enabled` 与 `basic_commands_enabled`；禁用后不能新建 execution lease，
+  下一次工具调用重新校验能力。模型不能通过参数修改超时、输出限制或环境。
 - `DELETE` 只解除数据库登记并让会话绑定置空，不删除物理目录；重复解除返回 `404 WORKSPACE_NOT_FOUND`。
 - 列表按自增 ID 稳定排序；复核重新 canonicalize 绝对根并更新 `last_validated_at`。路径在 World 移到另一台
   主机后不存在时显示 unavailable，Owner 可解除后按新路径重新登记。

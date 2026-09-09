@@ -61,7 +61,7 @@ async def capabilities(_owner: Annotated[User, Depends(require_owner)]) -> dict:
         "world_name": settings.world_name,
         "workspace_kinds": ["managed_directory"],
         "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
-        "basic_commands_available": False,
+        "basic_commands_available": True,
         "shell_available": False,
     }
 
@@ -175,7 +175,14 @@ async def update_workspace(
     user: Annotated[User, Depends(require_owner)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """启用/禁用 binding 或 W1a 原生文件工具，不开放后续命令/Shell 能力。"""
+    """启用/禁用 binding、文件与结构化命令能力。
+
+    Args:
+        workspace_id：当前 World 的绑定 ID。
+        payload：Owner 提交的能力变更。
+        user：已通过 Owner 鉴权的用户。
+        session：本次短事务数据库会话。
+    """
     binding = await owned_workspace(session, workspace_id, user.id)
     if payload.active is not None:
         if payload.active:
@@ -186,6 +193,8 @@ async def update_workspace(
         binding.active = payload.active
     if payload.file_tools_enabled is not None:
         binding.file_tools_enabled = payload.file_tools_enabled
+    if payload.basic_commands_enabled is not None:
+        binding.basic_commands_enabled = payload.basic_commands_enabled
     binding.updated_at = datetime.now(timezone.utc)
     await session.commit()
     return await _response(session, binding)

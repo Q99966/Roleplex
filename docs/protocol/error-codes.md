@@ -157,6 +157,11 @@ WebSocket error frame 使用：
 | `WORKSPACE_FILE_REVISION_CONFLICT` | 已实现 | 工具 | — | rejected | yes | 目标已存在但未提供匹配 hash，或并发更新后 hash 已变化 |
 | `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不存在；W1a 不自动创建父目录 |
 | `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现（内部） | 工具 | — | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
+| `COMMAND_NOT_ALLOWED` | 已实现（W1b） | 工具 | — | rejected | no | command 不是登记的稳定 ID |
+| `COMMAND_ARGUMENT_INVALID` | 已实现（W1b） | 工具 | — | rejected | conditional | 参数不符合该命令 schema 或含禁止语法 |
+| `COMMAND_NOT_SUPPORTED` | 已实现（W1b） | 工具 | — | rejected | conditional | 当前平台无法提供受控命令 adapter |
+| `COMMAND_TIMEOUT` | 已实现（W1b） | 工具 | — | timeout | conditional | 命令超过部署超时，进程树已回收 |
+| `COMMAND_FAILED` | 已实现（W1b） | 工具 | — | failed | conditional | 受控进程启动失败或非零退出；不暴露宿主异常 |
 
 适用接口和路径隐藏规则见 [当前 World 工作区](public/rest/workspaces.md)。
 

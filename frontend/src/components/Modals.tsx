@@ -826,6 +826,7 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                   ['workspace_list', '列出工作区'],
                   ['workspace_read', '读取工作区文件'],
                   ['workspace_write', '写入工作区文件'],
+                  ['workspace_run_command', '工作区结构化命令'],
                 ] as const).map(([tool, label]) => (
                   <button
                     key={tool}

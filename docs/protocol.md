@@ -34,7 +34,8 @@ docs/protocol/
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
 | REST 会话管理与回收站 | 已实现（单聊与 M4a 群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
-| REST 当前 World 工作区 | 已实现（W1a） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
+| REST 当前 World 工作区 | 已实现（W1a/W1b） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
+| 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（单聊与 M4a 群聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（单聊与 M4a 群聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |

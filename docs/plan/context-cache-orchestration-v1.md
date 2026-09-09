@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | C0-C2、M4a、W0、E0 已完成；W1a Owner 绝对根版本已实现待人工验收 |
+| 状态 | C0-C2、M4a、W0、E0、W1a、W1b 已完成并经人工验收；W1c 尚未开始 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-09 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
@@ -22,8 +22,10 @@ Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该
   M4a 已于 2026-09-01 经用户人工验收；2026-09-01 已确认先定义 W0 工作区/Shell 契约，再实施 E0，随后
   以 W1a 原生文件、W1b 结构化命令、W1c 审批 Shell 逐层跑通单角色闭环，最后才进入 Repository、worktree
   和 M4b fan-out。
-  E0 已完成编码、自动验证和用户人工验收；W1a 已按用户确认修订为“每个 World Owner 在前端为多个
-  Workspace 分别配置绝对根”，并已通过 fake/真实 managed-world 验证，当前等待人工验收；W1b 及后续阶段尚未开始。
+  E0 已完成编码、自动验证和用户人工验收；W1a 已按用户确认实现“每个 World Owner 在前端为多个
+  Workspace 分别配置绝对根”，通过 fake/真实 managed-world 验证并于 2026-09-08 提交 `c52775f`；W1b
+  已实现，验收记录统一见[仓库工作区计划](agent-repository-workspaces-v1.md#w1b-实现与验证2026-09-08)。
+  W1c 及后续阶段尚未开始。所有聊天标题区显示 Workspace、群聊绑定和安全摘要已明确纳入 W2a。
 - 新增唯一 ContextBuilder：按当前消息 ID 截止，读取终态历史、做角色视角投影、确定性前缀、硬预算、
   UTF-8 保守估算和分层 SHA-256；当前消息不重复进入 history。
 - Role 新增 `context_window_tokens`，默认 200K；服务 ceiling 默认 2M；前端支持 128K/200K/1M 与自定义，
@@ -81,7 +83,7 @@ C3 和 C4 完成。
 - 默认部署继续使用 SQLite、单进程、单 worker；不为了缓存或记忆引入外部数据库服务。
 - 当前生成服务已通过唯一 ContextBuilder 向 `run_agent()` 传入终态历史和预算诊断。
 - `messages` 已有 sender、reply、mentions、parts、status、revision、chain 和 meta 字段。
-- `conversations` 已预留 group、Orchestrator 开关和角色字段，但行为仍属预留。
+- `conversations` 的 group 行为已由 M4a 实现；Orchestrator 开关和角色字段仍属预留。
 - Provider usage 已统一读取输入、输出、总量、缓存命中和缓存写入 token，并计算可追溯命中比；fake 不伪造 usage。
 - 工具执行已有默认封闭、Owner/Guest 危险级别拦截和审计基础。
 

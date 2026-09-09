@@ -9,6 +9,7 @@ data/*.db
 data/*.db-*
 data/files/
 data/roleplex-world-e2e-*/
+data/roleplex-command-e2e-*/
 data/roleplex-real-world-e2e-*/
 data/.jwt-secret
 data/.api-key-secret

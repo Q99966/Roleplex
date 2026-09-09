@@ -134,4 +134,23 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             ],
             delay=delay,
         )
+    if '[W1B_FAKE_E2E]' in prompt:
+        commands = [('pwd', {}), ('list', {}), ('read', {'path': 'hello.txt'}), ('count', {'path': 'hello.txt'})]
+        return ScriptedChatModel(turns=[
+            *[ScriptedTurn(tool_calls=[{
+                'name': 'workspace_run_command', 'args': {'command': command, 'args': args}, 'id': f'w1b_{command}',
+            }]) for command, args in commands],
+            ScriptedTurn(text='W1b 结构化命令流程结束。'),
+        ], delay=delay)
+    for marker, path in [
+        ('[W1B_DENIED]', '../outside'), ('[W1B_OUTPUT]', 'output.txt'),
+        ('[W1B_TIMEOUT]', 'timeout.txt'), ('[W1B_CANCEL]', 'cancel.txt'),
+        ('[W1B_EXIT]', 'exit.txt'),
+    ]:
+        if marker in prompt:
+            return ScriptedChatModel(turns=[
+                ScriptedTurn(tool_calls=[{
+                    'name': 'workspace_run_command', 'args': {'command': 'read', 'args': {'path': path}}, 'id': 'w1b_read',
+                }]), ScriptedTurn(text='W1b 命令场景结束。'),
+            ], delay=delay)
     return ScriptedChatModel(turns=[ScriptedTurn(text=FAKE_REPLY_TEMPLATE.format(prompt=prompt))], delay=delay)

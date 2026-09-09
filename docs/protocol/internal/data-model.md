@@ -237,7 +237,8 @@ attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本�
 | `root_path` | 当前主机的规范绝对根；当前 World 内唯一，不能进入日志或 Guest 响应 |
 | `workspace_kind` | W1a 固定 `managed_directory` |
 | `file_tools_enabled` | 是否允许满足完整执行授权矩阵的 W1a 原生文件工具 |
-| `basic_commands_enabled` / `shell_enabled` | W1a 固定 false，分别到 W1b/W1c 才开放 |
+| `basic_commands_enabled` | 默认 false，W1b 起可单独启用结构化命令，与文件能力独立 |
+| `shell_enabled` | 固定 false，W1c 才开放 |
 | `active` | 停用后不能绑定新会话或继续执行工具调用 |
 | `last_validated_at` | 后端最近一次成功 canonical 复核目录的时间 |
 | `created_at` / `updated_at` | 生命周期时间 |
@@ -348,7 +349,7 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 | `execution_id` / `workspace_binding_id` | W1a 起关联实际 execution 与可选 workspace；解除登记后 workspace 可置空 |
 | `tool_name` | 工具名 |
 | `args_summary` | 参数摘要，**不得写入凭据或敏感参数原文** |
-| `status` | 执行结果状态：`ok`（正常返回）、`rejected`（危险级别被执行层拒绝）、`error`（工具自身失败） |
+| `status` | 执行结果状态：`ok`（正常返回）、`rejected`（危险级别被执行层拒绝）、`error`（工具自身失败）、`cancelled`（W1b 命令因停止而取消，正常终态） |
 | `duration_ms` | 耗时 |
 | `created_at` | 记录时间 |
 

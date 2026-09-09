@@ -82,7 +82,7 @@ export function WorkspaceSettingsPanel() {
           </span>
         </div>
         <p className="mt-3 leading-relaxed text-slate-400">
-          文件内容可能发送给角色绑定的模型厂商。W1a 只提供受路径约束的原生读写，不提供 Bash、Git 或 worktree。
+          文件内容和命令输出可能发送给角色绑定的模型厂商。可开启原生文件读写和目录、读取、计数等固定命令。
         </p>
       </section>
 
@@ -229,9 +229,17 @@ export function WorkspaceSettingsPanel() {
                 >
                   <FileText size={14} />原生文件读写 · {binding.file_tools_enabled ? '已开启' : '关闭'}
                 </button>
-                <div className="flex min-h-11 items-center rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-slate-600">
-                  结构化命令 · W1b
-                </div>
+                <button
+                  type="button"
+                  aria-pressed={binding.basic_commands_enabled}
+                  disabled={busy || !binding.active}
+                  onClick={() => void run(() => updateWorkspaceBinding(binding.id, { basic_commands_enabled: !binding.basic_commands_enabled }))}
+                  className={`flex min-h-11 items-center rounded-xl border px-3 py-2 text-left ${binding.basic_commands_enabled
+                    ? 'border-indigo-500/50 bg-indigo-950/40 text-indigo-200'
+                    : 'border-slate-800 bg-slate-900/60 text-slate-500'}`}
+                >
+                  结构化命令 · {binding.basic_commands_enabled ? '已开启' : '关闭'}
+                </button>
                 <div className="flex min-h-11 items-center rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-slate-600">
                   审批 Shell · W1c
                 </div>

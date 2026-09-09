@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端、工具安全与测试维护者 |
-| 状态 | W0、E0 已完成并经人工验收；W1a Owner 绝对根版本已实现并通过自动/真实验证，等待人工验收 |
+| 状态 | W0、E0、W1a、W1b 已完成并经人工验收；下一阶段 W1c 尚未开始 |
 | 计划版本 | 1 |
 | 上游计划 | [上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-09 |
 
 本文定义 Orchestrator fan-out 之前必须具备的代码协作基础：持久 execution 身份、Owner 授权的本地 Git
 仓库、受边界约束的文件/Git 工具、命令执行和每次写执行独占的 Git worktree。本文是这些能力的范围、
@@ -18,7 +18,7 @@
 ## 一、调整原因与当前事实
 
 当前 Agent 循环和工具领域事件已经存在，W1a 已把当前 World Workspace Binding 与原生文件工具接入单角色
-链路；MCP manager 仍只完成生命周期风险验证，项目尚没有命令执行、仓库绑定或 Git worktree。此时先实现
+链路；W1b 已增加固定结构化命令，MCP manager 仍只完成生命周期风险验证，仓库绑定与 Git worktree 尚未实现。此时先实现
 M4b 仍只能并行生成有限文字/文件意见，不能形成“读取代码 →
 修改 → 测试 → 比较 diff → 汇总”的真实协作闭环。
 
@@ -41,6 +41,42 @@ W0 当前只固定设置、权限和运行契约；E0 提供命令审计与取�
 三个切片都验收后才进入 Repository 和 worktree。
 M4b 的 planning/final 与并行子任务在 W3 验收之后实现。不得把基础 Shell、仓库绑定、worktree 和 M4b
 堆成一个故障时无法定位层级的大改动。
+
+### W1b 实现与验证（2026-09-08）
+
+已按本节计划实现 `workspace_run_command`、角色/工作区独立开关、固定 Python 隔离 worker、最小环境、
+有界双流、退出码、超时/取消和进程树清理；复用现有表，无新增迁移。默认 30 秒/64 KiB、硬上限
+300 秒/1 MiB 沿用 W0，通过主机配置调整。公开与内部字段统一见
+[结构化命令协议](../protocol/internal/workspace-commands.md)，不在计划重复维护。
+
+停止时等待进程回收后更新卡片/审计；若已经观察到命令退出结果，则先完成该事实的持久化，再停止生成，
+避免漏记或同时记成功/取消。重启后的遗留卡片只标记执行中断，不猜测命令结果、不重放 Provider 或子进程。
+
+验证覆盖：后端真实受控子进程、权限复核矩阵、启动交接取消、父进程先退出、输出截断、并行命令串行化、
+停止/落库竞态及重启降级；普通浏览器回归、alpha/beta managed-world 命令与越界路径、独立 command E2E 的
+输出/非零退出/超时/停止与刷新恢复。移除父进程路径校验、放开环境继承的两项内存变异均使对应安全测试变红。
+SQLite 升降级、ORM metadata/外键检查和 PostgreSQL 离线 SQL 通过。
+
+本轮后端全量回归 `121 passed, 3 skipped, 8 deselected`；普通 fake E2E 20 passed，fake managed-world 与
+独立 command E2E 各 1 passed，前端 build 通过。命令 E2E 还校验九次工具开始/结束身份一一对应、
+success/failed/timeout/rejected/cancelled 语义及输出原文不落日志；中文页面截图已检查。
+
+当前 Linux 自动验证已通过；Windows Job Object 清理实现尚未在 Windows 实机验证，必须如实保留此覆盖缺口。
+2026-09-08 用户补充确认：W1b 必须增加真实 Provider managed-world 验收；此前仅 fake 验证的结论不代表
+该阶段验收完整。复用既有 `test:e2e:real-world` 与正常世界包装器，真实模型必须实际调用四种命令，读取
+本轮文件中的未知校验值并根据真实结果回答；W1c 的 Shell smoke 不提前执行。
+W1b 已于 2026-09-09 经用户人工验收，并获准独立提交；Windows 实机覆盖缺口继续保留，本轮不进入 W1c/W2a。
+
+2026-09-09 已补验通过：`npm run test:e2e:real-world -- commands-provider.spec.ts`（1 passed），复用正常
+世界包装器和原 real-world 配置，没有使用命令故障注入入口。DeepSeek V4 Flash 实际按顺序完成四种命令，
+回答中的随机校验值、字节数和行数与本轮文件一致；四次工具完成事件共用同一 execution，工具卡已持久化。
+5 次真实 Provider 调用报告 input/output/total=`5045/400/5445`、cache hit=`3584`；只记录厂商返回事实，
+不将本轮数值视为性能门槛。日志脱敏断言通过，新用例关闭截图/trace/video，失败只保留安全阶段标签。
+本轮记录：`logs/tests/e2e/real/2026-09-09/12-58-36_6850509d/summary.json`。
+
+测试目录已按[测试指南](../testing/README.md#四数据账号与保留)分层；72 个旧目录完成非删除归整，保留的
+普通测试库中 21 条工作区绑定已同步，execution 路径快照保留历史值。分层目录下的命令测试 14 passed，
+前端 build 通过。
 
 ## 二、术语与边界
 
@@ -379,8 +415,8 @@ W1a 实现验证（2026-09-02，2026-09-08 按 Owner 绝对根契约复核）：
 E2E `20 passed`；fake managed-world 在 alpha/beta 各自外部工作区完成五次工具调用、hash 更新和切换隔离；
 真实 DeepSeek managed-world 专用 W1a smoke 通过，实际完成 list → write → read → write → read 与最终回答，
 Provider 共 5 次调用，汇总 input/output/total/cache hit=`8811/954/9765/7168`，实际脱敏 base URL 为
-`https://api.deepseek.com`。文件名、两版内容和宿主绝对路径未进入结构化日志。当前等待用户人工验收，
-不得开始 W1b。
+`https://api.deepseek.com`。文件名、两版内容和宿主绝对路径未进入结构化日志。用户已于 2026-09-08
+人工验收并提交 `c52775f`；后续变更不得顺带改变 W1a 的 Owner/Guest、路径 containment 或原子写语义。
 
 ## 六、W2a：Repository Binding
 
@@ -424,9 +460,16 @@ stash、reset 或复制未提交改动；Owner 必须自行形成干净 base com
 
 - Owner 在工作区设置中把现有 Workspace Binding 复核为仓库、查看 Git 状态或移除 repository 能力；Guest
   不能访问仓库路径、Git 元数据或命令配置。
-- 群聊/单聊仍选择 active Workspace Binding；获得 repository 能力的行增加 Git/base/dirty 状态，不创建
-  第二套选择器。
-- 会话成员只能看到工作区显示名、是否可用和当前工具能力，不返回本机绝对路径。
+- W2a 正式把 Workspace Binding 扩展到群聊；群聊/单聊都可选择当前 World 的 active Workspace Binding，
+  绑定/更换/解绑继续使用会话 revision 乐观锁。W3 前群聊绑定只建立资源身份，不开放多个角色直接写同一
+  managed directory；写协作必须等待独立 worktree。
+- 所有单聊和群聊的标题区都显示“当前工作区”：未绑定时明确显示未绑定，已绑定时显示工作区名称、
+  available/unavailable/busy/disabled 状态和当前已实现能力，不能要求用户从设置页或 ID 反推。
+- 标题区为 Owner 提供更换/解绑入口；其他会话成员只能看到工作区显示名、状态和能力安全摘要，不能获得
+  本机绝对路径。Owner 可以从标题区进入详情查看绝对根和 Repository 状态。
+- 公开会话表示需要增加会话范围的安全 `workspace_summary`，或提供等价的成员可读摘要接口；不能让 Guest
+  为显示名称而调用 Owner-only Workspace 列表，也不能把 `root_path` 复制进公开会话 payload。
+- 获得 repository 能力的工作区行增加 Git/base/dirty 状态，不创建第二套选择器。
 - 注册和绑定接口使用稳定错误码，不把 Git stderr 或宿主路径原样回显给 Guest。
 
 ## 七、W2b：只读文件与 Git 工具
@@ -574,7 +617,10 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 - W1a 同时要求 fake managed-world 和专用真实 Provider managed-world：fake 固定覆盖路径、权限、hash 并发与
   World 隔离，真实测试必须由模型实际调用 `workspace_list/read/write`，并从工具返回的真实文件内容形成回答。
   两层分别使用同 stamp 的独立 World 与外部 workspace，不能复用上一轮目录，也不能让测试接触 Roleplex 源码。
-- W1b 的确定性进程边界以 fake Provider 为主；W1c 另用独立真实 Provider 命令验证一次简单 Shell 闭环。
+- W1b 必须同时完成 fake managed-world 和真实 Provider managed-world。真实用例复用原有 real-world
+  测试入口、独立 World 和外部用例目录，使用正常产品命令 adapter，验证实际 pwd/list/read/count 调用、
+  真实文件校验值、字节/行数、持久 execution/工具卡以及 usage/日志脱敏；不能用 command 专项故障注入替代。
+  超时/取消/非零退出等确定性进程边界仍由 fake 专项测试覆盖。W1c 另用独立真实 Provider 命令验证一次简单 Shell 闭环。
   W2a/W2b/W3 的安全和 Git 生命周期以 fake/临时仓库为主。M4b 接入后再用 real-world 验证真实模型在临时
   仓库完成“读取 → 补丁 → 测试 → diff → 汇总”。所有
   真实测试运行前说明联网和费用，关闭 trace/video，凭据不进入浏览器或 workspace。
@@ -583,11 +629,13 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 
 - **W0**：设置、工具 schema、权限、日志和测试门槛完成文档确认，不产生产品提交。
 - **E0**：持久 execution 身份和重启降级通过，人工验收后独立提交。
-- **W1a**：当前 World 工作区列表、single 绑定、原生 list/read/write、原子写与 hash 冲突通过；fake 与真实
-  Provider managed-world 均完成独立目录的工具闭环，人工验收后独立提交。
-- **W1b**：结构化 command allowlist、cwd/环境/输出/超时/取消/进程树通过，独立提交。
+- **W1a（已完成，`c52775f`）**：当前 World 工作区列表、single 绑定、原生 list/read/write、原子写与 hash
+  冲突通过；fake 与真实 Provider managed-world 均完成独立目录的工具闭环并经人工验收。
+- **W1b**：结构化 command allowlist、cwd/环境/输出/超时/取消/进程树通过，且 fake 与真实 Provider
+  managed-world 均完成命令闭环；人工验收后独立提交。
 - **W1c**：Shell 审批、stdin/no-profile、拒绝/过期/重启和真实 Provider smoke 通过，独立提交。
-- **W2a**：Owner 仓库注册/复核/绑定、主机迁移 unavailable 和 dirty 提示通过，独立提交。
+- **W2a**：Owner 仓库注册/复核/绑定、群聊 Workspace Binding、所有聊天标题区的工作区摘要与 Owner
+  更换/解绑入口、主机迁移 unavailable 和 dirty 提示通过，独立提交。
 - **W2b**：只读文件/Git 工具及路径、敏感内容、Owner/Guest 边界通过，独立提交。
 - **W3**：worktree 隔离、补丁、命令 profile、复用 Shell 运行器、retained/clean 清理通过，独立提交。
 - **M4b**：最后验收并行代码协作，不把 W1a/W1b/W1c/W2a/W2b/W3 和 Orchestrator 堆成一个提交。

@@ -133,8 +133,9 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 - `text`：`{"type":"text","text":"占位文本"}`。
 - `tool_call`：`{"type":"tool_call","call_id":"占位调用","tool_name":"占位工具","status":"running","duration_ms":12}`。
-  `status` 为 `running | success | failed | rejected`；`duration_ms` 只在结束后出现。为避免泄密，公开 part
-  不含原始参数或工具输出。
+  `status` 为 `running | success | failed | rejected | cancelled`；`duration_ms` 只在结束后出现。为避免泄密，公开 part
+  不含原始参数或工具输出。W1b 兼容新增可选 `command`、`command_status`、`exit_code`、`truncated`、
+  `error_code`，含义见 [结构化命令](../../internal/workspace-commands.md)；未知字段忽略。
 
 进程重启时遗留的 `pending`/`generating` 消息会被恢复为 `interrupted`。
 

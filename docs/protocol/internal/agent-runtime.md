@@ -21,7 +21,7 @@
 |---|---|---|
 | `TextDelta` | 模型输出的一段文本增量 | `text` |
 | `ToolCallStarted` | 一次工具调用开始 | `call_id`、`tool_name`、`args_summary` |
-| `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary` |
+| `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary`；W1b 可选 `command_summary`，见 [命令契约](workspace-commands.md) |
 | `ProviderCallStarted` | 一次模型 API 调用开始 | `call_index` |
 | `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存读写 token 与可选命中比 |
 | `MessageDone` | 本轮正常结束 | `text`（最终全文）、`usage` |
@@ -32,6 +32,7 @@
 
 `ToolCallFinished.status` 取值：`ok`（正常返回）、`rejected`（危险级别在执行层被拒绝）、
 `error`（工具自身抛错）。被拒绝属于正常结束路径，本轮生成仍应完成。
+W1b 命令取消时调度层在等待进程回收后，以 `cancelled` 补齐未收到结束事件的审计与工具卡；不恢复模型调用。
 
 ## ContextBuilder 边界
 

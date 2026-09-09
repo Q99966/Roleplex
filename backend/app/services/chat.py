@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
+from contextvars import copy_context
 from datetime import datetime, timezone
 from time import perf_counter
 
@@ -223,6 +225,7 @@ async def _update_tool_part(
     tool_name: str,
     status: str,
     duration_ms: int | None = None,
+    command_summary: dict | None = None,
 ) -> None:
     """更新角色消息中的工具过程 part，并按事件先落库后广播。
 
@@ -232,8 +235,9 @@ async def _update_tool_part(
         generation_id：关联 generation。
         call_id：本轮内配对工具开始与结束的标识。
         tool_name：允许向会话成员展示的工具名称。
-        status：`running/success/failed/rejected`。
+        status：`running/success/failed/rejected/cancelled`。
         duration_ms：结束时的耗时；开始事件为空。
+        command_summary：防腐层已按允许字段提取的命令摘要，不包含路径或输出。
     """
     async with SessionLocal() as session:
         message = await session.get(Message, message_id)
@@ -255,7 +259,9 @@ async def _update_tool_part(
         if index is None:
             parts.append(replacement)
         else:
+            replacement = {**parts[index], **replacement}
             parts[index] = replacement
+        replacement.update(command_summary or {})
         message.parts_json = parts
         message.revision += 1
         pending = await event_store.append_event(
@@ -308,6 +314,36 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
     }
 
 
+async def _finish_tool_event(
+    event: ToolCallFinished, *, args_summary: str, conversation_id: int, message_id: int,
+    generation_id: int, role_id: int, triggered_by_user_id: int | None, execution_id: str,
+) -> None:
+    """由消息所有者顺序等待审计、过程卡与完成日志落地。
+
+    Args:
+        event：已观察到真实结果的领域事件。
+        args_summary：开始时提取的允许字段。
+        conversation_id：所属会话。
+        message_id：本轮角色消息。
+        generation_id：本轮生成。
+        role_id：执行角色。
+        triggered_by_user_id：原始触发者。
+        execution_id：持久执行身份。
+    """
+    await _record_tool_call(event, args_summary=args_summary, conversation_id=conversation_id,
+        message_id=message_id, role_id=role_id, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
+    status = {'ok': 'success', 'error': 'failed', 'rejected': 'rejected'}[event.status]
+    await _update_tool_part(conversation_id=conversation_id, message_id=message_id, generation_id=generation_id,
+        call_id=event.call_id, tool_name=event.tool_name, status=status, duration_ms=event.duration_ms,
+        command_summary=event.command_summary)
+    logger.info('tool.call_completed', extra={
+        'conversation_id': conversation_id, 'generation_id': generation_id,
+        'tool_name': event.tool_name, 'tool_call_id': event.call_id,
+        'status': 'timeout' if event.command_summary.get('command_status') == 'timed_out' else status,
+        'error_code': event.command_summary.get('error_code'), 'duration_ms': event.duration_ms,
+    })
+
+
 async def run_scheduled_generation(
     generation_id: int,
     conversation_id: int,
@@ -343,6 +379,7 @@ async def run_scheduled_generation(
     accumulated = ""
     delta_seq = 0
     tool_args: dict[str, str] = {}
+    command_calls: dict[str, tuple[ToolCallStarted, float]] = {}
     provider_call_count = 0
     first_ttft_ms: int | None = None
     usage_summary: dict[str, int | float | None] = {
@@ -494,6 +531,10 @@ async def run_scheduled_generation(
                 await event_store.publish_events(delta_event)
             elif isinstance(event, ToolCallStarted):
                 tool_args[event.call_id] = event.args_summary
+                command_summary = {}
+                if event.tool_name == 'workspace_run_command':
+                    command_calls[event.call_id] = (event, perf_counter())
+                    command_summary = json.loads(event.args_summary)
                 await _update_tool_part(
                     conversation_id=conversation_id,
                     message_id=assistant_id,
@@ -501,6 +542,7 @@ async def run_scheduled_generation(
                     call_id=event.call_id,
                     tool_name=event.tool_name,
                     status="running",
+                    command_summary=command_summary,
                 )
                 logger.info(
                     "tool.call_started",
@@ -510,30 +552,26 @@ async def run_scheduled_generation(
                     },
                 )
             elif isinstance(event, ToolCallFinished):
-                await _record_tool_call(
-                    event, args_summary=tool_args.pop(event.call_id, ""),
-                    conversation_id=conversation_id, message_id=assistant_id,
-                    role_id=role_id, triggered_by_user_id=triggered_by_user_id,
-                    execution_id=execution_id,
+                completion = _finish_tool_event(
+                    event, args_summary=tool_args.pop(event.call_id, ''), conversation_id=conversation_id,
+                    message_id=assistant_id, generation_id=generation_id, role_id=role_id,
+                    triggered_by_user_id=triggered_by_user_id, execution_id=execution_id,
                 )
-                await _update_tool_part(
-                    conversation_id=conversation_id,
-                    message_id=assistant_id,
-                    generation_id=generation_id,
-                    call_id=event.call_id,
-                    tool_name=event.tool_name,
-                    status={"ok": "success", "error": "failed", "rejected": "rejected"}[event.status],
-                    duration_ms=event.duration_ms,
-                )
-                logger.info(
-                    "tool.call_completed",
-                    extra={
-                        "conversation_id": conversation_id, "generation_id": generation_id,
-                        "tool_name": event.tool_name, "tool_call_id": event.call_id,
-                        "status": {"ok": "success", "error": "failed", "rejected": "rejected"}[event.status],
-                        "duration_ms": event.duration_ms,
-                    },
-                )
+                if event.tool_name == 'workspace_run_command':
+                    # 已观察到结果后，取消不能把审计提交与消息更新切断或补造第二条取消事实。
+                    completed_task = asyncio.create_task(completion, context=copy_context())
+                    cancelled = False
+                    while not completed_task.done():
+                        try:
+                            await asyncio.shield(completed_task)
+                        except asyncio.CancelledError:
+                            cancelled = True
+                    completed_task.result()
+                    command_calls.pop(event.call_id, None)
+                    if cancelled:
+                        raise asyncio.CancelledError
+                else:
+                    await completion
             elif isinstance(event, ProviderCallCompleted):
                 provider_call_count += 1
                 if first_ttft_ms is None:
@@ -655,6 +693,23 @@ async def run_scheduled_generation(
         return
     except asyncio.CancelledError:
         # 用户主动停止属于预期结果，按 stopped 落库而不是未处理异常。
+        for call_id, (started_event, started_at) in command_calls.items():
+            duration_ms = int((perf_counter() - started_at) * 1000)
+            await _record_tool_call(
+                ToolCallFinished(call_id, started_event.tool_name, 'cancelled', duration_ms, '{}'),
+                args_summary=started_event.args_summary, conversation_id=conversation_id,
+                message_id=assistant_id, role_id=target_role_id, triggered_by_user_id=triggered_by_user_id,
+                execution_id=execution_id,
+            )
+            await _update_tool_part(
+                conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
+                call_id=call_id, tool_name=started_event.tool_name, status='cancelled', duration_ms=duration_ms,
+                command_summary={'command_status': 'cancelled', 'exit_code': None},
+            )
+            logger.info('tool.call_completed', extra={
+                'tool_call_id': call_id, 'tool_name': started_event.tool_name,
+                'duration_ms': duration_ms, 'status': 'cancelled',
+            })
         terminal = await _finalize(generation_id, "stopped", accumulated)
         logger.info(
             "generation.cancelled",

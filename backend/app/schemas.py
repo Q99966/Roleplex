@@ -191,10 +191,11 @@ class WorkspaceCreate(BaseModel):
 
 
 class WorkspaceUpdate(BaseModel):
-    """W1a 只允许调整生命周期与原生文件能力。"""
+    """调整生命周期、原生文件与 W1b 结构化命令能力；Shell 仍未开放。"""
 
     active: bool | None = None
     file_tools_enabled: bool | None = None
+    basic_commands_enabled: bool | None = None
 
 
 class WorkspaceResponse(BaseModel):

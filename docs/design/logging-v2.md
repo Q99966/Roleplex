@@ -15,6 +15,10 @@
 
 ## 一、已确认的设计原则
 
+W1b 命令复用 tool.call_started/completed，不新增重复事实或逐输出日志。安全参数摘要只保留登记的
+command ID；进程结果通过内部领域事件与工具卡传递有界安全元数据，禁止原始 stdout/stderr/cwd。
+详细字段见 [结构化命令契约](../protocol/internal/workspace-commands.md)。
+
 1. runtime 按本地自然日聚合，不因后端重启、世界切换或异常恢复创建新目录。
 2. 每个后端进程使用 `process_instance_id` 和生命周期事件区分，不靠文件名猜测重启边界。
 3. pytest 不持久化全部成功测试的应用日志；每轮只追加一条 summary，失败测试才单独保存详情。

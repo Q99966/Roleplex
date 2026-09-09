@@ -35,7 +35,8 @@ class ToolCallFinished:
     """一次工具调用结束。
 
     `status` 取值：`ok`（正常返回）、`rejected`（危险级别在执行层被拒绝）、
-    `error`（工具自身执行失败）。被拒绝同样是正常结束，不属于异常路径。
+    `error`（工具自身执行失败）、`cancelled`（调度层收口被取消的 W1b 命令）。
+    被拒绝和取消同样是正常结束，不属于异常路径。
     """
 
     call_id: str
@@ -43,6 +44,7 @@ class ToolCallFinished:
     status: str
     duration_ms: int
     output_summary: str
+    command_summary: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

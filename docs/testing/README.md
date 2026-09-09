@@ -6,7 +6,7 @@
 | 状态 | 已实现测试体系的使用指南 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/tests/`、`frontend/tests/`、Playwright 配置、pytest 配置与日志 v2 |
-| 复核日期 | 2026-09-01 |
+| 复核日期 | 2026-09-09 |
 
 本文是 Roleplex 测试分层、命令、端口、数据、账号、日志和人工排查方式的统一入口。接口断言仍以对应
 协议文档为权威，日志字段以 [日志 v2](../design/logging-v2.md) 为权威；本文不复制完整 wire schema。
@@ -19,8 +19,9 @@
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
 | 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 单聊、M4a 群聊与其他浏览器用户流程 |
 | 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 + 外部工作区 | 否 | W1a/C2/M4a、包装器重启、世界与工作区隔离 |
+| 结构化命令 E2E | `npm run test:e2e:commands` | fake | 临时 default 世界 + 外部工作区 | 否 | W1b 真实进程、输出/退出码、超时/停止与刷新恢复 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
-| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 + 外部工作区 | 是 | W1a 真实工具、C2、M4a 与正常世界全链路 |
+| 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 + 外部工作区 | 是 | W1a 文件、W1b 命令、C2、M4a 与正常世界全链路 |
 
 默认开发回归只需要：
 
@@ -164,7 +165,7 @@ data/roleplex-real-world-e2e-<时间戳>/
 ```
 
 该层使用正常世界包装器，健康检查必须为 `world_managed=true`。它执行 W1a 真实 Provider
-`workspace_list/read/write` 闭环、C2 两轮验证码单聊，以及 M4a
+`workspace_list/read/write` 闭环、W1b 真实 `pwd/list/read/count`、C2 两轮验证码单聊，以及 M4a
 两个真实角色的同 chain 串行群聊；协作码只放进 A 的 system prompt，B 必须从 A 已提交回复中复述。测试
 同时核对真实 usage、稳定层、history、独立 execution 和 Prompt 不落日志。它不切换世界；切换语义由
 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
@@ -172,6 +173,22 @@ fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
 W1a 工作区与 World 使用同一 stamp，但位于两个根：World 在项目 `data/`，工作区在
 `/home/chen/workspace/testworkspace/roleplex-real-world-e2e-<时间戳>/default`。测试必须断言两者没有落入
 同一物理目录，真实 Key 只进入 World 加密数据库，不得进入浏览器或工作区。
+
+W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-provider.spec.ts`，仍复用本层配置、
+正常世界包装器和真实 Provider，不调用命令故障注入入口。用例工作区位于上述 `default/w1b-commands/`，
+校验值只写入本轮文件，不写入提示词；模型必须通过真实命令读取并回答。该用例关闭截图/trace/video，
+失败先清空页面，再保存安全阶段标签，避免把模型正文带入失败产物。
+
+### 2.7 W1b 结构化命令 E2E
+
+在 `frontend/` 执行 `npm run test:e2e:commands`。该命令固定 fake Provider，启动真实前后端和独立 World，
+通过浏览器登记工作区、开启命令、绑定单聊，验证 pwd/list/read/count、截断、非零退出、超时、停止和刷新恢复。
+超时/取消后还读取测试 fixture 的父子 PID，确认进程不再运行。
+
+`backend/tests/command_e2e_server.py` 是专用测试入口，只在本轮精确目录中将固定测试文件映射到受控进程
+profile；它不会被正常产品启动导入，产品 command allowlist 始终只有四种命令。测试采用 3 秒/1 KiB 限制，
+不改变正常启动默认值；单元/集成测试入口是 `pytest tests/test_workspace_commands.py -q`。
+本层关闭 trace/video；截图必须不含认证输入或真实模型输出。Linux 浏览器检查需安装中文字体，例如文泉驿微米黑。
 
 ## 三、端口矩阵
 
@@ -182,6 +199,7 @@ W1a 工作区与 World 使用同一 stamp，但位于两个根：World 在项目
 | real E2E | 51175 | 8002 |
 | fake worlds E2E | 51176 | 8003 |
 | real-world E2E | 51177 | 8004 |
+| fake commands E2E | 51178 | 8005 |
 
 测试配置使用 `127.0.0.1`，避免 Windows 上 `localhost` 解析到 IPv6 而后端只监听 IPv4。Playwright 设置
 `reuseExistingServer=false`，端口被其他进程占用时应先停止冲突进程，而不是让测试复用未知服务。
@@ -195,9 +213,24 @@ W1a 工作区与 World 使用同一 stamp，但位于两个根：World 在项目
 | real E2E | `data/roleplex-real-e2e-<时间戳>.db` | `realtest<时间戳>` | `Roleplex-Real-E2E-1` | 5 轮 |
 | fake worlds | `data/roleplex-world-e2e-<时间戳>/{alpha,beta}` | `test<时间戳>` | `Roleplex-Test-1234` | 5 轮 |
 | real-world | `data/roleplex-real-world-e2e-<时间戳>/default` | `realtest<时间戳>` | `Roleplex-Real-E2E-1` | 5 轮 |
+| fake commands | `data/roleplex-command-e2e-<时间戳>/default` | `test<时间戳>` | `Roleplex-Test-1234` | 5 轮 |
 
 fake worlds 与 real-world 的外部工作区按相同 stamp 保存在
 `/home/chen/workspace/testworkspace/{roleplex-world-e2e-,roleplex-real-world-e2e-}<时间戳>/`，同样保留最近五轮。
+commands 的外部目录为 `/home/chen/workspace/testworkspace/roleplex-command-e2e-<时间戳>/default/`，与 World
+共用 stamp；在下一轮开始时保留最近五轮。停止/落库竞态额外使用用例独占、经迁移创建的新数据库。
+
+工作区目录按测试类别、本轮时间戳、用例分层；不得把每个用例的随机目录直接堆在 `testworkspace` 根下。
+命令后端测试统一使用 `testworkspace/roleplex-command/test-<时间戳>/case-<随机标识>/`，清理以整轮为单位，
+保留最近五轮。旧布局归整时保留时间戳/用例对应关系，仍保留的测试库绑定同步指向新根；历史 execution
+快照保持当时路径，不改写执行历史。
+此前平铺的命令用例已归档到 `roleplex-command/legacy/test-<原时间戳>/<原随机标识>/`；没有时间戳的
+早期夹具放入 `legacy/undated/`，不伪造时间。`legacy/relocations-20260909.json` 保存相对路径映射，
+历史归档未删除且不参与新测试的自动淘汰；已按轮分组的旧目录迁入类别目录，沿用按轮保留规则。
+
+要查看某轮 commands E2E，可从 `backend/` 运行
+`python scripts/run_world_server.py --world default --worlds-dir ../data/roleplex-command-e2e-<时间戳> --port 8000`，
+再正常启动前端。这个人工查看入口使用正常产品 worker，不会启用测试专属进程 profile。
 
 contract 测试不依赖产品会话数据，也不播种测试账号；父级 pytest 基础设施仍会为该轮分配隔离数据库名。
 测试数据库/世界都被 `.gitignore` 排除。real/real-world 包含加密后的真实 Key；世界目录还包含解密所需

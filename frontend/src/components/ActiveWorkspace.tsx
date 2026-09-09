@@ -255,10 +255,15 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                         <div className="flex items-center justify-between gap-3">
                           <span className="font-mono text-indigo-300">{part.tool_name ?? 'tool'}</span>
                           <span className={part.status === 'failed' || part.status === 'rejected' ? 'text-red-400' : 'text-emerald-400'}>
-                            {part.status === 'running' ? '执行中' : part.status === 'success' ? '已完成' : part.status === 'rejected' ? '已拒绝' : '失败'}
+                            {part.status === 'running' ? '执行中' : part.status === 'success' ? '已完成' : part.status === 'rejected' ? '已拒绝' : part.status === 'cancelled' ? '已取消' : '失败'}
                           </span>
                         </div>
                         {typeof part.duration_ms === 'number' && <p className="mt-1 text-slate-600">耗时 {part.duration_ms}ms</p>}
+                        {part.command && <p>命令 {part.command}</p>}
+                        {typeof part.exit_code === 'number' && <p>退出码 {part.exit_code}</p>}
+                        {part.command_status === 'timed_out' && <p className="text-amber-400">命令超时，进程已回收</p>}
+                        {part.truncated && <p className="text-amber-400">输出已截断</p>}
+                        {part.error_code && <p className="text-red-400">{part.error_code}</p>}
                       </div>
                     ))}
                   </div>

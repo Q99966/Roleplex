@@ -32,7 +32,7 @@ export type RoleInput = {
 export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; workspace_binding_id: number | null; role_ids: number[]; revision: number; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
-export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; [key: string]: unknown }
+export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
 export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string }
 export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
 export type MessageHistory = { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null; active_generation_ids: number[] }
@@ -169,7 +169,7 @@ export const api = {
     create_directory: boolean
     acknowledge_existing_content: boolean
   }) => request<WorkspaceBinding>('/api/workspaces', { method: 'POST', body: JSON.stringify(body) }),
-  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean }) => (
+  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean; basic_commands_enabled?: boolean }) => (
     request<WorkspaceBinding>(`/api/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
   ),
   validateWorkspace: (id: number) => request<WorkspaceBinding>(`/api/workspaces/${id}/validate`, { method: 'POST' }),

@@ -109,6 +109,7 @@ def guard_tools(
                 inner=tool,
                 danger=classify_tool(tool.name, owner_safe_overrides=owner_safe_overrides),
                 allow_dangerous=allow_dangerous,
+                handle_validation_error=tool.handle_validation_error,
             )
         )
     return guarded
@@ -123,6 +124,9 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
     """
     if not isinstance(args, dict):
         return "{}"
+    if tool_name == 'workspace_run_command':
+        command = args.get('command')
+        return json.dumps({'command': command} if command in ('pwd', 'list', 'read', 'count') else {})
     if tool_name in {"workspace_list", "workspace_read", "workspace_write"}:
         path = args.get("path")
         summary: dict[str, int | str | bool] = {}
@@ -171,3 +175,41 @@ def summarize_tool_output(output: Any) -> str:
     else:
         summary = {"type": type(output).__name__}
     return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+
+
+def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
+    """从命令结果提取公开允许字段，不复制任何输出原文。
+
+    Args:
+        tool_name：防腐层提供的工具名称。
+        output：工具结果文本或 ToolMessage。
+    """
+    if tool_name != 'workspace_run_command':
+        return {}
+    content = getattr(output, 'content', output)
+    if not isinstance(content, str):
+        return {}
+    for prefix in (FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX):
+        if content.startswith(prefix):
+            content = content[len(prefix):].strip()
+            break
+    try:
+        result = json.loads(content)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(result, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    if result.get('command') in ('pwd', 'list', 'read', 'count'):
+        summary['command'] = result['command']
+    if result.get('status') in ('exited', 'timed_out', 'cancelled'):
+        summary['command_status'] = result['status']
+    exit_code = result.get('exit_code')
+    if exit_code is None or type(exit_code) is int:
+        summary['exit_code'] = exit_code
+    if type(result.get('truncated')) is bool:
+        summary['truncated'] = result['truncated']
+    from ..workspaces.command_worker import WORKER_ERRORS
+    if result.get('error_code') in WORKER_ERRORS | {'COMMAND_TIMEOUT', 'COMMAND_NOT_SUPPORTED'}:
+        summary['error_code'] = result['error_code']
+    return summary

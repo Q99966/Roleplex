@@ -1,4 +1,4 @@
-"""W1a 工作区 LangChain 工具适配与每次调用二次授权。"""
+"""W1a/W1b 工作区工具适配、独立能力开关与每次调用二次授权。"""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,15 +24,39 @@ from ..models import (
 from .files import WorkspaceFileError, WorkspaceFileService
 from .paths import WorkspacePathError
 from .service import binding_root
+from .commands import WorkspaceCommandError, WorkspaceCommandService
 
 WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
-WORKSPACE_TOOL_POLICY_VERSION = 1
+WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command')
+WORKSPACE_TOOL_POLICY_VERSION = 2
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件，并取得 sha256 供后续安全更新。",
     "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新。",
+    "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
 }
 _LEASE_LOCKS: dict[int, asyncio.Lock] = {}
+_COMMAND_CALL_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
+    """组合角色与工作区的独立文件/命令开关。
+
+    Args:
+        role：本 execution 的当前角色。
+        binding：当前 World 的工作区记录。
+    """
+    return [name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []) and (
+        binding.basic_commands_enabled if name == 'workspace_run_command' else binding.file_tools_enabled
+    )]
+
+
+class WorkspaceCommandInput(BaseModel):
+    """结构化命令输入；命令专用字段由执行层校验，错误不回显原始参数。"""
+
+    model_config = ConfigDict(extra='forbid')
+    command: str = Field(min_length=1, max_length=32)
+    args: dict = Field(default_factory=dict)
 
 
 class WorkspaceListInput(BaseModel):
@@ -68,9 +92,18 @@ async def _create_lease(
     triggered_by_user_id: int | None,
     allow_dangerous: bool,
 ) -> tuple[ExecutionWorkspace, WorkspaceBinding] | None:
-    """校验 W1a 暴露矩阵并原子创建 ready lease；不满足时隐藏全部工具。"""
-    enabled = tuple(name for name in WORKSPACE_FILE_TOOLS if name in (role.builtin_tools_json or []))
-    if not enabled or not allow_dangerous or triggered_by_user_id is None:
+    """校验文件/命令暴露矩阵并创建 ready lease。
+
+    Args:
+        session：创建 lease 的短事务会话。
+        execution_id：本轮持久 execution。
+        conversation_id：本轮 single 会话。
+        role：当前执行角色。
+        triggered_by_user_id：调度器绑定的触发者。
+        allow_dangerous：链路是否获准使用 dangerous 工具。
+    """
+    enabled = tuple(name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []))
+    if not enabled or not role.active or role.deleted_at is not None or not allow_dangerous or triggered_by_user_id is None:
         return None
     conversation = await session.get(Conversation, conversation_id)
     user = await session.get(User, triggered_by_user_id)
@@ -94,9 +127,8 @@ async def _create_lease(
         WorkspaceBinding.id == conversation.workspace_binding_id,
         WorkspaceBinding.created_by == user.id,
         WorkspaceBinding.active.is_(True),
-        WorkspaceBinding.file_tools_enabled.is_(True),
     ))
-    if binding is None:
+    if binding is None or not _enabled_tools(role, binding):
         return None
     try:
         binding_root(binding)
@@ -141,7 +173,17 @@ async def _authorized_service(
     root_path_snapshot: str,
     tool_name: str,
 ) -> WorkspaceFileService | None:
-    """每次工具调用重新校验身份、绑定、能力和 lease 快照。"""
+    """每次工具调用重新校验身份、绑定、独立能力和 lease 快照。
+
+    Args:
+        execution_id：本轮持久 execution。
+        conversation_id：本轮会话 ID。
+        role_id：执行角色 ID。
+        triggered_by_user_id：调度器绑定的原始触发者。
+        workspace_binding_id：lease 绑定的当前 World 工作区。
+        root_path_snapshot：创建工具时捕获的规范根，不接受模型覆盖。
+        tool_name：用于重新检查角色与工作区开关的工具名。
+    """
     async with SessionLocal() as session:
         execution = await session.scalar(select(AgentExecution).where(
             AgentExecution.execution_id == execution_id,
@@ -162,7 +204,6 @@ async def _authorized_service(
             WorkspaceBinding.id == workspace_binding_id,
             WorkspaceBinding.created_by == triggered_by_user_id,
             WorkspaceBinding.active.is_(True),
-            WorkspaceBinding.file_tools_enabled.is_(True),
         ))
         if (
             execution is None
@@ -180,6 +221,7 @@ async def _authorized_service(
             or lease is None
             or lease.root_path_snapshot != root_path_snapshot
             or binding is None
+            or tool_name not in _enabled_tools(role, binding)
             or binding.root_path != root_path_snapshot
             or generation is None
             or generation.status != "running"
@@ -190,6 +232,8 @@ async def _authorized_service(
             root = binding_root(binding)
         except WorkspacePathError:
             return None
+        if str(root) != root_path_snapshot:
+            return None
         return WorkspaceFileService(root=root, execution_id=execution_id)
 
 
@@ -197,6 +241,20 @@ def _error_result(code: str) -> str:
     """返回给模型的结构化文件失败，不泄露路径或宿主异常。"""
     body = json.dumps({"ok": False, "error_code": code}, separators=(",", ":"))
     return f"{FAILED_OUTPUT_PREFIX} {body}"
+
+
+def _command_result(result: dict) -> str:
+    """区分命令政策拒绝与实际进程失败，不把拒绝标成执行异常。
+
+    Args:
+        result：命令服务结果或稳定错误对象。
+    """
+    body = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
+    code = result.get('error_code')
+    if not code:
+        return body
+    prefix = FAILED_OUTPUT_PREFIX if code in {'COMMAND_FAILED', 'COMMAND_TIMEOUT'} else REJECTED_OUTPUT_PREFIX
+    return f'{prefix} {body}'
 
 
 async def create_workspace_tools(
@@ -208,7 +266,16 @@ async def create_workspace_tools(
     triggered_by_user_id: int | None,
     allow_dangerous: bool,
 ) -> list[BaseTool]:
-    """为本次 execution 创建受 lease 和二次授权保护的 W1a 工具。"""
+    """为本次 execution 创建受 lease 和二次授权保护的文件/命令工具。
+
+    Args:
+        session：创建 lease 的短事务会话。
+        execution_id：本轮持久 execution。
+        conversation_id：本轮 single 会话。
+        role：当前执行角色。
+        triggered_by_user_id：调度器绑定的触发者。
+        allow_dangerous：链路是否允许 dangerous 工具。
+    """
     created = await _create_lease(
         session,
         execution_id=execution_id,
@@ -267,7 +334,31 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             return _error_result(exc.code)
 
+    async def workspace_run_command(command: str, args: dict | None = None) -> str:
+        """在获得串行槽后重新鉴权并执行固定命令。
+
+        Args:
+            command：服务端登记的命令 ID。
+            args：只允许该命令的专用参数。
+        """
+        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+            authorized = await service('workspace_run_command')
+            if authorized is None:
+                return f'{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE'
+            try:
+                result = await WorkspaceCommandService(
+                    root=authorized.root, execution_id=execution_id,
+                ).run(command, args if args is not None else {})
+                return _command_result(result)
+            except WorkspaceCommandError as exc:
+                return _command_result({'ok': False, 'error_code': exc.code})
+
     raw: dict[str, BaseTool] = {
+        'workspace_run_command': StructuredTool.from_function(
+            coroutine=workspace_run_command, name='workspace_run_command',
+            description=WORKSPACE_TOOL_DESCRIPTIONS['workspace_run_command'], args_schema=WorkspaceCommandInput,
+            handle_validation_error=lambda _error: _command_result({'ok': False, 'error_code': 'COMMAND_ARGUMENT_INVALID'}),
+        ),
         "workspace_list": StructuredTool.from_function(
             coroutine=workspace_list,
             name="workspace_list",
@@ -287,7 +378,7 @@ async def create_workspace_tools(
             args_schema=WorkspaceWriteInput,
         ),
     }
-    selected = [raw[name] for name in WORKSPACE_FILE_TOOLS if name in (role.builtin_tools_json or [])]
+    selected = [raw[name] for name in _enabled_tools(role, _binding)]
     return guard_tools(selected, allow_dangerous=allow_dangerous)
 
 
@@ -298,10 +389,19 @@ async def workspace_tool_policy(
     role: Role,
     triggered_by_user_id: int | None,
 ) -> dict[str, object]:
-    """返回 ContextBuilder 应计入预算和 hash 的实际 W1a 暴露策略。"""
-    exposed = [name for name in WORKSPACE_FILE_TOOLS if name in (role.builtin_tools_json or [])]
+    """返回 ContextBuilder 应计入预算和 hash 的实际文件/命令暴露策略。
+
+    Args:
+        session：只读策略查询会话。
+        conversation：本次上下文所属会话。
+        role：当前角色配置。
+        triggered_by_user_id：本轮触发者，必须为当前 Owner。
+    """
+    exposed = [name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or [])]
     if (
         not exposed
+        or not role.active
+        or role.deleted_at is not None
         or triggered_by_user_id != role.created_by
         or conversation.type != "single"
         or conversation.workspace_binding_id is None
@@ -312,10 +412,10 @@ async def workspace_tool_policy(
         WorkspaceBinding.id == conversation.workspace_binding_id,
         WorkspaceBinding.created_by == triggered_by_user_id,
         WorkspaceBinding.active.is_(True),
-        WorkspaceBinding.file_tools_enabled.is_(True),
     ))
     if user is None or not user.is_owner or binding is None:
         return {"version": WORKSPACE_TOOL_POLICY_VERSION, "exposed_tools": []}
+    exposed = _enabled_tools(role, binding)
     try:
         binding_root(binding)
     except WorkspacePathError:
@@ -326,7 +426,7 @@ async def workspace_tool_policy(
         "workspace_kind": binding.workspace_kind,
         "exposed_tools": [
             {"name": name, "description": WORKSPACE_TOOL_DESCRIPTIONS[name]}
-            for name in WORKSPACE_FILE_TOOLS if name in exposed
+            for name in WORKSPACE_TOOLS if name in exposed
         ],
     }
 

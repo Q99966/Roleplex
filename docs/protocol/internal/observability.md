@@ -95,6 +95,9 @@ JSONL 只容忍最后一行崩溃截断；active 文件重启追加前会截断�
 敏感参数不落盘。工具摘要先走字段白名单，递归脱敏只是兜底。只允许日志设计中显式登记的 Provider 与
 Context token 字段。
 
+W1b 复用工具开始/完成日志，参数审计仅保存 allowlist command ID；取消以 cancelled 正常收口。
+命令路径、cwd、stdout/stderr 不进入日志、审计或公开工具卡，详见 [结构化命令](workspace-commands.md)。
+
 ## 验证覆盖
 
 - `backend/tests/test_logging.py`：身份、分类、副本、轮转、重启追加、损坏恢复。

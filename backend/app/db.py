@@ -128,16 +128,26 @@ async def ensure_instance_settings() -> None:
 
 
 async def recover_interrupted_messages() -> None:
-    """将进程重启遗留的未完成生成标记为 interrupted。"""
-    from sqlalchemy import update
+    """恢复未完成消息；遗留命令卡只标记执行中断，不猜测进程退出结果。"""
+    from sqlalchemy import select
     from .models import Message
 
     async with SessionLocal() as session:
-        await session.execute(
-            update(Message)
-            .where(Message.status.in_(["pending", "generating"]))
-            .values(status="interrupted")
-        )
+        messages = (await session.scalars(select(Message).where(
+            Message.status.in_(['pending', 'generating']),
+        ))).all()
+        for message in messages:
+            message.status = 'interrupted'
+            parts = [dict(part) for part in message.parts_json]
+            changed = False
+            for part in parts:
+                if part.get('type') == 'tool_call' and part.get('tool_name') == 'workspace_run_command' and part.get('status') == 'running':
+                    part.update(status='failed', error_code='EXECUTION_INTERRUPTED', exit_code=None)
+                    part.pop('command_status', None)
+                    changed = True
+            if changed:
+                message.parts_json = parts
+                message.revision += 1
         await session.commit()
 
 

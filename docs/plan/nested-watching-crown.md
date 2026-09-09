@@ -1,6 +1,6 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
-## 当前追加任务：E0 持久 execution（已实现，等待人工验收）
+## 当前追加任务：W1b 结构化基础命令（已完成，经人工验收）
 
 用户于 2026-08-28 决定延期工作项四“会话导出与导入”：必须先补齐统一历史上下文、优化 Prompt Prefix
 Cache、实现群聊串行调度和 Orchestrator，并完成阶段式 Checkpoint 与真实缓存验收，再冻结导出格式。
@@ -10,7 +10,8 @@ Cache、实现群聊串行调度和 Orchestrator，并完成阶段式 Checkpoint
 [Agent 仓库工作区、代码工具与 Worktree 实施计划 v1](agent-repository-workspaces-v1.md)。
 2026-09-01 已确认 M4b fan-out 前先定义 W0、实现 E0，再以 W1a 原生文件、W1b 结构化命令和 W1c 审批
 Shell 逐层跑通单聊角色；之后才进入 Repository、只读代码工具和 worktree。各切片仍需编码前复核、独立
-测试、人工验收和提交。E0 已创建迁移并完成自动验证；W1a 尚未开始。
+测试、人工验收和提交。E0、W1a 已完成并经人工验收，W1a 已提交 `c52775f`；W1b 实现与验证进度以
+[仓库工作区计划](agent-repository-workspaces-v1.md#w1b-实现与验证2026-09-08)为准。
 
 当前建议主线：
 
@@ -45,7 +46,8 @@ M4a 已于 2026-08-31 实现并通过自动验证：后端 93 passed、普通 fa
 managed-world E2E 1 passed、真实 DeepSeek managed-world E2E 2 passed、前端 build 通过。群聊成员管理、
 @ 补全、持久串行队列、同 chain 前序回复、停止整链和工具过程卡片均已落地；已于 2026-09-01 经用户
 人工验收。W0 已确认；E0 已实现并通过后端 101 passed、双方言迁移检查、fake managed-world 和真实
-DeepSeek managed-world E2E，当前等待人工验收。W1a、W1b/W1c 和 Repository/worktree 均尚未开始。
+DeepSeek managed-world E2E，并已完成人工验收。W1a 已完成并经人工验收；最新进度与验收记录以
+上述两篇领域计划为准，避免在总体计划重复维护测试数字。
 
 ## 当前追加任务：日志与测试报告 v2（已完成，经人工验收）
 
