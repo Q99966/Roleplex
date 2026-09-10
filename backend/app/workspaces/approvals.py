@@ -76,7 +76,12 @@ async def _authorized(request: dict) -> bool:
     from .tools import _authorized_service
     service = await _authorized_service(execution_id=request['execution_id'], conversation_id=request['conversation_id'],
         role_id=request['role_id'], triggered_by_user_id=request['owner_id'], workspace_binding_id=request['workspace_binding_id'],
-        root_path_snapshot=request['root_path'], tool_name='workspace_run_shell')
+        root_path_snapshot=request['root_path'], tool_name=request['tool_name'])
+    if request['tool_name'] == 'workspace_start_service':
+        if request.get('ready_timeout_seconds') != settings.runtime_ready_timeout_seconds:
+            return False
+        from ..runtime.registry import check_start
+        await check_start(request['runtime_id'])
     try:
         current = shell_configuration()
     except WorkspaceCommandError:
@@ -138,11 +143,23 @@ async def resolve_approval(approval_id: int, *, decision: str, digest: str | Non
             no_waiter = (row.execution_id, row.tool_call_id) not in _waiters
             target = 'expired' if decision == 'expire' or expired or no_waiter else 'approved' if decision == 'approve' else 'rejected'
             resolved_reason = reason if decision == 'expire' else 'expired' if expired else 'restart' if no_waiter else reason
-            if target == 'approved' and not await _authorized(request):
-                await session.refresh(row)
-                if row.status != 'pending':
-                    return row, request, None, None
-                raise HTTPException(409, 'WORKSPACE_TOOL_NOT_AVAILABLE')
+            rejection_code = None
+            if target == 'approved':
+                from ..runtime.registry import RuntimeRejected
+                try:
+                    allowed = await _authorized(request)
+                except RuntimeRejected as exc:
+                    allowed, rejection_code = False, exc.code
+                if not allowed:
+                    await session.refresh(row)
+                    if row.status != 'pending':
+                        return row, request, None, None
+                    if request['tool_name'] != 'workspace_start_service':
+                        raise HTTPException(409, 'WORKSPACE_TOOL_NOT_AVAILABLE')
+                    target, resolved_reason = 'rejected', 'runtime_policy'
+                    from ..runtime.models import RuntimeEntry
+                    await session.execute(update(RuntimeEntry).where(RuntimeEntry.id == request['runtime_id']).values(
+                        error_code=rejection_code or 'WORKSPACE_TOOL_NOT_AVAILABLE', revision=RuntimeEntry.revision + 1))
             # 授权查询也可能跨过截止时间；CAS 使用真正决定时刻，不沿用请求到达时刻。
             now = datetime.now(timezone.utc)
             if target in {'approved', 'rejected'} and _utc(row.expires_at) <= now:
@@ -172,7 +189,8 @@ async def resolve_approval(approval_id: int, *, decision: str, digest: str | Non
 
 
 async def request_and_run(*, script: str, execution_id: str, conversation_id: int, role_id: int,
-                          owner_id: int, workspace_binding_id: int, root_path: str, tool_call_id: str | None) -> dict:
+                          owner_id: int, workspace_binding_id: int, root_path: str, tool_call_id: str | None,
+                          service_request: dict | None = None) -> dict:
     """唯一宿主创建 pending，等待决定，批准后再次授权并执行一次。
 
     Args:
@@ -184,6 +202,7 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
         workspace_binding_id：execution 捕获的绑定。
         root_path：execution 的规范根快照。
         tool_call_id：防腐层注入的实际调用身份，不接受模型提供。
+        service_request：仅服务管理器可传入的冻结资源/端口/寿命，不是模型额外参数。
     """
     validate_script(script)
     if not tool_call_id:
@@ -196,7 +215,8 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
     try:
         request = dict(script=script, execution_id=execution_id, conversation_id=conversation_id, role_id=role_id,
             owner_id=owner_id, workspace_binding_id=workspace_binding_id, root_path=root_path,
-            tool_call_id=tool_call_id, tool_name='workspace_run_shell', **shell_configuration())
+            tool_call_id=tool_call_id, tool_name='workspace_start_service' if service_request else 'workspace_run_shell', **shell_configuration())
+        request.update(service_request or {})
         if not await _authorized(request):
             raise WorkspaceCommandError('WORKSPACE_TOOL_NOT_AVAILABLE')
         async def create():
@@ -207,7 +227,7 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
                 raw = _serialized(request)
                 now = datetime.now(timezone.utc)
                 pending = ToolApprovalRequest(execution_id=execution_id, workspace_binding_id=workspace_binding_id,
-                    tool_call_id=tool_call_id, tool_name='workspace_run_shell', request_encrypted=_cipher().encrypt(raw).decode(),
+                    tool_call_id=tool_call_id, tool_name=request['tool_name'], request_encrypted=_cipher().encrypt(raw).decode(),
                     request_digest=hashlib.sha256(raw).hexdigest(), status='pending', requested_at=now,
                     expires_at=now + timedelta(seconds=APPROVAL_SECONDS))
                 session.add(pending)
@@ -243,6 +263,8 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
             raise WorkspaceCommandError('SHELL_REJECTED' if row.status == 'rejected' else 'SHELL_APPROVAL_EXPIRED')
         if not await _authorized(request):
             raise WorkspaceCommandError('WORKSPACE_TOOL_NOT_AVAILABLE')
+        if service_request:
+            return {**request, 'approval_id': row.id}
         return await run_shell(request)
     finally:
         if row is not None:
@@ -286,4 +308,5 @@ async def pending_payload(row: ToolApprovalRequest) -> dict:
         'id': row.id, 'request_digest': row.request_digest, 'status': row.status,
         'requested_at': _utc(row.requested_at).isoformat(), 'expires_at': _utc(row.expires_at).isoformat(),
         'world_name': settings.world_name, 'workspace_name': binding.display_name if binding else '不可用工作区',
+        **{key: request[key] for key in ('runtime_id', 'port', 'health_path', 'lifetime_seconds', 'ready_timeout_seconds') if key in request},
     }

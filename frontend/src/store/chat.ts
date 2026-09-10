@@ -5,6 +5,7 @@ import { useAppStore } from './app'
 import { HistoryCache, type ReadingPosition } from './history-cache'
 
 type ChatState = {
+  runtimeVersion: number
   approvalVersion: number
   conversationId: number | null
   messages: Message[]
@@ -58,6 +59,7 @@ function invalidateSession() {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  runtimeVersion: 0,
   approvalVersion: 0,
   conversationId: null, messages: [], loading: false, sending: false, generating: false,
   activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null,
@@ -311,6 +313,7 @@ function upsert(set: any, get: () => ChatState, message: Message) {
  * @param event 已经传输层验证归属和顺序的领域事件。
  */
 function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
+  if (event.type === 'runtime_changed') { set({ runtimeVersion: get().runtimeVersion + 1 }); return }
   if (event.type === 'approval_changed') {
     set({ approvalVersion: get().approvalVersion + 1 })
     return

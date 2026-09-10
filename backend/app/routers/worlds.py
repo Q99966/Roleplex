@@ -69,9 +69,12 @@ async def switch_world(
     if payload.name == settings.world_name:
         raise HTTPException(status_code=409, detail="WORLD_ALREADY_ACTIVE")
     try:
-        manager.request_switch(payload.name, settings.world_control_file)
+        manager.get(payload.name)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="WORLD_NOT_FOUND") from None
+    from ..runtime.manager import manager as runtime_manager
+    await runtime_manager.shutdown(reason='world_switch')
+    manager.request_switch(payload.name, settings.world_control_file)
     logger.info("world.switch_requested", extra={"source_world": settings.world_name, "target_world": payload.name})
     set_process_stop_reason("world_switch")
     background_tasks.add_task(schedule_shutdown)

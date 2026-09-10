@@ -25,7 +25,10 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import approvals, artifacts, auth, conversations, messages, model_configs, roles, workspaces, worlds
+from .routers import approvals, artifacts, auth, conversations, messages, model_configs, roles, runtime, workspaces, worlds
+from .runtime.manager import manager as runtime_manager
+from .runtime.registry import RuntimeRejected
+from .runtime.wrapper import watch_wrapper
 from .services import retention
 from .services import chat
 from .scheduling import conversation_scheduler
@@ -60,6 +63,8 @@ async def lifespan(_app: FastAPI):
         assert_world_compatible(world.database_path)
         world_manager.acquire(settings.world_name)
     process_status = "success"
+    runtime_started = False
+    close_wrapper_watch = lambda: None
     try:
         logging_session = current_logging_session()
         source = (
@@ -90,28 +95,55 @@ async def lifespan(_app: FastAPI):
             "world.starting", extra={"world_managed": settings.world_managed},
         )
         await init_db()
+        await runtime_manager.initialize()
+        runtime_started = True
         await conversation_scheduler.start(chat.run_scheduled_generation)
         await retention.purge_expired_on_startup()
+        close_wrapper_watch = watch_wrapper()
         yield
     except Exception:
         process_status = "failed"
         lifecycle_logger.exception("process.failed", extra={"status": "failed"})
         raise
     finally:
-        await conversation_scheduler.shutdown()
-        lifecycle_logger.info(
-            "process.stopped",
-            extra={"status": process_status, "reason": process_stop_reason()},
-        )
-        events.hub = None
-        await close_db()
-        if world_manager is not None:
-            world_manager.release(settings.world_name)
+        close_wrapper_watch()
+        shutdown_error = None
+        try:
+            if runtime_started:
+                await runtime_manager.shutdown()
+        except Exception as exc:
+            process_status, shutdown_error = 'failed', exc
+        finally:
+            try:
+                await conversation_scheduler.shutdown()
+            finally:
+                lifecycle_logger.info('process.stopped', extra={'status': process_status, 'reason': process_stop_reason(),
+                    **({'error_code': 'RUNTIME_CLEANUP_UNCONFIRMED'} if shutdown_error else {})})
+                events.hub = None
+                await close_db()
+                if world_manager is not None:
+                    world_manager.release(settings.world_name)
+        if shutdown_error:
+            raise shutdown_error
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 app.add_exception_handler(StarletteHTTPException, http_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+
+
+async def runtime_error_handler(request, exc: RuntimeRejected):
+    """将运行策略拒绝转换为既有错误信封，不记录原始上下文。
+
+    Args:
+        request：当前 HTTP 请求。
+        exc：固定错误码。
+    """
+    status = 404 if exc.code == 'RUNTIME_NOT_FOUND' else 422 if exc.code in {'RUNTIME_SCOPE_INVALID', 'RUNTIME_LIMIT_INVALID', 'RUNTIME_ARGUMENT_INVALID'} else 409
+    return await http_error_handler(request, StarletteHTTPException(status_code=status, detail=exc.code))
+
+
+app.add_exception_handler(RuntimeRejected, runtime_error_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -168,6 +200,7 @@ app.include_router(artifacts.router)
 app.include_router(worlds.router)
 app.include_router(workspaces.router)
 app.include_router(approvals.router)
+app.include_router(runtime.router)
 app.include_router(ws_router)
 
 

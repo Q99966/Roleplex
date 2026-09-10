@@ -8,7 +8,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/worlds/manager.py`、`backend/app/routers/worlds.py`、`backend/app/main.py` |
 | 关联测试 | `backend/tests/test_worlds.py`、`frontend/tests/world-switching.spec.ts` |
-| 复核日期 | 2026-08-25 |
+| 复核日期 | 2026-09-10 |
 
 ## 世界与运行模式
 
@@ -61,6 +61,10 @@ Content-Type: application/json
 
 服务端只在包装器提供了受控切换文件时接受请求：先原子写入目标世界，再优雅退出；包装器读取目标并
 以新世界重启。前端轮询健康检查，观察到 `world_name` 变更后清除 Token 并要求重新登录。
+
+W1d 实施中增量：写入切换目标前关闭当前 World 新进程入口，并按
+[运行实例协议](../messaging/runtime-services.md)逐项回收已登记命令/服务；未确认回收返回 409，不能假装已切换。
+本轮尚未完成全部 World 操作竞争与备份衔接验收。
 
 错误码：
 

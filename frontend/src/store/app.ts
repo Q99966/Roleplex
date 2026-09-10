@@ -214,7 +214,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadWorkspaceBindings()
   },
   updateWorkspaceBinding: async (id, body) => {
+    const epoch = getAuthEpoch()
+    if (body.active === false) {
+      const preview = await api.cleanupPreview('workspace', id)
+      if (epoch !== getAuthEpoch()) return
+      if (preview.items.length && !confirm(`停用工作区会逐项回收所有关联进程：\n${preview.items.map((item) => `会话 ${item.conversation_id} · ${item.id.slice(0, 8)}`).join('\n')}\n继续吗？`)) return
+      body = { ...body, confirm_cleanup: true }
+    }
+    if (epoch !== getAuthEpoch()) return
     await api.updateWorkspace(id, body)
+    if (epoch !== getAuthEpoch()) return
     await get().loadWorkspaceBindings()
   },
   validateWorkspaceBinding: async (id) => {
@@ -222,7 +231,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadWorkspaceBindings()
   },
   deleteWorkspaceBinding: async (id) => {
-    await api.deleteWorkspace(id)
+    const epoch = getAuthEpoch()
+    const preview = await api.cleanupPreview('workspace', id)
+    if (epoch !== getAuthEpoch()) return
+    if (preview.items.length && !confirm(`删除此工作区登记前将逐项回收所有关联会话进程：\n${preview.items.map((row) => `会话 ${row.conversation_id} · ${row.tool_name} · ${row.id.slice(0, 8)}`).join('\n')}\n物理目录不会删除，继续吗？`)) return
+    if (epoch !== getAuthEpoch()) return
+    await api.deleteWorkspace(id, true)
+    if (epoch !== getAuthEpoch()) return
     await Promise.all([get().loadWorkspaceBindings(), get().loadWorkspace()])
   },
   
@@ -320,7 +335,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
   },
   deleteConversation: async (id) => {
-    await api.deleteConversation(id)
+    const epoch = getAuthEpoch()
+    const preview = await api.cleanupPreview('conversation', id)
+    if (epoch !== getAuthEpoch()) return
+    if (preview.items.length && !confirm(`删除会话前将逐项回收以下进程：\n${preview.items.map((row) => `${row.tool_name} · ${row.id.slice(0, 8)}`).join('\n')}\n继续吗？`)) return
+    if (epoch !== getAuthEpoch()) return
+    await api.deleteConversation(id, true)
+    if (epoch !== getAuthEpoch()) return
     if (get().activeConversationId === id) {
       set({ activeConversationId: null })
       navigateToConversation(null)

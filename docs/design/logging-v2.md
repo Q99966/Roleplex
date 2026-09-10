@@ -296,6 +296,14 @@ provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed
 tool.call_failed
 tool.approval_requested      tool.approval_resolved
+runtime.reserved            runtime.state_changed
+runtime.quota_changed       runtime.cleanup_started
+runtime.cleanup_target_selected  runtime.cleanup_target_started
+runtime.stop_requested      runtime.force_requested
+runtime.stop_dispatched
+runtime.cleanup_target_completed runtime.cleanup_completed
+runtime.cleanup_failed      runtime.recovery_checked
+runtime.cleanup_reconciled
 context.loaded               context.compressed
 log.tail_recovered           log.retention_started
 log.archive_created          log.archive_source_removed
@@ -311,6 +319,11 @@ log.retention_skipped
 W1c 审批事件只使用 approval_id、request_digest 和既有 execution/chain/tool_call 关联字段；
 requested 不填终态，resolved 以 status=success/rejected/cancelled 和 approval_status=approved/rejected/expired
 表达决定，reason 区分 owner_decision/expired/cancelled/restart。脚本只进入加密业务审批记录，不进入日志。
+
+W1d 运行/回收事件使用 runtime_id、cleanup_id、target_ordinal、scope/scope_id、actor_id、target_count、
+runtime_state、PID/出生身份以及既有 conversation/workspace/execution/chain/tool_call 关联；不得记录进程对象 repr、
+命令行、根路径、脚本或 stdout/stderr。配额审计保留 old_limit/new_limit。回收条目记录动作/验证/耗时/退出结果，
+批次汇总引用完整条目及未确认目标，不以发出信号代替退出证明。具体过程见 W1d 计划第六节。
 
 ### 6.2 status、reason 与 error_code
 

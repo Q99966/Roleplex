@@ -39,6 +39,8 @@ W0 工作区与 Shell 设置契约（只定规则）
 W0 当前只固定设置、权限和运行契约；E0 提供命令审计与取消恢复的身份。W1a 先验证原生文件边界，W1b 再
 验证无任意 Shell 的子进程，W1c 最后才允许 Owner 审批的任意 Shell；整个 W1 不接 Git、不创建 worktree。
 三个切片都验收后才进入 Repository 和 worktree。
+2026-09-10 [会话后台服务 W1d 计划](conversation-services-v1.md)已获用户批准，插在 W1c 与 W2a 之间。
+它单独定义常驻服务和 `/ps`，不把现有短命令的生命周期偷偷改成长驻；本文件不复制该计划的服务契约。
 M4b 的 planning/final 与并行子任务在 W3 验收之后实现。不得把基础 Shell、仓库绑定、worktree 和 M4b
 堆成一个故障时无法定位层级的大改动。
 

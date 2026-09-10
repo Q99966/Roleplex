@@ -189,6 +189,8 @@ class WorldManager:
     def backup(self, name: str, destination: str | Path) -> Path:
         """把一致性数据库快照、密钥、元数据和附件打成 ZIP。"""
         world = self.get(name)
+        if self.is_active(name) or self._has_unfinished_runtime(world.database_path):
+            raise WorldActiveError('备份前请正常关闭该世界后端并确认进程已回收；不能在服务可能写入时备份。')
         output_dir = Path(destination)
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
@@ -239,9 +241,30 @@ class WorldManager:
     def delete(self, name: str) -> None:
         """删除一个已验证的世界目录；调用方必须先完成显式确认。"""
         world = self.get(name)
-        if self.is_active(name):
+        if self.is_active(name) or self._has_unfinished_runtime(world.database_path):
             raise WorldActiveError(f"世界正在使用，不能删除：{world.name}")
         shutil.rmtree(world.path)
+
+    @staticmethod
+    def _has_unfinished_runtime(database: Path) -> bool:
+        """在世界文件适配层检查未确认运行记录，不按 PID 猜测已回收。
+
+        Args:
+            database：经过世界归属验证的数据库文件。
+        """
+        if not database.is_file():
+            return False
+        from sqlalchemy import MetaData, Table, create_engine, inspect, select
+        engine = create_engine(f'sqlite:///{database}', hide_parameters=True)
+        try:
+            if not inspect(engine).has_table('runtime_entries'):
+                return False
+            table = Table('runtime_entries', MetaData(), autoload_with=engine, include_columns=['state'])
+            with engine.connect() as connection:
+                return connection.scalar(select(table.c.state).where(table.c.state.in_(
+                    ('pending', 'starting', 'waiting_ready', 'ready', 'unhealthy', 'running', 'stopping', 'cleanup_required'))).limit(1)) is not None
+        finally:
+            engine.dispose()
 
     def _lease_path(self, name: str) -> Path:
         return self.world_path(name) / _ACTIVE_LEASE

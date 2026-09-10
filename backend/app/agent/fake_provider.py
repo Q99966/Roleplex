@@ -108,6 +108,17 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[SERVICE_FAKE:' in prompt:
+        import re
+        import shlex
+        import sys
+        match = re.search(r'\[SERVICE_FAKE:(\d+)\]', prompt)
+        if match:
+            port = int(match[1])
+            script = f'{shlex.quote(sys.executable)} -u -m http.server {port} --bind 127.0.0.1'
+            return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_start_service', 'args': {
+                'script': script, 'port': port, 'lifetime_seconds': 60}, 'id': 'service_start'}]),
+                ScriptedTurn(text='服务启动流程已结束，请使用 /ps 管理。')], delay=delay)
     if any(marker in prompt for marker in ('[SHELL_APPROVAL_FAKE]', '[SHELL_EXPIRY_FAKE]', '[SHELL_DETAILS_FAKE]')):
         import os
         script = "[IO.File]::AppendAllText('shell-proof.txt', \"approved`n\")" if os.name == 'nt' else "printf 'approved\\n' >> shell-proof.txt"

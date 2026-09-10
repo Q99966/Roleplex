@@ -5,6 +5,7 @@ import {
 import { useAppStore } from '../store/app'
 import { type Conversation, type Role } from '../api/client'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
+import { RuntimeLimit } from './RuntimeLimit'
 
 export interface ModalProps {
   onClose: () => void
@@ -298,6 +299,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
               className="space-y-6 text-xs"
             >
               {/* 当前运行状态卡片 */}
+              <RuntimeLimit scope="world" id={0} />
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -828,6 +830,10 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                   ['workspace_write', '写入工作区文件'],
                   ['workspace_run_command', '工作区结构化命令'],
                   ['workspace_run_shell', '工作区 Shell（Owner 逐次审批）'],
+                  ['workspace_start_service', '启动后台 HTTP 服务（Owner 逐次审批）'],
+                  ['workspace_service_status', '查询当前会话服务状态'],
+                  ['workspace_service_logs', '读取当前会话服务日志'],
+                  ['workspace_stop_service', '停止当前会话服务'],
                 ] as const).map(([tool, label]) => (
                   <button
                     key={tool}

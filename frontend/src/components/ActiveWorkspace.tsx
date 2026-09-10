@@ -7,6 +7,7 @@ import { useChatStore } from '../store/chat'
 import { type Conversation, type Message, type Role } from '../api/client'
 import { MessageParts } from './MessageParts'
 import { ShellApprovals } from './ShellApprovals'
+import { ProcessPanel } from './ProcessPanel'
 import { useReadingPosition } from './useReadingPosition'
 
 interface ActiveWorkspaceProps {
@@ -50,6 +51,8 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const stopGeneration = useChatStore((state) => state.stopGeneration)
 
   const [draft, setDraft] = useState('')
+  const [processPanel, setProcessPanel] = useState(false)
+  const [processNotice, setProcessNotice] = useState('')
   const [mentions, setMentions] = useState<Array<number | 'all'>>([])
   const { feedRef, contentRef, onScroll, goBottom, newContent } = useReadingPosition(activeConversationId)
 
@@ -82,6 +85,12 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
    */
   function submit(event: React.FormEvent) {
     event.preventDefault()
+    if (draft.trim() === '/ps') {
+      setDraft('')
+      if (user?.is_owner) setProcessPanel(true)
+      else setProcessNotice('仅 Owner 可查看和管理会话进程。')
+      return
+    }
     if (!hasReplyRole || loading || sending || subscription !== 'ready') return
     const text = draft
     setDraft('')
@@ -115,10 +124,12 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   return (
     <section className="flex flex-1 h-full overflow-hidden bg-slate-950 text-slate-300">
       <div className="flex-1 flex flex-col h-full min-w-0">
+        {processPanel && user?.is_owner && <ProcessPanel key={`process:${worldName}:${user.id}:${activeConv.id}`} conversationId={activeConv.id} onClose={() => setProcessPanel(false)} />}
         <div className="h-16 shrink-0 border-b border-slate-800 bg-slate-900 px-6 flex items-center justify-between">
           <div className={`min-w-0 transition-all duration-300 ${isSidebarCollapsed ? 'pl-10' : ''}`}>
             <div className="flex items-center gap-2">
               <h2 className="font-bold text-white text-base truncate">{activeConv.title}</h2>
+              {user?.is_owner && <button type="button" onClick={() => setProcessPanel(true)} className="text-xs text-indigo-300">会话详情与进程</button>}
               <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 font-medium">
                 {activeConv.type === 'group' ? '群聊' : '单聊'}
               </span>
@@ -255,6 +266,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
         </div>
         {newContent && <button type="button" onClick={goBottom} className="self-center my-2 rounded-full bg-indigo-600 px-4 py-2 text-xs text-white">有新内容，回到底部</button>}
         <ShellApprovals key={`${worldName}:${user?.id}:${activeConv.id}`} conversationId={activeConv.id} />
+        {processNotice && <p role="alert" className="px-4 text-xs text-amber-300">{processNotice}</p>}
         <form onSubmit={submit} className="p-4 border-t border-slate-800 bg-slate-900">
           {!hasReplyRole && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
@@ -294,6 +306,10 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             )}
             <input
               value={draft}
+              onKeyDown={(event) => {
+                // 本地管理命令不依赖聊天发送按钮的加载/生成状态。
+                if (event.key === 'Enter' && draft.trim() === '/ps') submit(event)
+              }}
               onChange={(event) => {
                 setDraft(event.target.value)
                 if (!event.target.value.trim()) setMentions([])

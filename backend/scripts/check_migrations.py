@@ -90,6 +90,7 @@ def check_sqlite_foreign_keys(sqlite_path: Path) -> list[str]:
             ("workspace_binding_id", "workspace_bindings"),
         },
         "workspace_bindings": {("created_by", "users")},
+        "runtime_entries": {("conversation_ref_id", "conversations")},
         "execution_workspaces": {
             ("execution_id", "agent_executions"),
             ("workspace_binding_id", "workspace_bindings"),

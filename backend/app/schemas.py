@@ -179,6 +179,7 @@ class ConversationWorkspaceUpdate(BaseModel):
 
     workspace_binding_id: int | None
     expected_revision: int = Field(ge=0)
+    confirm_cleanup: bool = False
 
 
 class WorkspaceCreate(BaseModel):
@@ -191,12 +192,13 @@ class WorkspaceCreate(BaseModel):
 
 
 class WorkspaceUpdate(BaseModel):
-    """调整生命周期、原生文件与 W1b 结构化命令能力；Shell 仍未开放。"""
+    """调整生命周期和工具能力；停用时回收运行实例需显式确认。"""
 
     active: bool | None = None
     file_tools_enabled: bool | None = None
     basic_commands_enabled: bool | None = None
     shell_enabled: bool | None = None
+    confirm_cleanup: bool = False
 
 
 class WorkspaceResponse(BaseModel):

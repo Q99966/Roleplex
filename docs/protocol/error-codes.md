@@ -96,6 +96,22 @@ WebSocket error frame 使用：
 | `SHELL_REJECTED` | 已实现 | 工具 | — | rejected | no | Owner 拒绝，不创建进程 |
 | `SHELL_APPROVAL_EXPIRED` | 已实现 | 工具 | — | rejected | no | 等待过期、取消或重启，不执行 |
 | `SHELL_REQUEST_CONFLICT` | 已实现 | 工具 | — | rejected | no | 同一调用身份已有记录，禁止重放 |
+| `RUNTIME_WORLD_LIMIT` / `RUNTIME_WORKSPACE_LIMIT` / `RUNTIME_CONVERSATION_LIMIT` | 实施中 | REST/工具 | 409/— | rejected | conditional | 指定层的名额不足，不能静默扩大配额 |
+| `RUNTIME_SCOPE_INVALID` / `RUNTIME_LIMIT_INVALID` | 实施中 | REST/工具 | 422/— | rejected | no | 范围或限额参数无效 |
+| `RUNTIME_NOT_FOUND` | 实施中 | REST/工具 | 404/— | rejected | no | 实例/配置不存在或无权访问 |
+| `RUNTIME_SCOPE_CLOSING` | 实施中 | REST/工具 | 409/— | rejected | conditional | 删除/退出门槛已关闭新启动 |
+| `RUNTIME_REVISION_CONFLICT` | 实施中 | REST/工具 | 409/— | rejected | conditional | 配置或实例版本竞争，不覆盖新值 |
+| `RUNTIME_REQUEST_CONFLICT` / `RUNTIME_NOT_STARTABLE` | 实施中 | REST/工具 | 409/— | rejected | no | 重复消费调用或状态不允许启动 |
+| `RUNTIME_PORT_BUSY` | 实施中 | REST/工具 | 409/— | rejected | conditional | 端口已预留/占用，不停止陌生进程 |
+| `RUNTIME_CLEANUP_UNCONFIRMED` | 实施中 | REST/工具 | 409/— | failed | conditional | 未确认回收，不释放占用或完成删除 |
+| `RUNTIME_CLEANUP_CONFIRM_REQUIRED` | 实施中 | REST | 409 | rejected | conditional | 需明确确认范围回收，尚未停止资源 |
+| `RUNTIME_NOT_SUPPORTED` | 实施中 | REST/工具 | 409/— | rejected | no | 当前平台的后台服务运行器未验证/未开放 |
+| `RUNTIME_ARGUMENT_INVALID` | 实施中 | REST/工具 | 422/— | rejected | no | 服务参数无效 |
+| `RUNTIME_START_FAILED` / `RUNTIME_START_CANCELLED` | 实施中 | 工具 | — | failed/cancelled | conditional | 启动失败或在移交前取消 |
+| `RUNTIME_READY_TIMEOUT` | 实施中 | 工具 | — | timeout | conditional | 尚未取得就绪证据即到期，必须收口进程 |
+| `RUNTIME_LISTENER_MISMATCH` / `RUNTIME_LISTENER_UNVERIFIED` | 实施中 | 工具 | — | rejected | conditional | 监听不符合声明或无法证实其归属 |
+| `RUNTIME_STATE_UNAVAILABLE` / `RUNTIME_LOG_UNAVAILABLE` | 实施中 | 工具 | — | failed | conditional | 状态/日志保存失败，仍需回收且不伪造结果 |
+| `RUNTIME_AUDIT_UNAVAILABLE` | 实施中 | 运行实例清理 | 409 | rejected | conditional | 回收审计记录不可用；保留失败门槛，不伪造完成 |
 | `HISTORY_CURSOR_EXPIRED` | 已实现 | REST | 409 | rejected | conditional | epoch 已改变；作废缓存后从最近窗口重新加载 |
 | `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
 | `AUTH_REQUIRED` | 已实现 | REST | 401 | rejected | conditional | 缺少 Bearer 凭据 |

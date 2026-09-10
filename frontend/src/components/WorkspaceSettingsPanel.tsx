@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Check, FileText, FolderInput, FolderKanban, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import type { WorkspaceAvailability } from '../api/client'
+import { RuntimeLimit } from './RuntimeLimit'
 
 const STATUS_LABELS: Record<WorkspaceAvailability, string> = {
   available: '可用',
@@ -204,7 +205,7 @@ export function WorkspaceSettingsPanel() {
                   </button>
                   <button
                     type="button"
-                    disabled={busy || binding.availability === 'busy'}
+                    disabled={busy}
                     onClick={() => {
                       if (!window.confirm('解除登记只删除 Roleplex 中的绑定，不会删除物理目录。继续吗？')) return
                       void run(() => deleteWorkspaceBinding(binding.id))
@@ -216,6 +217,7 @@ export function WorkspaceSettingsPanel() {
                   </button>
                 </div>
               </div>
+              <RuntimeLimit scope="workspace" id={binding.id} />
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <button
                   type="button"

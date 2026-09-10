@@ -27,14 +27,19 @@ from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
 
 WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
-WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell')
-WORKSPACE_TOOL_POLICY_VERSION = 3
+SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
+WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
+WORKSPACE_TOOL_POLICY_VERSION = 4
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件，并取得 sha256 供后续安全更新。",
     "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新。",
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
     "workspace_run_shell": "请求执行 Shell 脚本，必须等待 Owner 对本次脚本批准；只接受 script，不允许 cwd、环境或审批参数。",
+    'workspace_start_service': '请求 Owner 批准前台 HTTP 开发服务；必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。',
+    'workspace_service_status': '查询当前会话已登记服务的真实状态；不扫描全机，不占进程名额。',
+    'workspace_service_logs': '读取当前会话服务的有界私有双流日志及游标缺口，内容会发给当前模型。',
+    'workspace_stop_service': '停止当前会话指定的托管实例并确认回收，不按 PID 或端口杀进程。',
 }
 _LEASE_LOCKS: dict[int, asyncio.Lock] = {}
 _COMMAND_CALL_LOCKS: dict[int, asyncio.Lock] = {}
@@ -72,8 +77,28 @@ def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
     except WorkspaceCommandError:
         shell_available = False
     return [name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []) and (
-        (binding.shell_enabled and shell_available) if name == 'workspace_run_shell'
+        (binding.services_enabled and shell_available) if name in SERVICE_TOOLS else (binding.shell_enabled and shell_available) if name == 'workspace_run_shell'
         else binding.basic_commands_enabled if name == 'workspace_run_command' else binding.file_tools_enabled)]
+
+
+class ServiceStartInput(BaseModel):
+    """受限前台服务请求，不接收目录、环境或运行身份。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    script: str = Field(min_length=1, max_length=65536)
+    port: int = Field(ge=1024, le=65535)
+    health_path: str = Field(default='/', pattern=r'^/(?:[^/\\?#\x00-\x20][^\\?#\x00-\x20]*)?$', max_length=512)
+    lifetime_seconds: int = Field(default=7200, ge=1, le=28800)
+
+
+class ServiceIdInput(BaseModel):
+    """按不可猜测资源 ID 查询/停止，绝不接受裸 PID。"""
+    model_config = ConfigDict(extra='forbid')
+    runtime_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+
+
+class ServiceLogInput(ServiceIdInput):
+    """有界日志游标。"""
+    after: int = Field(default=0, ge=0, le=2**63 - 1)
 
 
 class WorkspaceShellInput(BaseModel):
@@ -260,6 +285,20 @@ async def _authorized_service(
             or generation.stop_requested_at is not None
         ):
             return None
+        if tool_name in {'workspace_write', 'workspace_run_shell'}:
+            from ..runtime.models import RuntimeEntry
+            from ..runtime.registry import ACTIVE
+            if await session.scalar(select(RuntimeEntry.id).where(RuntimeEntry.workspace_id == workspace_binding_id,
+                RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(ACTIVE)).limit(1)):
+                return None
+        from ..runtime.models import RuntimeGate, CleanupOperation
+        from sqlalchemy import or_
+        if await session.scalar(select(RuntimeGate.closing).where(RuntimeGate.id == 1)):
+            return None
+        if await session.scalar(select(CleanupOperation.id).where(CleanupOperation.state.in_(('running', 'prepared', 'failed')),
+            or_(CleanupOperation.scope == 'world', (CleanupOperation.scope == 'conversation') & (CleanupOperation.scope_id == conversation_id),
+                (CleanupOperation.scope == 'workspace') & (CleanupOperation.scope_id == workspace_binding_id))).limit(1)):
+            return None
         try:
             root = binding_root(binding)
         except WorkspacePathError:
@@ -320,6 +359,14 @@ async def create_workspace_tools(
         return []
     lease, _binding = created
 
+    def runtime_identity(name: str) -> dict:
+        """Args:
+            name：正在调用的固定工具名，身份来自宿主而非模型。
+        """
+        from ..agent.tool_context import tool_call_id
+        return dict(owner_id=triggered_by_user_id, conversation_id=conversation_id, workspace_id=lease.workspace_binding_id,
+            execution_id=execution_id, role_id=role.id, tool_call_id=tool_call_id.get(), tool_name=name)
+
     async def service(tool_name: str) -> WorkspaceFileService | None:
         """按本 execution 与具体工具名重新授权。"""
         return await _authorized_service(
@@ -356,15 +403,14 @@ async def create_workspace_tools(
 
     async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
         """exclusive 新建或按 expected hash 原子替换 UTF-8 文件。"""
-        authorized = await service("workspace_write")
-        if authorized is None:
-            return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
-        try:
-            return authorized.json_result(
-                await authorized.write(path, content, expected_sha256=expected_sha256)
-            )
-        except WorkspaceFileError as exc:
-            return _error_result(exc.code)
+        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+            authorized = await service("workspace_write")
+            if authorized is None:
+                return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
+            try:
+                return authorized.json_result(await authorized.write(path, content, expected_sha256=expected_sha256))
+            except WorkspaceFileError as exc:
+                return _error_result(exc.code)
 
     async def workspace_run_command(command: str, args: dict | None = None) -> str:
         """在获得串行槽后重新鉴权并执行固定命令。
@@ -378,9 +424,9 @@ async def create_workspace_tools(
             if authorized is None:
                 return f'{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE'
             try:
-                result = await WorkspaceCommandService(
-                    root=authorized.root, execution_id=execution_id,
-                ).run(command, args if args is not None else {})
+                from ..runtime.manager import manager
+                async with manager.command(**runtime_identity('workspace_run_command')):
+                    result = await WorkspaceCommandService(root=authorized.root, execution_id=execution_id).run(command, args if args is not None else {})
                 return _command_result(result)
             except WorkspaceCommandError as exc:
                 return _command_result({'ok': False, 'error_code': exc.code})
@@ -395,12 +441,84 @@ async def create_workspace_tools(
         from .approvals import request_and_run
         async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
             try:
-                return _command_result(await request_and_run(script=script, execution_id=execution_id,
-                    conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
-                    workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
-                    tool_call_id=tool_call_id.get()))
+                from ..runtime.manager import manager
+                async with manager.command(**runtime_identity('workspace_run_shell')):
+                    return _command_result(await request_and_run(script=script, execution_id=execution_id,
+                        conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
+                        workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
+                        tool_call_id=tool_call_id.get()))
             except WorkspaceCommandError as exc:
                 return _command_result({'ok': False, 'error_code': exc.code})
+
+    async def workspace_start_service(script: str, port: int, health_path: str = '/', lifetime_seconds: int = 7200) -> str:
+        """Args:
+            script：审批的前台脚本。
+            port：声明端口。
+            health_path：受限本机探针路径。
+            lifetime_seconds：不超过主机限制的寿命。
+        """
+        from ..runtime.manager import manager
+        from ..runtime.registry import RuntimeRejected
+        try:
+            async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+                if await service('workspace_start_service') is None:
+                    return _command_result({'error_code': 'WORKSPACE_TOOL_NOT_AVAILABLE'})
+                identity = {**runtime_identity('workspace_start_service'), 'root_path': lease.root_path_snapshot}
+                return json.dumps(await manager.start_service(identity=identity, script=script, port=port,
+                    health_path=health_path, lifetime_seconds=lifetime_seconds))
+        except (RuntimeRejected, WorkspaceCommandError) as exc:
+            return _command_result({'error_code': exc.code})
+
+    async def runtime_access(runtime_id: str, name: str):
+        """Args:
+            runtime_id：模型引用的资源身份。
+            name：查询/日志/停止的实际工具名。
+        """
+        from ..runtime import registry
+        if await service(name) is None:
+            raise registry.RuntimeRejected('WORKSPACE_TOOL_NOT_AVAILABLE')
+        row = await registry.get(runtime_id)
+        if row is None or row.owner_id != triggered_by_user_id or row.conversation_ref_id != conversation_id:
+            raise registry.RuntimeRejected('RUNTIME_NOT_FOUND')
+        return row
+
+    async def workspace_service_status(runtime_id: str) -> str:
+        """Args:
+            runtime_id：当前会话运行实例。
+        """
+        from ..runtime.registry import RuntimeRejected
+        try:
+            row = await runtime_access(runtime_id, 'workspace_service_status')
+            return json.dumps({'runtime_id': row.id, 'state': row.state, 'port': row.port, 'health_code': row.health_code})
+        except RuntimeRejected as exc:
+            return _command_result({'error_code': exc.code})
+
+    async def workspace_service_logs(runtime_id: str, after: int = 0) -> str:
+        """Args:
+            runtime_id：当前会话运行实例。
+            after：已读取的观察序号。
+        """
+        from ..runtime import registry, logs
+        from ..runtime.manager import manager
+        try:
+            row = await runtime_access(runtime_id, 'workspace_service_logs')
+            host = manager.hosts.get(runtime_id)
+            return json.dumps(host.ring.page(after) if host else logs.archived_page(row, after), ensure_ascii=False)
+        except registry.RuntimeRejected as exc:
+            return _command_result({'error_code': exc.code})
+
+    async def workspace_stop_service(runtime_id: str) -> str:
+        """Args:
+            runtime_id：当前会话托管实例，不接受 PID。
+        """
+        from ..runtime.registry import RuntimeRejected
+        from ..runtime.manager import manager
+        try:
+            await runtime_access(runtime_id, 'workspace_stop_service')
+            row = await manager.stop_one(runtime_id, 'agent_stop')
+            return json.dumps({'runtime_id': row.id, 'state': row.state})
+        except RuntimeRejected as exc:
+            return _command_result({'error_code': exc.code})
 
     raw: dict[str, BaseTool] = {
         'workspace_run_shell': StructuredTool.from_function(coroutine=workspace_run_shell, name='workspace_run_shell',
@@ -430,6 +548,11 @@ async def create_workspace_tools(
             args_schema=WorkspaceWriteInput,
         ),
     }
+    for name, function, schema in [('workspace_start_service', workspace_start_service, ServiceStartInput),
+        ('workspace_service_status', workspace_service_status, ServiceIdInput), ('workspace_service_logs', workspace_service_logs, ServiceLogInput),
+        ('workspace_stop_service', workspace_stop_service, ServiceIdInput)]:
+        raw[name] = StructuredTool.from_function(coroutine=function, name=name, description=WORKSPACE_TOOL_DESCRIPTIONS[name],
+            args_schema=schema, handle_validation_error=lambda _error: _command_result({'error_code': 'RUNTIME_ARGUMENT_INVALID'}))
     selected = [raw[name] for name in _enabled_tools(role, _binding)]
     return guard_tools(selected, allow_dangerous=allow_dangerous)
 

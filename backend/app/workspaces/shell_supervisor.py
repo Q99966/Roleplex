@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+import threading
 
 import psutil
 
@@ -53,13 +54,26 @@ def main() -> int:
     if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
         return 125
     signal.signal(signal.SIGTERM, stop)
+    arguments = sys.argv[1:]
+    if arguments[:1] == ['--parent-fd']:
+        parent_fd = int(arguments[1])
+        # runtime ID 只作为恢复时的宿主身份，不是脚本或凭据。
+        arguments = arguments[4:]
+        def watch_parent():
+            """控制通道关闭代表后端消失，不依赖可能复用的父 PID。"""
+            try:
+                while os.read(parent_fd, 1):
+                    pass
+            finally:
+                os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=watch_parent, daemon=True).start()
     code = 125
     process = None
     try:
         # 给宿主生成的 PowerShell UTF-8 前缀留余量；原始模型脚本仍限制为 64 KiB。
         script = sys.stdin.buffer.read(131072)
         # stdin 来自已授权父进程，实际 shell argv 也仅由宿主解析。
-        process = subprocess.Popen(sys.argv[1:], stdin=subprocess.PIPE)
+        process = subprocess.Popen(arguments, stdin=subprocess.PIPE)
         process.communicate(script)
         code = process.returncode
     except StopRequested:

@@ -51,7 +51,7 @@ def classify_tool(name: str, *, owner_safe_overrides: Collection[str] = ()) -> s
     Returns:
         `safe` 或 `dangerous`；无法确认的工具一律返回 `dangerous`。
     """
-    if name == 'workspace_run_shell':
+    if name in {'workspace_run_shell', 'workspace_start_service'}:
         return DANGER_DANGEROUS
     if name in SAFE_BUILTIN_TOOLS:
         return DANGER_SAFE

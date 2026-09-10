@@ -165,30 +165,37 @@ async def update_conversation_workspace(
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
     if conversation.type != "single":
         raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRED")
+    if conversation.revision != payload.expected_revision:
+        raise HTTPException(409, 'CONVERSATION_REVISION_CONFLICT')
     if payload.workspace_binding_id is not None:
         await available_workspace(session, payload.workspace_binding_id, user.id)
-    next_revision = payload.expected_revision + 1
-    updated = await session.scalar(
-        update(Conversation)
-        .where(Conversation.id == conversation_id, Conversation.revision == payload.expected_revision)
-        .values(workspace_binding_id=payload.workspace_binding_id, revision=next_revision)
-        .returning(Conversation.revision)
-    )
-    if updated is None:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail="CONVERSATION_REVISION_CONFLICT")
-    pending = await event_store.append_event(
-        session,
-        conversation_id,
-        "conversation_updated",
-        {"workspace_binding_id": payload.workspace_binding_id, "revision": next_revision},
-        revision=next_revision,
-    )
-    await session.commit()
-    await event_store.publish_events(pending)
-    await session.refresh(conversation)
-    member = await require_member(session, conversation_id, user.id)
-    return await response(session, conversation, member)
+    from ..runtime.manager import manager
+    from ..runtime.registry import quota_view
+    changed = conversation.workspace_binding_id != payload.workspace_binding_id
+    if changed and (await quota_view('conversation', conversation_id))['used'] and not payload.confirm_cleanup:
+        raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
+    owner_id = user.id
+    await session.rollback()
+    async def apply_binding():
+        """门槛保持关闭期间提交绑定版本，再释放资源变更权限。"""
+        next_revision = payload.expected_revision + 1
+        updated = await session.scalar(update(Conversation).where(Conversation.id == conversation_id,
+            Conversation.revision == payload.expected_revision).values(workspace_binding_id=payload.workspace_binding_id,
+            revision=next_revision).returning(Conversation.revision))
+        if updated is None:
+            await session.rollback()
+            raise HTTPException(409, 'CONVERSATION_REVISION_CONFLICT')
+        pending = await event_store.append_event(session, conversation_id, 'conversation_updated',
+            {'workspace_binding_id': payload.workspace_binding_id, 'revision': next_revision}, revision=next_revision)
+        await session.commit()
+        await event_store.publish_events(pending)
+        current = await _owned_conversation(session, conversation_id, owner_id)
+        member = await require_member(session, conversation_id, owner_id)
+        return await response(session, current, member)
+    if changed:
+        async with manager.cleanup_scope('conversation', conversation_id, 'workspace_rebind', owner_id):
+            return await apply_binding()
+    return await apply_binding()
 
 
 @router.put("/{conversation_id}/members", response_model=ConversationResponse)
@@ -312,7 +319,7 @@ async def _owned_conversation(session: AsyncSession, conversation_id: int, owner
 
 
 @router.delete("/{conversation_id}", status_code=204)
-async def delete_conversation(conversation_id: int, user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
+async def delete_conversation(conversation_id: int, user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)], confirm_cleanup: bool = False):
     """把会话移入回收站：只写删除时间，数据保留到保留期结束。
 
     会话立即从列表消失，但消息、成员和事件都还在，保留期内可以完整恢复；
@@ -321,8 +328,16 @@ async def delete_conversation(conversation_id: int, user: Annotated[User, Depend
     """
     conversation = await _owned_conversation(session, conversation_id, user.id)
     if conversation.deleted_at is None:
-        conversation.deleted_at = datetime.now(timezone.utc)
-        await session.commit()
+        from ..runtime.manager import manager
+        from ..runtime.registry import quota_view
+        if (await quota_view('conversation', conversation_id))['used'] and not confirm_cleanup:
+            raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
+        owner_id = user.id
+        await session.rollback()
+        async with manager.cleanup_scope('conversation', conversation_id, 'conversation_delete', owner_id):
+            conversation = await _owned_conversation(session, conversation_id, owner_id)
+            conversation.deleted_at = datetime.now(timezone.utc)
+            await session.commit()
 
 
 @router.post("/{conversation_id}/restore", response_model=ConversationResponse)

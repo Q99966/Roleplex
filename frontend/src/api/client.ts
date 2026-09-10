@@ -1,4 +1,10 @@
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }
+export type RuntimeScope = 'world' | 'workspace' | 'conversation'
+export type RuntimeConfig = { scope: RuntimeScope; scope_id: number; limit: number; revision: number; used: number; services_enabled?: boolean; services_supported?: boolean }
+export type RuntimeProcess = { id: string; kind: string; state: string; tool_name: string; conversation_id: number; workspace_id: number;
+  execution_id: string; role_id: number; pid: number | null; port: number | null; health_code: number | null; error_code: string | null;
+  exit_code: number | null; created_at: string; started_at: string | null; expires_at: string | null; ended_at: string | null }
+export type RuntimeLogPage = { availability: string; items: Array<{ seq: number; stream: string; text: string; bytes: number }>; next_seq: number; gap: boolean }
 
 /**
  * 认证响应。
@@ -40,6 +46,7 @@ export type ShellApproval = {
   workspace_name: string; world_name: string; root_path: string; script: string; shell_kind: string;
   timeout_seconds: number; output_bytes: number; request_digest: string; status: string;
   requested_at: string; expires_at: string
+  runtime_id?: string; port?: number; health_path?: string; lifetime_seconds?: number; ready_timeout_seconds?: number
 }
 export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
@@ -215,11 +222,11 @@ export const api = {
     create_directory: boolean
     acknowledge_existing_content: boolean
   }) => request<WorkspaceBinding>('/api/workspaces', { method: 'POST', body: JSON.stringify(body) }),
-  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean; basic_commands_enabled?: boolean; shell_enabled?: boolean }) => (
+  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean; basic_commands_enabled?: boolean; shell_enabled?: boolean; confirm_cleanup?: boolean }) => (
     request<WorkspaceBinding>(`/api/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
   ),
   validateWorkspace: (id: number) => request<WorkspaceBinding>(`/api/workspaces/${id}/validate`, { method: 'POST' }),
-  deleteWorkspace: (id: number) => request<void>(`/api/workspaces/${id}`, { method: 'DELETE' }),
+  deleteWorkspace: (id: number, confirmed = false) => request<void>(`/api/workspaces/${id}?confirm_cleanup=${confirmed}`, { method: 'DELETE' }),
 
   // 角色管理 API
   roles: () => request<Role[]>('/api/roles'),
@@ -234,7 +241,7 @@ export const api = {
   createConversation: (body: { type: 'single' | 'group'; title: string; role_ids: number[]; orchestrator_enabled?: boolean; orchestrator_role_id?: number | null; workspace_binding_id?: number | null }) => request<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify(body) }),
   updateConversationMembers: (id: number, body: { role_ids: number[]; expected_revision: number }) => request<Conversation>(`/api/conversations/${id}/members`, { method: 'PUT', body: JSON.stringify(body) }),
   updateConversationWorkspace: (id: number, body: { workspace_binding_id: number | null; expected_revision: number }) => request<Conversation>(`/api/conversations/${id}/workspace`, { method: 'PUT', body: JSON.stringify(body) }),
-  deleteConversation: (id: number) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
+  deleteConversation: (id: number, confirmed = false) => request<void>(`/api/conversations/${id}?confirm_cleanup=${confirmed}`, { method: 'DELETE' }),
   updateConversationPreferences: (id: number, pinned?: boolean, archived?: boolean) => {
     const params = new URLSearchParams()
     if (pinned !== undefined) params.append('pinned', String(pinned))
@@ -250,6 +257,13 @@ export const api = {
   // 消息与生成 API
   messages: (conversationId: number, signal?: AbortSignal, before?: string) => request<MessageHistory>(`/api/conversations/${conversationId}/messages?window=recent${before ? `&before=${encodeURIComponent(before)}` : ''}`, { signal, cache: 'no-store' }),
   shellApprovals: (conversationId: number, signal?: AbortSignal) => request<ShellApproval[]>(`/api/conversations/${conversationId}/tool-approvals`, { signal, cache: 'no-store' }),
+  runtimeConfig: (scope: RuntimeScope, id: number, signal?: AbortSignal) => request<RuntimeConfig>(`/api/runtime/config?scope=${scope}&scope_id=${id}`, { signal, cache: 'no-store' }),
+  setRuntimeConfig: (body: { scope: RuntimeScope; scope_id: number; limit: number; expected_revision: number; services_enabled?: boolean; confirm_cleanup?: boolean }) => request<RuntimeConfig>('/api/runtime/config', { method: 'PUT', body: JSON.stringify(body) }),
+  runtimeProcesses: (id: number, signal?: AbortSignal) => request<{ items: RuntimeProcess[]; services_supported: boolean }>(`/api/conversations/${id}/processes`, { signal, cache: 'no-store' }),
+  runtimeDetail: (id: number, runtimeId: string, signal?: AbortSignal) => request<RuntimeProcess & { request: { script: string; root_path: string; shell_kind: string } | null; command_detail: { message_id: number; part: Part } | null }>(`/api/conversations/${id}/processes/${runtimeId}`, { signal, cache: 'no-store' }),
+  runtimeLogs: (id: number, runtimeId: string, after: number, signal?: AbortSignal) => request<RuntimeLogPage>(`/api/conversations/${id}/processes/${runtimeId}/logs?after=${after}`, { signal, cache: 'no-store' }),
+  stopRuntime: (id: number, runtimeId: string) => request<RuntimeProcess>(`/api/conversations/${id}/processes/${runtimeId}/stop`, { method: 'POST' }),
+  cleanupPreview: (scope: RuntimeScope, id: number) => request<{ items: RuntimeProcess[] }>(`/api/runtime/cleanup-preview?scope=${scope}&scope_id=${id}`, { cache: 'no-store' }),
   decideShell: (conversationId: number, id: number, decision: 'approve' | 'reject', request_digest: string) => request<{ id: number; status: string }>(
     `/api/conversations/${conversationId}/tool-approvals/${id}/decision`, { method: 'POST', body: JSON.stringify({ decision, request_digest }), cache: 'no-store' }),
   sendMessage: (conversationId: number, body: MessageCreate) => request<SendMessageResult>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),

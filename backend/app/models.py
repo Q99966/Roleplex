@@ -26,6 +26,8 @@ class InstanceSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    process_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class User(Base):
@@ -107,6 +109,8 @@ class Conversation(Base):
     """
 
     __tablename__ = "conversations"
+    process_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(16), nullable=False, default="single")
@@ -263,6 +267,9 @@ class WorkspaceBinding(Base):
     """当前 World Owner 从前端登记的主机绝对工作目录。"""
 
     __tablename__ = "workspace_bindings"
+    process_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    services_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -466,3 +473,7 @@ class ToolExecutionDetail(Base):
         UniqueConstraint('message_id', 'call_id', name='uq_tool_detail_message_call'),
         Index('ix_tool_detail_expires_at', 'expires_at'),
     )
+
+
+# 迁移和运行时共用同一 metadata 入口；不在业务路径执行 create_all。
+from .runtime.models import CleanupItem, CleanupOperation, RuntimeEntry, RuntimeGate  # noqa: E402,F401

@@ -1,5 +1,11 @@
 # Roleplex — IM 式多 Agent 群聊协作平台实施计划（架构修订版）
 
+## 当前：W1d 会话后台服务与 `/ps`（实施中，尚未验收）
+
+用户希望现阶段补齐开发服务器保活、会话进程查询、日志和停止。范围、生命周期、默认值及验收集中见
+[会话后台服务计划](conversation-services-v1.md)。已批准插在 W1c 与 W2a 之间；当前已接入核心闭环，继续补齐故障验证，
+不放宽 W1c 短命令清理，不提前开放 Docker/P2 部署，也不启动已延期的消息分块 C。
+
 ## 已完成：W1c 任意 Shell 与 Owner 逐次审批（已人工验收）
 
 W1c 已实现并完成分层验证，实施记录、Windows 覆盖缺口和人工步骤统一见
@@ -26,9 +32,11 @@ Shell 逐层跑通单聊角色；之后才进入 Repository、只读代码工具
 
 当前建议主线：
 
+W1d 的最新配额、生命周期和验收以页首链接的已批准计划为准。
+
 ```text
 C0 基线 → C1 ContextBuilder → C2 缓存观测 → M4a 群聊
-→ W0 设置 → E0 Execution → W1a 文件 → W1b 结构化命令 → W1c Shell → W2a Repository
+→ W0 设置 → E0 Execution → W1a 文件 → W1b 结构化命令 → W1c Shell → W1d 后台服务 → W2a Repository
 → W2b 文件/Git → W3 Worktree/补丁
 → M4b Orchestrator
 → C3 Checkpoint → C4 真实缓存验收 → 会话导出/导入 → 世界分发

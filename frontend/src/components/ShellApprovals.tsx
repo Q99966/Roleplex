@@ -65,15 +65,16 @@ export function ShellApprovals({ conversationId }: { conversationId: number }) {
       <button type="button" className="ml-3 underline" onClick={() => setReload((value) => value + 1)}>刷新审批列表</button>
     </p>}
     {rows.map((row) => <section key={row.id} className="space-y-2 text-xs text-slate-300">
-      <h3 className="font-semibold text-amber-300">等待 Owner 批准本次 Shell</h3>
+      <h3 className="font-semibold text-amber-300">等待 Owner 批准{row.runtime_id ? '后台服务启动' : '本次 Shell'}</h3>
       <p>世界：{row.world_name} · 工作区：{row.workspace_name} · {row.shell_kind}</p>
       <p className="break-all">执行目录：{row.root_path}</p>
+      {row.runtime_id && <p>后台服务 · 端口 {row.port} · 探针 {row.health_path} · 就绪等待 {row.ready_timeout_seconds} 秒 · 最长运行 {row.lifetime_seconds} 秒；回答结束后继续运行。</p>}
       <p className="text-amber-300">审批不是系统沙箱：脚本可以访问宿主其他路径和网络。请完整检查后再批准。</p>
       <pre aria-label="待审批脚本" dir="ltr" className="max-h-44 overflow-auto rounded-lg bg-slate-950 p-3 whitespace-pre-wrap break-all">{visibleScript(row.script)}</pre>
-      <p>超时上限 {row.timeout_seconds} 秒 · 输出保留 {row.output_bytes} 字节 · 有效至 {new Date(row.expires_at).toLocaleTimeString('zh-CN', { hour12: false })}。控制字符以转义显示。</p>
+      <p>{row.runtime_id ? '后台日志采用有界环形保留' : `超时上限 ${row.timeout_seconds} 秒 · 输出保留 ${row.output_bytes} 字节`} · 审批有效至 {new Date(row.expires_at).toLocaleTimeString('zh-CN', { hour12: false })}。控制字符以转义显示。</p>
       <div className="flex gap-3">
-        <button type="button" disabled={busy !== null} onClick={() => void decide(row, 'reject')} className="rounded border border-slate-600 px-3 py-2 disabled:opacity-50">拒绝本次 Shell</button>
-        <button type="button" disabled={busy !== null} onClick={() => void decide(row, 'approve')} className="rounded bg-amber-700 px-3 py-2 text-white disabled:opacity-50">批准本次 Shell</button>
+        <button type="button" disabled={busy !== null} onClick={() => void decide(row, 'reject')} className="rounded border border-slate-600 px-3 py-2 disabled:opacity-50">拒绝{row.runtime_id ? '后台服务启动' : '本次 Shell'}</button>
+        <button type="button" disabled={busy !== null} onClick={() => void decide(row, 'approve')} className="rounded bg-amber-700 px-3 py-2 text-white disabled:opacity-50">批准{row.runtime_id ? '后台服务启动' : '本次 Shell'}</button>
       </div>
     </section>)}
   </aside>

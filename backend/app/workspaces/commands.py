@@ -151,6 +151,10 @@ async def run_process(
                     job = WindowsJob(process.pid)
                 except OSError:
                     raise WorkspaceCommandError('COMMAND_NOT_SUPPORTED') from None
+            from ..runtime.manager import manager, settled
+            # 登记是短交接：取消先等待事务结束，再由 finally 回收真实句柄。
+            # 不能中断登记写入后立刻在另一连接写终态，造成未完成事务互相等待。
+            await settled(asyncio.create_task(manager.attach_command(process), context=copy_context()))
             tasks = [asyncio.create_task(drain(name, getattr(process, name)), context=copy_context()) for name in buffers]
             process.stdin.write(payload)
             try:

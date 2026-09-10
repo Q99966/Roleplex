@@ -193,30 +193,44 @@ async def update_workspace(
         user：已通过 Owner 鉴权的用户。
         session：本次短事务数据库会话。
     """
-    binding = await owned_workspace(session, workspace_id, user.id)
-    if payload.active is not None:
-        if payload.active:
-            try:
-                binding_root(binding)
-            except WorkspacePathError as exc:
-                raise _path_http_error(exc) from None
-        binding.active = payload.active
-    if payload.file_tools_enabled is not None:
-        binding.file_tools_enabled = payload.file_tools_enabled
-    if payload.basic_commands_enabled is not None:
-        binding.basic_commands_enabled = payload.basic_commands_enabled
-    if payload.shell_enabled is not None:
-        if payload.shell_enabled:
-            from ..workspaces.shell import shell_configuration
-            from ..workspaces.commands import WorkspaceCommandError
-            try:
-                shell_configuration()
-            except WorkspaceCommandError as exc:
-                raise HTTPException(409, exc.code) from None
-        binding.shell_enabled = payload.shell_enabled
-    binding.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    return await _response(session, binding)
+    from ..runtime.manager import manager
+    from ..runtime.registry import quota_view
+    owner_id = user.id
+    await owned_workspace(session, workspace_id, owner_id)
+    if payload.active is False and (await quota_view('workspace', workspace_id))['used'] and not payload.confirm_cleanup:
+        raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
+    await session.rollback()
+    async def apply_update():
+        """在停止门槛内应用停用；其他开关仍是独立能力，不隐式停止服务。"""
+        binding = await owned_workspace(session, workspace_id, owner_id)
+        if payload.active is not None:
+            if payload.active:
+                try:
+                    binding_root(binding)
+                except WorkspacePathError as exc:
+                    raise _path_http_error(exc) from None
+            binding.active = payload.active
+        if payload.file_tools_enabled is not None:
+            binding.file_tools_enabled = payload.file_tools_enabled
+        if payload.basic_commands_enabled is not None:
+            binding.basic_commands_enabled = payload.basic_commands_enabled
+        if payload.shell_enabled is not None:
+            if payload.shell_enabled:
+                from ..workspaces.shell import shell_configuration
+                from ..workspaces.commands import WorkspaceCommandError
+                try:
+                    shell_configuration()
+                except WorkspaceCommandError as exc:
+                    raise HTTPException(409, exc.code) from None
+            binding.shell_enabled = payload.shell_enabled
+        binding.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        return await _response(session, binding)
+    if payload.active is False:
+        async with manager.cleanup_scope('workspace', workspace_id, 'workspace_disabled', owner_id):
+            return await apply_update()
+    async with manager.cleanup_lock:
+        return await apply_update()
 
 
 @router.delete("/{workspace_id}", status_code=204)
@@ -224,29 +238,29 @@ async def delete_workspace(
     workspace_id: int,
     user: Annotated[User, Depends(require_owner)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    confirm_cleanup: bool = False,
 ):
     """只解除数据库登记；物理目录及其内容永不由本端点删除。"""
-    binding = await owned_workspace(session, workspace_id, user.id)
-    active_lease = await session.scalar(select(ExecutionWorkspace.id).where(
-        ExecutionWorkspace.workspace_binding_id == binding.id,
-        ExecutionWorkspace.status == "ready",
-    ))
-    if active_lease is not None:
-        raise HTTPException(status_code=409, detail="WORKSPACE_BUSY")
-    conversations = (await session.scalars(select(Conversation).where(
-        Conversation.workspace_binding_id == binding.id,
-    ).order_by(Conversation.id))).all()
-    pending_events = []
-    for conversation in conversations:
-        conversation.workspace_binding_id = None
-        conversation.revision += 1
-        pending_events.append(await event_store.append_event(
-            session,
-            conversation.id,
-            "conversation_updated",
-            {"workspace_binding_id": None, "revision": conversation.revision},
-            revision=conversation.revision,
-        ))
-    await session.execute(delete(WorkspaceBinding).where(WorkspaceBinding.id == binding.id))
-    await session.commit()
-    await event_store.publish_events(*pending_events)
+    from ..runtime.manager import manager
+    from ..runtime.registry import quota_view
+    owner_id = user.id
+    await owned_workspace(session, workspace_id, owner_id)
+    if (await quota_view('workspace', workspace_id))['used'] and not confirm_cleanup:
+        raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
+    await session.rollback()
+    async with manager.cleanup_scope('workspace', workspace_id, 'workspace_delete', owner_id):
+        active_lease = await session.scalar(select(ExecutionWorkspace.id).where(
+            ExecutionWorkspace.workspace_binding_id == workspace_id, ExecutionWorkspace.status == 'ready'))
+        if active_lease is not None:
+            raise HTTPException(409, 'WORKSPACE_BUSY')
+        conversations = (await session.scalars(select(Conversation).where(
+            Conversation.workspace_binding_id == workspace_id).order_by(Conversation.id))).all()
+        pending_events = []
+        for conversation in conversations:
+            conversation.workspace_binding_id = None
+            conversation.revision += 1
+            pending_events.append(await event_store.append_event(session, conversation.id, 'conversation_updated',
+                {'workspace_binding_id': None, 'revision': conversation.revision}, revision=conversation.revision))
+        await session.execute(delete(WorkspaceBinding).where(WorkspaceBinding.id == workspace_id))
+        await session.commit()
+        await event_store.publish_events(*pending_events)

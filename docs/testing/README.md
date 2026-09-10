@@ -59,6 +59,13 @@ A 验收前需重启后端并刷新前端，使双方都支持 subscription_cont
 
 ### 2.1 后端 pytest
 
+W1d 专项验证（实施中）：`pytest tests/test_runtime_registry.py tests/test_runtime_service.py
+tests/test_runtime_logs.py tests/test_wrapper_lifecycle.py -q`，覆盖配额、资源权限、实际 HTTP 生命周期、
+日志预算、会话清除后身份隔离及包装器退出。浏览器闭环使用
+`npm run test:e2e:commands -- runtime-services.spec.ts`；真实模型使用
+`npm run test:e2e:real-world -- runtime-service-provider.spec.ts`（联网计费）。两者复用各自本轮 World/工作区
+布局，不新增散落的用例根目录；真实测试关闭截图/trace/video，npm 固件只使用 Node 内置模块，不安装依赖。
+
 工作目录：`backend/`
 
 ```bash

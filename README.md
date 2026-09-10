@@ -42,9 +42,13 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 W1b 已完成并通过人工验收；当前工具时间线与展开详情优化的范围和验收见
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
-W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；后续为 W2a。所有聊天标题区显示当前 Workspace 与 Owner
+W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；当前推进 W1d，之后为 W2a。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
+
+会话后台服务与 `/ps` 正在实施，已接入 Linux 宿主、逐次审批、三级可调配额、日志面板和范围回收；
+当前阶段版已获人工认可；完整故障矩阵与 World 操作衔接尚未验收，进度以 [W1d 计划](docs/plan/conversation-services-v1.md)为准。
+现有 Shell 仍是调用结束即清理的一次性命令；服务保活使用独立工具，不接管外部容器。Windows 暂不开放后台服务。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 

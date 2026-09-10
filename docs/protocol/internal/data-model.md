@@ -17,7 +17,21 @@
 
 ## 通用约定
 
-- **主键 `id`**：全部是自增整数，同时充当稳定排序键；`messages` 的时间顺序就按 `id` 排，不依赖 `created_at`。
+W1d 增量（实施中，迁移 `0009_runtime_services`）：instance_settings/workspace_bindings/conversations
+分别新增 process_limit（20/5/3）和 process_limit_version；工作区新增默认 false 的 services_enabled。
+runtime_gate 单行保存短事务序列和关闭门槛；runtime_entries 保存顶层运行实例 ID、稳定排序号、来源
+Owner/会话/工作区/execution/chain/角色/调用身份、kind/state/revision、日志进程身份、PID/出生身份、声明与租用
+端口、审批引用、错误/退出/健康结果、生命周期时间及加密日志尾部。leased_port 唯一且确认回收后置空，
+(execution_id,tool_call_id) 唯一。来源身份为不可变快照，不因会话/工作区删除而抹掉历史回收证据。
+runtime_cleanup_operations 保存 scope/scope_id、原因/触发者、进程身份、冻结数量及操作状态/时间；
+runtime_cleanup_items 保存操作与实例关系、固定 ordinal、逐项状态/结果/错误及起止时间，每操作每实例唯一。
+所有查询仍按当前 World 与当前资源权限鉴权，来源快照不授予访问已删除资源的权利；日志尾部另行到期清除。
+迁移 `0010_runtime_conversation_ref` 增加 conversation_ref_id（可空，引用 conversations.id，ON DELETE SET NULL）：
+当前 API/模型授权与列表以该引用为准；conversation_id 仅保留历史来源。物理删除后即便整数 ID 被复用也不会
+重新关联旧实例。旧数据仅在 execution 仍能证明会话归属时补齐引用，不能凭快照 ID 猜测授权。
+
+- **主键 `id`**：多数业务表是自增整数；运行实例及回收批次使用随机字符串身份与独立 sequence/ordinal 排序。
+  `messages` 的时间顺序按 `id` 排，不依赖 `created_at`。
 - **时间字段**：带时区的 UTC 时间。SQLite 里以 ISO 字符串形式存储（如 `2026-08-17 05:35:10.606099`），显示为 UTC 而不是本地时间。
 - **`*_json` 字段**：通用 JSON 类型，SQLite 里落成 TEXT，客户端工具中看到的是 JSON 字符串。
 - **布尔字段**：SQLite 里是 `0`/`1`。
@@ -41,6 +55,10 @@
 | `agent_executions` | Agent 执行身份、generation 一对一关系及后续父子树 | E0 已实现 |
 | `workspace_bindings` | 当前 World Owner 从前端登记的绝对根工作目录 | W1a 已实现 |
 | `execution_workspaces` | execution 对 managed directory 的租用与路径快照 | W1a 已实现 |
+| `runtime_gate` | 当前 World 的短事务配额序列及关闭门槛 | W1d 实施中 |
+| `runtime_entries` | 顶层命令/后台服务、来源与独立生命周期 | W1d 实施中 |
+| `runtime_cleanup_operations` | 范围冻结与回收批次对账 | W1d 实施中 |
+| `runtime_cleanup_items` | 固定回收顺序和逐项结果 | W1d 实施中 |
 | `event_log` | 持久化事件流，断线恢复的唯一可靠来源 | 已实现 |
 | `queue_jobs` | 会话串行队列的持久化任务 | M4a 已实现 |
 | `invites` | 邀请码与使用次数 | 预留 |
