@@ -35,6 +35,8 @@ def main() -> None:
             argv：产品固定 worker 参数。
             kwargs：产品校验后的 cwd、控制输入及限制。
         """
+        if Path(argv[-1]).name != 'command_worker.py':
+            return await original(argv, **kwargs)
         payload = json.loads(kwargs['payload'])
         name = payload['args'].get('path')
         if kwargs['root'] == allowed_root and payload['command'] == 'read' and name in {
@@ -44,6 +46,25 @@ def main() -> None:
         return await original(argv, **kwargs)
 
     commands.run_process = process_profile
+    from app.workspaces import approvals
+    original_approval = approvals.request_and_run
+
+    async def approval_profile(**kwargs):
+        """只为串行 E2E 的精确过期用例缩短等待，正常产品入口不会导入此文件。
+
+        Args:
+            kwargs：工具适配层已绑定的本轮请求，不打印脚本或目录。
+        """
+        if Path(kwargs['root_path']) == allowed_root / 'shell-approvals' and kwargs['script'] == 'echo approval-expiry-placeholder':
+            previous = approvals.APPROVAL_SECONDS
+            approvals.APPROVAL_SECONDS = 1
+            try:
+                return await original_approval(**kwargs)
+            finally:
+                approvals.APPROVAL_SECONDS = previous
+        return await original_approval(**kwargs)
+
+    approvals.request_and_run = approval_profile
     uvicorn.run(app, host='127.0.0.1', port=8005)
 
 

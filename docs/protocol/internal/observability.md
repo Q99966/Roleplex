@@ -99,6 +99,8 @@ JSONL 只容忍最后一行崩溃截断；active 文件重启追加前会截断�
 Context token 字段。
 
 W1b 复用工具开始/完成日志，参数审计仅保存 allowlist command ID；取消以 cancelled 正常收口。
+W1c 继续复用上述执行事实；审批生命周期新增 tool.approval_requested/resolved，安全字段及终态以
+[日志 v2](../../design/logging-v2.md)为准。审批与工具共享 execution/chain/tool_call，不创建另一套 Trace。
 命令路径、cwd、stdout/stderr 不进入日志、审计或公开工具卡，详见 [结构化命令](workspace-commands.md)。
 
 ## 验证覆盖

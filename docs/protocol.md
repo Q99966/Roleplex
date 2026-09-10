@@ -37,7 +37,8 @@ docs/protocol/
 | REST 当前 World 工作区 | 已实现（W1a/W1b） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（含 B 最近窗口，已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
-| 工具执行顺序与 Owner 详情 | 已实现，已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
+| 工具执行顺序与 Owner 详情 | 已人工验收，含 W1c Shell 详情修正 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
+| Shell 逐次审批 | W1c 已实现，已人工验收 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与最近窗口快照） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |

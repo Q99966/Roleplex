@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | 已实现（W1a/W1b 已验收；群聊绑定与聊天标题区摘要属于 W2a） |
+| 状态 | 已实现（W1a/W1b/W1c 已验收；群聊绑定与聊天标题区摘要属于 W2a） |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-09 |
+| 复核日期 | 2026-09-10 |
 
 ## 范围与安全边界
 
@@ -43,7 +43,8 @@ Owner 触发的 single 会话、角色显式启用、会话绑定 active/availab
 ```
 
 `availability` 为 `available/unavailable/busy/disabled`。W1b 起 `basic_commands_enabled` 可由 Owner 开启，
-与文件开关独立；`shell_enabled` 仍固定 false。命令契约见 [结构化命令](../../internal/workspace-commands.md)。
+与文件开关独立；W1c 起 `shell_enabled` 默认 false，可由 Owner 独立开启，但每次调用仍需单独审批。
+命令契约见 [结构化命令](../../internal/workspace-commands.md)，Shell 开关及逐次执行边界见 [Shell 审批](../messaging/shell-approvals.md)。
 
 ## 能力视图
 
@@ -57,12 +58,18 @@ GET /api/workspaces/capabilities
   "workspace_kinds": ["managed_directory"],
   "file_tools": ["workspace_list","workspace_read","workspace_write"],
   "basic_commands_available": true,
-  "shell_available": false
+  "shell_available": true,
+  "shell_kind": "bash",
+  "shell_approval_mode": "per_call",
+  "shell_timeout_seconds": 30,
+  "shell_output_bytes": 65536
 }
 ```
 
 能力接口不返回或限制 Workspace 根路径；未登记 Workspace 时也不回退到后端 cwd、源码目录、用户主目录或
 文件系统根。
+Shell 不受支持或未解析到允许的可执行文件时，shell_available=false、shell_kind=null，开启 Shell 返回
+409 SHELL_NOT_SUPPORTED；能力视图从不返回可执行文件绝对路径。PATCH 兼容新增 shell_enabled 布尔值。
 
 ## 列表、登记、复核与解除登记
 

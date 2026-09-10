@@ -89,6 +89,13 @@ WebSocket error frame 使用：
 |---|---|---|---:|---|---|---|
 | `VALIDATION_ERROR` | 已实现 | REST/WS | 422/— | rejected | conditional | 请求结构或订阅控制参数无效；WS 不回显原始参数 |
 | `HISTORY_CURSOR_INVALID` | 已实现 | REST | 422 | rejected | no | 历史窗口游标无效或属于其他会话；不回显游标 |
+| `SHELL_APPROVAL_NOT_FOUND` | 已实现 | REST | 404 | rejected | no | 审批不存在或不属于当前会话 |
+| `SHELL_APPROVAL_MISMATCH` | 已实现 | REST/工具 | 409/— | rejected | no | 审批摘要或加密身份不匹配，不执行 |
+| `SHELL_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | no | 脚本无效、超限或多余参数 |
+| `SHELL_NOT_SUPPORTED` | 已实现 | REST/工具 | 409/— | rejected | no | 本机未解析到允许的 Shell |
+| `SHELL_REJECTED` | 已实现 | 工具 | — | rejected | no | Owner 拒绝，不创建进程 |
+| `SHELL_APPROVAL_EXPIRED` | 已实现 | 工具 | — | rejected | no | 等待过期、取消或重启，不执行 |
+| `SHELL_REQUEST_CONFLICT` | 已实现 | 工具 | — | rejected | no | 同一调用身份已有记录，禁止重放 |
 | `HISTORY_CURSOR_EXPIRED` | 已实现 | REST | 409 | rejected | conditional | epoch 已改变；作废缓存后从最近窗口重新加载 |
 | `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
 | `AUTH_REQUIRED` | 已实现 | REST | 401 | rejected | conditional | 缺少 Bearer 凭据 |
@@ -165,7 +172,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_FILE_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 文件或待写内容超过 W1a 固定 1 MiB 上限 |
 | `WORKSPACE_FILE_REVISION_CONFLICT` | 已实现 | 工具 | — | rejected | yes | 目标已存在但未提供匹配 hash，或并发更新后 hash 已变化 |
 | `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不存在；W1a 不自动创建父目录 |
-| `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现（内部） | 工具 | — | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
+| `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现 | 工具/审批 REST | —/409 | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
 | `COMMAND_NOT_ALLOWED` | 已实现（W1b） | 工具 | — | rejected | no | command 不是登记的稳定 ID |
 | `COMMAND_ARGUMENT_INVALID` | 已实现（W1b） | 工具 | — | rejected | conditional | 参数不符合该命令 schema 或含禁止语法 |
 | `COMMAND_NOT_SUPPORTED` | 已实现（W1b） | 工具 | — | rejected | conditional | 当前平台无法提供受控命令 adapter |

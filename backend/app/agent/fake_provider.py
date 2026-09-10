@@ -108,6 +108,16 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if any(marker in prompt for marker in ('[SHELL_APPROVAL_FAKE]', '[SHELL_EXPIRY_FAKE]', '[SHELL_DETAILS_FAKE]')):
+        import os
+        script = "[IO.File]::AppendAllText('shell-proof.txt', \"approved`n\")" if os.name == 'nt' else "printf 'approved\\n' >> shell-proof.txt"
+        if '[SHELL_EXPIRY_FAKE]' in prompt:
+            script = 'echo approval-expiry-placeholder'
+        if '[SHELL_DETAILS_FAKE]' in prompt:
+            script = ("[Console]::WriteLine('shell-stdout-placeholder'); [Console]::Error.WriteLine('shell-stderr-placeholder')"
+                if os.name == 'nt' else "printf 'shell-stdout-placeholder\\n'; printf 'shell-stderr-placeholder\\n' >&2")
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_run_shell', 'args': {'script': script}, 'id': 'shell_approval'}]),
+            ScriptedTurn(text='审批流程已结束。')], delay=delay)
     if '[TOOL_TIMELINE_FAKE]' in prompt:
         return ScriptedChatModel(turns=[
             ScriptedTurn(text='先读取😀。', tool_calls=[{

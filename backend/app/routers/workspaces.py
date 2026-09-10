@@ -57,12 +57,22 @@ async def _response(session: AsyncSession, binding: WorkspaceBinding) -> Workspa
 @router.get("/capabilities")
 async def capabilities(_owner: Annotated[User, Depends(require_owner)]) -> dict:
     """列出当前 World 的 W1a 能力；Workspace 根由 Owner 逐条配置。"""
+    from ..workspaces.shell import shell_configuration
+    from ..workspaces.commands import WorkspaceCommandError
+    try:
+        shell = shell_configuration()
+    except WorkspaceCommandError:
+        shell = None
     return {
         "world_name": settings.world_name,
         "workspace_kinds": ["managed_directory"],
         "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
         "basic_commands_available": True,
-        "shell_available": False,
+        "shell_available": shell is not None,
+        "shell_kind": shell['shell_kind'] if shell else None,
+        "shell_approval_mode": 'per_call',
+        "shell_timeout_seconds": settings.workspace_command_timeout_seconds,
+        "shell_output_bytes": settings.workspace_command_output_bytes,
     }
 
 
@@ -195,6 +205,15 @@ async def update_workspace(
         binding.file_tools_enabled = payload.file_tools_enabled
     if payload.basic_commands_enabled is not None:
         binding.basic_commands_enabled = payload.basic_commands_enabled
+    if payload.shell_enabled is not None:
+        if payload.shell_enabled:
+            from ..workspaces.shell import shell_configuration
+            from ..workspaces.commands import WorkspaceCommandError
+            try:
+                shell_configuration()
+            except WorkspaceCommandError as exc:
+                raise HTTPException(409, exc.code) from None
+        binding.shell_enabled = payload.shell_enabled
     binding.updated_at = datetime.now(timezone.utc)
     await session.commit()
     return await _response(session, binding)

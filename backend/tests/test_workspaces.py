@@ -50,13 +50,17 @@ async def test_owner_can_register_multiple_absolute_workspace_roots_and_guest_ca
 
             capabilities = await client.get("/api/workspaces/capabilities", headers=owner_headers)
             assert capabilities.status_code == 200, capabilities.text
-            assert capabilities.json() == {
+            base_capabilities = {
                 "world_name": settings.world_name,
                 "workspace_kinds": ["managed_directory"],
                 "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
                 "basic_commands_available": True,
-                "shell_available": False,
             }
+            assert {key: capabilities.json()[key] for key in base_capabilities} == base_capabilities
+            assert capabilities.json()['shell_available'] == (capabilities.json()['shell_kind'] is not None)
+            assert capabilities.json()['shell_approval_mode'] == 'per_call'
+            assert capabilities.json()['shell_timeout_seconds'] == settings.workspace_command_timeout_seconds
+            assert capabilities.json()['shell_output_bytes'] == settings.workspace_command_output_bytes
             no_ack = await client.post("/api/workspaces", headers=owner_headers, json={
                 "display_name": "Alpha 工作区",
                 "root_path": str(existing),

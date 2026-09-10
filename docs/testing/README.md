@@ -6,7 +6,7 @@
 | 状态 | 已实现测试体系的使用指南 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/tests/`、`frontend/tests/`、Playwright 配置、pytest 配置与日志 v2 |
-| 复核日期 | 2026-09-09 |
+| 复核日期 | 2026-09-10 |
 
 本文是 Roleplex 测试分层、命令、端口、数据、账号、日志和人工排查方式的统一入口。接口断言仍以对应
 协议文档为权威，日志字段以 [日志 v2](../design/logging-v2.md) 为权威；本文不复制完整 wire schema。
@@ -200,7 +200,22 @@ W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-prov
 确定性边界入口为 `npm run test:e2e -- history-window.spec.ts` 和 `pytest tests/test_history_window.py -q`，
 覆盖超大单条、体积/条数、连续游标、局部失败、快照失效、版本竞态、LRU 与布局变化，不用真实生成替代这些边界测试。
 
-### 2.7 W1b 结构化命令 E2E
+### 2.7 W1b 结构化命令与 W1c 审批 E2E
+
+W1c 的独立入口是 `npm run test:e2e:commands -- shell-approvals.spec.ts`，复用本层 fake World、端口与轮次，
+用例位于该轮外部工作区的 `default/shell-approvals/`。覆盖 pending 前无执行、刷新恢复、批准、拒绝、停止和到期；
+仅测试服务器对精确到期脚本将等待缩为 1 秒，正常产品仍固定 5 分钟，不提供缩短审批的产品参数。
+后端 `pytest tests/test_shell_approvals.py -q` 每个并发/故障用例使用全新迁移库；工作区复用
+`roleplex-command/test-<时间戳>/case-<随机标识>` 分层，不向测试根平铺目录。
+
+真实入口为 `npm run test:e2e:real-world -- shell-provider.spec.ts`：会联网计费，在该轮 `default/shell-approval/`
+创建未知校验值，只批准预先限定的只读脚本；模型提出额外命令时拒绝并失败，不扩大测试授权。
+使用正常世界包装器，脚本/输出/根不进正式日志，关闭截图/trace/video，失败只保存安全阶段标签。
+Linux 真实进程测试另验证 setsid 后代在正常退出/取消时的回收；PowerShell 参数有确定性测试，Windows
+原生 Job Object/stdio 实机运行仍是待人工或 Windows CI 补齐的覆盖缺口，不能用 Linux 通过结果代替。
+Shell 详情修正增加 `pytest tests/test_shell_details.py -q`，验证审批关联、空输出与未记录的区别、双流限额、
+过期/密文篡改和 Guest 拒绝。审批浏览器用例同时检查展开/刷新、旧卡缺少能力标记、双流正文和 Guest 不请求详情；
+真实 Shell smoke 还会核对 Owner 展开与刷新后的真实 stdout，依旧关闭真实内容截图和 trace。
 
 在 `frontend/` 执行 `npm run test:e2e:commands`。该命令固定 fake Provider，启动真实前后端和独立 World，
 通过浏览器登记工作区、开启命令、绑定单聊，验证 pwd/list/read/count、截断、非零退出、超时、停止和刷新恢复。

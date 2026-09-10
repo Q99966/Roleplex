@@ -11,7 +11,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models import ToolExecutionDetail, User
+from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
+from ..schemas import ShellDetailView
 
 
 def _cipher() -> Fernet:
@@ -68,13 +69,14 @@ async def update_detail(
         ToolExecutionDetail.message_id == message_id, ToolExecutionDetail.call_id == call_id,
     ))
     now = datetime.now(timezone.utc)
-    if row is None and private_input is not None and execution_id and user_id:
+    # Shell 的输入只保留在审批密文中，不能因为没有输入副本而跳过输出记录。
+    if row is None and (private_input is not None or tool_name == 'workspace_run_shell') and execution_id and user_id:
         user = await session.get(User, user_id)
         if user is None or not user.is_owner:
             return False
         row = ToolExecutionDetail(message_id=message_id, call_id=call_id, execution_id=execution_id,
             tool_name=tool_name, status=status, started_at=now, expires_at=now + timedelta(days=7),
-            input_encrypted=_encrypt(message_id, call_id, private_input))
+            input_encrypted=_encrypt(message_id, call_id, private_input) if private_input is not None else None)
         session.add(row)
     if row is None:
         return False
@@ -113,6 +115,66 @@ def _utc_string(value: datetime | None) -> str | None:
     if value is None:
         return None
     return (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value).isoformat()
+
+
+async def shell_detail_payload(session: AsyncSession, message: Message, call_id: str,
+                               row: ToolExecutionDetail | None, status: str) -> dict:
+    """关联原审批读取脚本，兼容没有详情行的旧 Shell 调用，绝不重放。
+
+    Args:
+        session：已完成 Owner/会话/消息归属检查的只读会话。
+        message：所属消息，用实际 generation 绑定 execution。
+        call_id：该消息中实际存在的 Shell 调用。
+        row：既有私有详情；旧调用可能为空。
+        status：共享工具 part 已观察到的状态，不据此推算执行耗时。
+    """
+    approval = await session.scalar(select(ToolApprovalRequest).join(AgentExecution,
+        AgentExecution.execution_id == ToolApprovalRequest.execution_id).join(Generation,
+        Generation.id == AgentExecution.generation_id).where(
+        Generation.assistant_message_id == message.id, Generation.conversation_id == message.conversation_id,
+        AgentExecution.conversation_id == message.conversation_id, ToolApprovalRequest.tool_call_id == call_id,
+        ToolApprovalRequest.tool_name == 'workspace_run_shell'))
+    if row is None and approval is None:
+        return {'availability': 'not_recorded', 'input': None, 'output': None, 'shell': None}
+    base = detail_payload(row) if row is not None else {
+        'availability': 'available', 'tool_name': 'workspace_run_shell', 'status': status,
+        'started_at': _utc_string(approval.requested_at), 'ended_at': None,
+        'expires_at': _utc_string(approval.requested_at + timedelta(days=7)), 'input': None, 'output': None}
+    output = base.get('output')
+    base.update(input=None, output=None, shell=None)
+    if base['availability'] in {'expired', 'unavailable'}:
+        return base
+    # 不因旧调用没有详情行而绕过七天展示期，也不通过读取延长保留期。
+    if approval and datetime.fromisoformat(_utc_string(approval.requested_at)) + timedelta(days=7) <= datetime.now(timezone.utc):
+        return {**base, 'availability': 'expired'}
+    script, wait_ms = None, None
+    if approval:
+        from ..workspaces.approvals import decrypt_request
+        from ..workspaces.commands import WorkspaceCommandError
+        try:
+            request = decrypt_request(approval)
+            if not isinstance(request['script'], str) or len(request['script'].encode('utf-8')) > 65536:
+                raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+            script = {'text': request['script'], 'bytes': len(request['script'].encode('utf-8')), 'truncated': False}
+        except (WorkspaceCommandError, ValueError, KeyError, TypeError):
+            return {**base, 'availability': 'unavailable'}
+        if approval.resolved_at:
+            wait_ms = max(0, int((datetime.fromisoformat(_utc_string(approval.resolved_at))
+                - datetime.fromisoformat(_utc_string(approval.requested_at))).total_seconds() * 1000))
+    if output is not None and (not isinstance(output, dict) or output.get('format') != 'shell-v1'):
+        return {**base, 'availability': 'unavailable'}
+    captured = output or {}
+    availability = ('recorded' if captured.get('stdout') is not None and captured.get('stderr') is not None
+        else 'not_executed' if captured.get('execution_status') == 'not_executed' or (approval and approval.status in {'rejected', 'expired'})
+        else 'pending' if status == 'running' else 'not_recorded')
+    try:
+        value = ShellDetailView(script=script, approval_status=approval.status if approval else None,
+            approval_wait_ms=wait_ms, execution_duration_ms=captured.get('execution_duration_ms'),
+            stdout=captured.get('stdout'), stderr=captured.get('stderr'), output_availability=availability,
+            execution_status=captured.get('execution_status'), exit_code=captured.get('exit_code'))
+    except ValueError:
+        return {**base, 'availability': 'unavailable'}
+    return {**base, 'shell': value.model_dump()}
 
 
 async def recover_details(session: AsyncSession) -> None:

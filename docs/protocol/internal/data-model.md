@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-10 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -48,6 +48,7 @@
 | `attachments` | 上传文件元数据 | 预留 |
 | `tool_calls` | 工具调用审计 | 已实现（每次工具调用结束时写入） |
 | `tool_execution_details` | Owner 私有加密执行详情 | 已实现 |
+| `tool_approval_requests` | Owner 逐次 Shell 审批与加密请求 | W1c 已实现 |
 
 "预留"表示表已经由迁移建好、但当前里程碑没有任何代码写入，看到空表是正常的。
 
@@ -239,7 +240,7 @@ attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本�
 | `workspace_kind` | W1a 固定 `managed_directory` |
 | `file_tools_enabled` | 是否允许满足完整执行授权矩阵的 W1a 原生文件工具 |
 | `basic_commands_enabled` | 默认 false，W1b 起可单独启用结构化命令，与文件能力独立 |
-| `shell_enabled` | 固定 false，W1c 才开放 |
+| `shell_enabled` | 默认 false；W1c 可启用，仍要求每次脚本独立审批 |
 | `active` | 停用后不能绑定新会话或继续执行工具调用 |
 | `last_validated_at` | 后端最近一次成功 canonical 复核目录的时间 |
 | `created_at` / `updated_at` | 生命周期时间 |
@@ -260,6 +261,25 @@ attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本�
 | `status` | `creating/ready/retained/cleaned/failed`；W1a 正常终态保留为 retained |
 | `error_code` | 创建、重启中断或后续清理失败的稳定错误码 |
 | `created_at/ended_at/cleaned_at` | 租用生命周期时间 |
+
+## tool_approval_requests（W1c）
+
+迁移 `0008_shell_approvals` 新增审批表，脚本及执行上下文只在密文内，不新增明文脚本或输出列。
+
+| 字段 | 类型与含义 |
+|---|---|
+| `id` | 整数主键 |
+| `execution_id` | String(64)，引用 execution，删除级联 |
+| `workspace_binding_id` | 可空工作区外键，删除置空，原始绑定身份仍在密文内 |
+| `tool_call_id` / `tool_name` | String(128)/String(256)，宿主实际调用身份与工具名，不接受模型覆盖 |
+| `request_encrypted` | Text，World 用途隔离密文，包含冻结脚本与执行上下文 |
+| `request_digest` | String(64)，冻结请求的 SHA-256，批准必须匹配 |
+| `status` | pending/approved/rejected/expired；approved 是决定，不是可重放的执行任务 |
+| `requested_at` / `expires_at` / `resolved_at` | UTC 时间，resolved_at 未决定时为空 |
+| `resolved_by` | 可空 Owner 用户外键，系统到期/取消/重启为空，用户删除置空 |
+
+唯一约束 `(execution_id,tool_call_id)`，索引 `(status,expires_at)`。状态与幂等语义见
+[Shell 审批](../public/messaging/shell-approvals.md)。
 
 ## event_log
 
@@ -356,6 +376,8 @@ Owner 专属的有界执行内容，与共享消息和机器审计分开。具�
 | `expires_at` | 开始后 7 天；带清理索引，过期不可读，启动清空密文 |
 
 消息 `meta_json.timeline_version=1` 标记有序展示；文本 part_id 只是展示定位字段，不改变模型历史正文。
+W1c Shell 详情的 input_encrypted 为空，脚本关联 tool_approval_requests 解密展示；output_encrypted 保存
+shell-v1 结构的有界 stdout/stderr 与实测执行元数据。仅增加密文内部表示，不新增列或复制脚本。
 
 ## tool_calls
 

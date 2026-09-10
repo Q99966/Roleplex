@@ -295,6 +295,7 @@ provider.built               provider.call_started
 provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed
 tool.call_failed
+tool.approval_requested      tool.approval_resolved
 context.loaded               context.compressed
 log.tail_recovered           log.retention_started
 log.archive_created          log.archive_source_removed
@@ -306,6 +307,10 @@ log.retention_skipped
 新增事件必须先登记目录并检查是否已有同义事实；不得并存 `provider.call_completed`、
 `provider.completed`、`model.call_done`、`llm.finished` 等多套表达。现有实现迁移到 v2 时需要提供旧→新
 事件映射测试，不能静默遗漏监控消费者。
+
+W1c 审批事件只使用 approval_id、request_digest 和既有 execution/chain/tool_call 关联字段；
+requested 不填终态，resolved 以 status=success/rejected/cancelled 和 approval_status=approved/rejected/expired
+表达决定，reason 区分 owner_decision/expired/cancelled/restart。脚本只进入加密业务审批记录，不进入日志。
 
 ### 6.2 status、reason 与 error_code
 

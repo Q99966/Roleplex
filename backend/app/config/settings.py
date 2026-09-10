@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     workspace_command_timeout_seconds: float = Field(default=30, gt=0, le=300)
     workspace_command_output_bytes: int = Field(default=65_536, ge=1, le=1_048_576)
+    workspace_shell_kind: Literal['auto', 'bash', 'powershell'] = 'auto'
     log_dir: str = str(LOG_DIR)
     log_level: str = "INFO"
     log_run_kind: Literal["runtime", "unit", "e2e-fake", "e2e-real"] = "runtime"

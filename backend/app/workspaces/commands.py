@@ -69,15 +69,17 @@ def validate_command(root: Path, command: str, args: dict[str, Any]) -> dict[str
 
 async def run_process(
     argv: tuple[str, ...], *, root: Path, payload: bytes, timeout: float, output_limit: int,
+    graceful_cleanup: bool = False,
 ) -> dict[str, Any]:
     """运行服务端固定 argv，排空双流并在所有终态回收进程树。
 
     Args:
         argv：仅服务端 adapter 或受控测试构造的可执行路径与参数，绝不直接接收模型 argv。
         root：已授权 cwd。
-        payload：通过 stdin 传递的受控 JSON，不进入进程标题或日志。
+        payload：通过 stdin 传递的受控 JSON 或已审批脚本，不进入进程标题或日志。
         timeout：含启动和管道排空的最大秒数。
         output_limit：双流累计保留字节上限，超限仍持续读取。
+        graceful_cleanup：仅受信任的 Shell 监管器使用，先给予其有界后代清理机会。
     """
     if os.name not in {'posix', 'nt'}:
         raise WorkspaceCommandError('COMMAND_NOT_SUPPORTED')
@@ -121,6 +123,13 @@ async def run_process(
             except OSError:
                 return
         if os.name == 'posix':
+            if graceful_cleanup and process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    async with asyncio.timeout(2):
+                        await process.wait()
+                except (ProcessLookupError, TimeoutError):
+                    pass
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:

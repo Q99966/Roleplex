@@ -5,6 +5,7 @@ import { useAppStore } from './app'
 import { HistoryCache, type ReadingPosition } from './history-cache'
 
 type ChatState = {
+  approvalVersion: number
   conversationId: number | null
   messages: Message[]
   nextCursor: string | null
@@ -57,6 +58,7 @@ function invalidateSession() {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  approvalVersion: 0,
   conversationId: null, messages: [], loading: false, sending: false, generating: false,
   activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null,
   nextCursor: null, historyEpoch: null, loadingOlder: false, olderError: null, oversized: false, position: bottomPosition,
@@ -78,6 +80,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       onSnapshot: (payload) => {
         if (stream !== owned || get().conversationId !== payload.conversation_id) return
+        set({ approvalVersion: get().approvalVersion + 1 })
         ++windowSequence
         olderController?.abort()
         olderController = null
@@ -308,6 +311,10 @@ function upsert(set: any, get: () => ChatState, message: Message) {
  * @param event 已经传输层验证归属和顺序的领域事件。
  */
 function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
+  if (event.type === 'approval_changed') {
+    set({ approvalVersion: get().approvalVersion + 1 })
+    return
+  }
   const messageId = event.payload.message?.id ?? event.payload.message_id
   const outside = typeof messageId === 'number' && get().nextCursor !== null && get().messages.length > 0
     && messageId < get().messages[0].id

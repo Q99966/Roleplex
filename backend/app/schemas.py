@@ -196,6 +196,7 @@ class WorkspaceUpdate(BaseModel):
     active: bool | None = None
     file_tools_enabled: bool | None = None
     basic_commands_enabled: bool | None = None
+    shell_enabled: bool | None = None
 
 
 class WorkspaceResponse(BaseModel):
@@ -250,3 +251,35 @@ class HistoryWindowMetadata(BaseModel):
     next_cursor: str | None = None
     oversized: bool = False
     page_bytes: int = Field(default=0, ge=0)
+
+
+class ShellApprovalDecision(BaseModel):
+    """只允许决定当前所见请求，拒绝覆写脚本或执行上下文。"""
+
+    model_config = ConfigDict(extra='forbid')
+    decision: Literal['approve', 'reject']
+    request_digest: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class ToolCaptureView(BaseModel):
+    """Owner 私有正文与原始字节/截断信息；校验失败不得回显输入。"""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+    text: str
+    bytes: int = Field(ge=0)
+    truncated: bool
+
+
+class ShellDetailView(BaseModel):
+    """Shell 详情 wire contract，未知执行信息保持 null，不从总耗时推算。"""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+    script: ToolCaptureView | None
+    approval_status: Literal['pending', 'approved', 'rejected', 'expired'] | None
+    approval_wait_ms: int | None = Field(ge=0)
+    execution_duration_ms: int | None = Field(ge=0)
+    stdout: ToolCaptureView | None
+    stderr: ToolCaptureView | None
+    output_availability: Literal['recorded', 'pending', 'not_executed', 'not_recorded']
+    execution_status: Literal['exited', 'timed_out', 'cancelled', 'not_executed', 'unavailable'] | None
+    exit_code: int | None

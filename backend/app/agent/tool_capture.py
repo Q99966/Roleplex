@@ -16,16 +16,17 @@ _ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)')
 _CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
 
 
-def bounded_text(text: str) -> dict[str, Any]:
+def bounded_text(text: str, limit: int = CAPTURE_LIMIT) -> dict[str, Any]:
     """将正文限制为 UTF-8 前缀并去除终端控制符。
 
     Args:
         text：只允许进入加密业务记录的内存文本。
+        limit：本份正文剩余字节预算。
     """
     data = text.encode('utf-8', errors='replace')
-    visible = data[:CAPTURE_LIMIT].decode('utf-8', errors='ignore')
+    visible = data[:limit].decode('utf-8', errors='ignore')
     visible = _CONTROLS.sub('', _ANSI.sub('', visible))
-    return {'text': visible, 'bytes': len(data), 'truncated': len(data) > CAPTURE_LIMIT}
+    return {'text': visible, 'bytes': len(data), 'truncated': len(data) > limit}
 
 
 def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
@@ -55,7 +56,52 @@ def capture_output(tool_name: str, value: Any) -> dict[str, Any] | None:
         tool_name：防腐层识别的实际工具。
         value：框架返回的文本或 ToolMessage。
     """
+    if tool_name == 'workspace_run_shell':
+        return _capture_shell_output(value)
     if tool_name not in _FIELDS:
         return None
     content = getattr(value, 'content', value)
     return bounded_text(content) if isinstance(content, str) else None
+
+
+def _capture_shell_output(value: Any) -> dict[str, Any] | None:
+    """只提取 Shell 运行器的明确字段，双流限额不截坏结构化结果。
+
+    Args:
+        value：执行层返回的 JSON 文本或 ToolMessage，不隐式 repr 任意对象。
+    """
+    content = getattr(value, 'content', value)
+    if not isinstance(content, str):
+        return None
+    from .tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX
+    for prefix in (FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX):
+        if content.startswith(prefix):
+            content = content[len(prefix):].strip()
+            break
+    try:
+        result = json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    if not all(isinstance(result.get(name), str) for name in ('stdout', 'stderr')):
+        refused = result.get('error_code') in {'SHELL_REJECTED', 'SHELL_APPROVAL_EXPIRED', 'SHELL_ARGUMENT_INVALID',
+            'SHELL_NOT_SUPPORTED', 'SHELL_REQUEST_CONFLICT', 'SHELL_APPROVAL_MISMATCH', 'WORKSPACE_TOOL_NOT_AVAILABLE'}
+        return {'format': 'shell-v1', 'stdout': None, 'stderr': None, 'execution_duration_ms': None,
+            'execution_status': 'not_executed' if refused else 'unavailable', 'exit_code': None}
+    lengths = {name: len(result[name].encode('utf-8')) for name in ('stdout', 'stderr')}
+    # 双流共享预算；小流先保证保留，大流分享剩余，避免大量 stdout 吞掉全部 stderr。
+    out_limit = min(lengths['stdout'], CAPTURE_LIMIT // 2 + max(0, CAPTURE_LIMIT // 2 - lengths['stderr']))
+    captures = {}
+    for name, limit in [('stdout', out_limit), ('stderr', CAPTURE_LIMIT - out_limit)]:
+        capture = bounded_text(result[name], limit)
+        reported = result.get(name + '_bytes')
+        if type(reported) is int and reported >= capture['bytes']:
+            capture['truncated'] = capture['truncated'] or reported > capture['bytes']
+            capture['bytes'] = reported
+        captures[name] = capture
+    duration = result.get('duration_ms')
+    return {'format': 'shell-v1', **captures,
+        'execution_duration_ms': duration if type(duration) is int and duration >= 0 else None,
+        'execution_status': result.get('status') if result.get('status') in {'exited', 'timed_out', 'cancelled'} else 'unavailable',
+        'exit_code': result.get('exit_code') if type(result.get('exit_code')) is int else None}

@@ -35,10 +35,23 @@ export type Conversation = { id: number; type: 'single' | 'group'; title: string
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
 export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number }
 export type ToolCapture = { text: string; bytes: number; truncated: boolean }
+export type ShellApproval = {
+  id: number; execution_id: string; tool_call_id: string; tool_name: string; workspace_binding_id: number;
+  workspace_name: string; world_name: string; root_path: string; script: string; shell_kind: string;
+  timeout_seconds: number; output_bytes: number; request_digest: string; status: string;
+  requested_at: string; expires_at: string
+}
 export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
   input: ToolCapture | null; output: ToolCapture | null
+  shell?: {
+    script: ToolCapture | null; approval_status: 'pending' | 'approved' | 'rejected' | 'expired' | null;
+    approval_wait_ms: number | null; execution_duration_ms: number | null;
+    stdout: ToolCapture | null; stderr: ToolCapture | null;
+    output_availability: 'recorded' | 'pending' | 'not_executed' | 'not_recorded';
+    execution_status: string | null; exit_code: number | null
+  } | null
 }
 export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
 export type HistoryWindow = { has_more: boolean; next_cursor: string | null; oversized: boolean; page_bytes: number }
@@ -69,6 +82,10 @@ export type WorkspaceCapabilities = {
   file_tools: Array<'workspace_list' | 'workspace_read' | 'workspace_write'>
   basic_commands_available: boolean
   shell_available: boolean
+  shell_kind: 'bash' | 'powershell' | null
+  shell_approval_mode: 'per_call'
+  shell_timeout_seconds: number
+  shell_output_bytes: number
 }
 
 /** 服务端事件信封；未知事件类型必须被客户端安全忽略。 */
@@ -198,7 +215,7 @@ export const api = {
     create_directory: boolean
     acknowledge_existing_content: boolean
   }) => request<WorkspaceBinding>('/api/workspaces', { method: 'POST', body: JSON.stringify(body) }),
-  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean; basic_commands_enabled?: boolean }) => (
+  updateWorkspace: (id: number, body: { active?: boolean; file_tools_enabled?: boolean; basic_commands_enabled?: boolean; shell_enabled?: boolean }) => (
     request<WorkspaceBinding>(`/api/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
   ),
   validateWorkspace: (id: number) => request<WorkspaceBinding>(`/api/workspaces/${id}/validate`, { method: 'POST' }),
@@ -232,6 +249,9 @@ export const api = {
 
   // 消息与生成 API
   messages: (conversationId: number, signal?: AbortSignal, before?: string) => request<MessageHistory>(`/api/conversations/${conversationId}/messages?window=recent${before ? `&before=${encodeURIComponent(before)}` : ''}`, { signal, cache: 'no-store' }),
+  shellApprovals: (conversationId: number, signal?: AbortSignal) => request<ShellApproval[]>(`/api/conversations/${conversationId}/tool-approvals`, { signal, cache: 'no-store' }),
+  decideShell: (conversationId: number, id: number, decision: 'approve' | 'reject', request_digest: string) => request<{ id: number; status: string }>(
+    `/api/conversations/${conversationId}/tool-approvals/${id}/decision`, { method: 'POST', body: JSON.stringify({ decision, request_digest }), cache: 'no-store' }),
   sendMessage: (conversationId: number, body: MessageCreate) => request<SendMessageResult>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   stopGeneration: (conversationId: number) => request<{ stopped: boolean; generation_id: number | null }>(`/api/conversations/${conversationId}/stop`, { method: 'POST' }),
 }

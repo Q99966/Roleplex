@@ -120,6 +120,14 @@ async def test_single_chat_streams_and_persists():
             assert assistant["parts_json"][0]["text"].startswith("已收到你的消息：你好")
             assert assistant["sender_id"] == ctx["role_id"]
 
+            # message_done 先提交，execution 由调度器在 runner 收尾后另行终结；等待真实终态。
+            for _ in range(100):
+                async with SessionLocal() as session:
+                    status = await session.scalar(select(AgentExecution.status).where(AgentExecution.generation_id == generation_id))
+                if status == 'completed':
+                    break
+                await asyncio.sleep(.02)
+
             async with SessionLocal() as session:
                 backlog = await event_store.read_backlog(session, conversation_id, 0)
                 generation = await session.get(Generation, generation_id)

@@ -80,6 +80,8 @@ async def init_db() -> None:
     await run_migrations()
     await ensure_instance_settings()
     await recover_interrupted_messages()
+    from .workspaces.approvals import recover_approvals
+    await recover_approvals()
     from .services.tool_details import recover_details
     async with SessionLocal() as session:
         await recover_details(session)

@@ -22,6 +22,7 @@ export function WorkspaceSettingsPanel() {
   const {
     worldName,
     workspaceBindings,
+    workspaceCapabilities,
     createWorkspaceBinding,
     updateWorkspaceBinding,
     validateWorkspaceBinding,
@@ -240,9 +241,12 @@ export function WorkspaceSettingsPanel() {
                 >
                   结构化命令 · {binding.basic_commands_enabled ? '已开启' : '关闭'}
                 </button>
-                <div className="flex min-h-11 items-center rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-slate-600">
-                  审批 Shell · W1c
-                </div>
+                <button type="button" aria-pressed={binding.shell_enabled} disabled={busy || !binding.active || !workspaceCapabilities?.shell_available}
+                  onClick={() => void run(() => updateWorkspaceBinding(binding.id, { shell_enabled: !binding.shell_enabled }))}
+                  className={`flex min-h-11 items-center rounded-xl border px-3 py-2 text-left ${binding.shell_enabled
+                    ? 'border-amber-500/50 bg-amber-950/40 text-amber-200' : 'border-slate-800 bg-slate-900/60 text-slate-500'}`}>
+                  审批 Shell · {!workspaceCapabilities?.shell_available ? '本机不可用' : binding.shell_enabled ? '已开启' : '关闭'}
+                </button>
               </div>
             </article>
           ))}

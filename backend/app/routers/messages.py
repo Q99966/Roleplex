@@ -16,7 +16,7 @@ from ..config.logging import current_request_id, set_log_context
 from ..schemas import MessageCreate
 from ..security.tokens import get_current_user
 from ..security import require_owner
-from ..services.tool_details import detail_payload
+from ..services.tool_details import detail_payload, shell_detail_payload
 from ..realtime import store as event_store
 from ..services import chat
 from ..services.history import build_history_window
@@ -270,6 +270,9 @@ async def get_tool_details(
     row = await session.scalar(select(ToolExecutionDetail).where(
         ToolExecutionDetail.message_id == message_id, ToolExecutionDetail.call_id == call_id,
     ))
+    part = next(part for part in message.parts_json if part.get('type') == 'tool_call' and part.get('call_id') == call_id)
+    if part.get('tool_name') == 'workspace_run_shell':
+        return await shell_detail_payload(session, message, call_id, row, part.get('status', 'interrupted'))
     return detail_payload(row) if row is not None else {'availability': 'not_recorded', 'input': None, 'output': None}
 
 

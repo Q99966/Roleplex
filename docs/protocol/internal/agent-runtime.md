@@ -37,7 +37,9 @@ ToolCallStarted/Finished 新增 repr 隐藏的 private_input/private_output，�
 
 `ToolCallFinished.status` 取值：`ok`（正常返回）、`rejected`（危险级别在执行层被拒绝）、
 `error`（工具自身抛错）。被拒绝属于正常结束路径，本轮生成仍应完成。
-W1b 命令取消时调度层在等待进程回收后，以 `cancelled` 补齐未收到结束事件的审计与工具卡；不恢复模型调用。
+W1b/W1c 命令取消时调度层在等待进程回收后，以 `cancelled` 补齐未收到结束事件的审计与工具卡；不恢复模型调用。
+W1c 使用 GuardedTool 的宿主调用身份绑定审批，与 ToolCallStarted/Finished 的 call_id 一致，不接受模型传入身份。
+Shell 始终 dangerous，Owner safe override 无效；等待/执行语义见 [Shell 审批](../public/messaging/shell-approvals.md)。
 
 ## ContextBuilder 边界
 

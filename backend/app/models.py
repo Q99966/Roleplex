@@ -287,6 +287,28 @@ class WorkspaceBinding(Base):
     )
 
 
+class ToolApprovalRequest(Base):
+    """Owner 逐次 Shell 审批；只保存加密请求，终态不授予重放权限。"""
+
+    __tablename__ = 'tool_approval_requests'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False)
+    workspace_binding_id: Mapped[int | None] = mapped_column(ForeignKey('workspace_bindings.id', ondelete='SET NULL'))
+    tool_call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'))
+    __table_args__ = (
+        UniqueConstraint('execution_id', 'tool_call_id', name='uq_approval_execution_call'),
+        Index('ix_approval_status_expires', 'status', 'expires_at'),
+    )
+
+
 class ExecutionWorkspace(Base):
     """一次 Agent execution 对 managed directory 的持久租用快照。"""
 

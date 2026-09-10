@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端、工具安全与测试维护者 |
-| 状态 | W0、E0、W1a、W1b 已完成并经人工验收；下一阶段 W1c 尚未开始 |
+| 状态 | W0、E0、W1a、W1b、W1c 均已人工验收；W2a 尚未开始 |
 | 计划版本 | 1 |
 | 上游计划 | [上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-09 |
+| 复核日期 | 2026-09-10 |
 
 本文定义 Orchestrator fan-out 之前必须具备的代码协作基础：持久 execution 身份、Owner 授权的本地 Git
 仓库、受边界约束的文件/Git 工具、命令执行和每次写执行独占的 Git worktree。本文是这些能力的范围、
@@ -377,6 +377,54 @@ W1c 只在 W1a/W1b 已通过
 审批决策使用单条条件更新 `WHERE status='pending' AND expires_at>now`；只有第一个 approved transition 可以
 唤醒等待中的工具任务。重复 approve/reject 返回已有终态，不重复创建子进程；过期与批准竞争由数据库结果
 决定。前端刷新或 WS 重连通过 Owner-only pending 列表恢复审批卡，不从浏览器本地状态猜测。
+
+#### W1c 实现与验证（2026-09-10）
+
+- 新增 `0008_shell_approvals`，审批脚本与执行上下文用途隔离加密；Owner-only 列表与决定接口，
+  共享 WS 仅通知安全状态。模型不能设置宿主调用身份或批准自己，Shell safe override 无效。
+- 角色和工作区独立开关、当前 Shell 类型/限制暴露已接线，ContextBuilder 与实际工具使用同一描述。
+  前端展示规范根、完整脚本和非 OS 沙箱警告，刷新/重连重新取 pending，不缓存审批脚本。
+- CAS 决定使用实际写入时刻检查过期；并发批准/拒绝只产生一个决定。提交与句柄交接受取消保护，
+  拒绝、到期、停止和重启不会触发新进程，已批准但中断的请求也不重放。
+- 复用既有双流、UTF-8、限额、超时和进程运行器；Linux 使用独立 subreaper 监管器处理 setsid 后代，
+  Windows 在交付 stdin 前绑定 Job Object。其他 POSIX 平台暂不开放，不把进程组清理冒充后代回收。
+- 后端完整回归 147 passed、3 skipped、8 deselected；其中 Shell 专项 14 项覆盖审批前无 spawn、
+  并发决定、跨会话/Guest 拒绝、错摘要/篡改、到期/撤销、重启不重放、提交交接取消、最小环境、
+  超时/截断及 setsid 后代正常退出/取消回收。SQLite 升降级、ORM 对齐及 PostgreSQL 离线 SQL 通过。
+- 普通浏览器 34 passed；命令/工具/审批专项 3 passed，最后单独复跑审批闭环 1 passed；fake 世界切换
+  1 passed；前端 build 通过。到期故障注入仅在专用 fake 服务器、精确测试脚本和目录生效。
+- DeepSeek 官方真实世界 Shell smoke 1 passed，模型通过批准的只读脚本读取本轮未知校验值并回答；
+  测试没有批准模型提出的任意额外命令，也没有接触项目源码或真实用户文件。
+  最新记录 `logs/tests/e2e/real/2026-09-10/14-15-07_b75a3b91/summary.json`；
+  保留世界 `data/roleplex-real-world-e2e-20260910141507/default`，供本机人工核对。
+- Windows 的参数构造有确定性测试，但原生 Windows 编码/Job Object/取消实机路径未验证；
+  PostgreSQL 本轮仅离线编译，未在真实实例重放。上述缺口不能用 Linux 测试结果代替。
+- 审批界面截图已检查：`logs/tests/e2e/fake/2026-09-10/14-15-05_3b2b183b/artifacts/screenshots/Shell_Owner__62afac7e.png`。
+  本轮测试服务已清理，实际脚本/凭据不进入真实测试截图或日志。
+
+人工验收前重启后端并刷新前端。先为工作区和角色开启 Shell，在 single 会话申请简单脚本，
+核对脚本/目录后分别测试批准、拒绝、刷新待审批和停止。W1c 随下述详情修正一并通过人工验收，W2a 尚未开始。
+
+#### W1c Shell 详情验收修正（2026-09-10）
+
+用户人工检查发现 Shell 卡片没有执行详情。本次纠正“正式日志不记录原文”被扩大为“不提供 Owner 私有详情”
+的问题；这是 W1c 内的验收修正，不延期到后续里程碑。
+
+- 脚本按消息/generation/execution/call_id 关联原审批密文，既有输入密文列保持为空，不重复保存脚本。
+  新输出以 shell-v1 结构有界保存于既有加密详情列，stdout/stderr 分开并保留原字节数与截断标记；无需新迁移。
+- Owner 展开显示审批结果、审批等待、运行器实测执行耗时和双流；调用总耗时不再冒充执行耗时。
+  旧卡片没有能力标记仍可查询原审批，未保存输出明确为未记录，不推算时间、不读取机器日志、不重执行补录。
+  详情七天展示期限、过期/解密失败降级、Guest 拒绝及跨身份清理沿用受保护接口。
+- 后端完整回归 150 passed、3 skipped、8 deselected；普通浏览器 34 passed；工具/命令专项 3 passed；
+  最后 Shell 专项单独复跑 1 passed，覆盖双流非空/空输出、刷新、旧卡标记和 Guest 不请求详情。
+  fake managed-world 1 passed，前端 build 通过；顺带修正旧单聊测试对 execution 收尾的竞态等待，不改运行逻辑。
+- DeepSeek 官方真实 Shell 详情 smoke 1 passed，实际读取本轮校验值并验证 Owner 展开/刷新后的 stdout；
+  `logs/tests/e2e/real/2026-09-10/14-47-46_2c5937fa/summary.json`。真实测试不保存脚本/输出截图或正式日志。
+- 最后 fake 详情截图：`logs/tests/e2e/fake/2026-09-10/14-56-36_735b2920/artifacts/screenshots/Shell_Owner__62afac7e.png`。
+  本轮测试服务已清理。Windows 实机缺口不因本次修正消失。
+
+2026-09-10 用户确认本版通过人工验收并批准独立提交，范围包含 W1c 审批、执行及 Shell 私有详情修正。
+保留上述 Windows 实机与 PostgreSQL 实例验证缺口，不把人工通过等同于补齐这些自动化覆盖；W2a 尚未开始。
 
 ### 5.6 W1b/W1c 共用的进程边界
 

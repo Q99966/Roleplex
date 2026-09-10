@@ -27,16 +27,35 @@ from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
 
 WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
-WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command')
-WORKSPACE_TOOL_POLICY_VERSION = 2
+WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell')
+WORKSPACE_TOOL_POLICY_VERSION = 3
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件，并取得 sha256 供后续安全更新。",
     "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新。",
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
+    "workspace_run_shell": "请求执行 Shell 脚本，必须等待 Owner 对本次脚本批准；只接受 script，不允许 cwd、环境或审批参数。",
 }
 _LEASE_LOCKS: dict[int, asyncio.Lock] = {}
 _COMMAND_CALL_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _tool_description(name: str) -> str:
+    """使模型工具 schema 与 ContextBuilder 的策略 hash 使用同一能力描述。
+
+    Args:
+        name：实际内置工具名。
+    """
+    description = WORKSPACE_TOOL_DESCRIPTIONS[name]
+    if name == 'workspace_run_shell':
+        from .shell import shell_configuration
+        try:
+            config = shell_configuration()
+        except WorkspaceCommandError:
+            return description
+        description += (f" 当前解释器为 {config['shell_kind']}；脚本最多 65536 UTF-8 字节，"
+                        f"执行超时 {config['timeout_seconds']} 秒，输出保留 {config['output_bytes']} 字节。")
+    return description
 
 
 def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
@@ -46,9 +65,22 @@ def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
         role：本 execution 的当前角色。
         binding：当前 World 的工作区记录。
     """
+    from .shell import shell_configuration
+    try:
+        shell_configuration()
+        shell_available = True
+    except WorkspaceCommandError:
+        shell_available = False
     return [name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []) and (
-        binding.basic_commands_enabled if name == 'workspace_run_command' else binding.file_tools_enabled
-    )]
+        (binding.shell_enabled and shell_available) if name == 'workspace_run_shell'
+        else binding.basic_commands_enabled if name == 'workspace_run_command' else binding.file_tools_enabled)]
+
+
+class WorkspaceShellInput(BaseModel):
+    """模型仅能提交脚本；真实调用身份由防腐层上下文提供。"""
+
+    model_config = ConfigDict(extra='forbid')
+    script: str = Field(min_length=1, max_length=65536)
 
 
 class WorkspaceCommandInput(BaseModel):
@@ -353,7 +385,27 @@ async def create_workspace_tools(
             except WorkspaceCommandError as exc:
                 return _command_result({'ok': False, 'error_code': exc.code})
 
+    async def workspace_run_shell(script: str) -> str:
+        """串行等待本次批准，执行前仍复核租用和身份。
+
+        Args:
+            script：模型脚本，不能覆盖宿主执行参数。
+        """
+        from ..agent.tool_context import tool_call_id
+        from .approvals import request_and_run
+        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+            try:
+                return _command_result(await request_and_run(script=script, execution_id=execution_id,
+                    conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
+                    workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
+                    tool_call_id=tool_call_id.get()))
+            except WorkspaceCommandError as exc:
+                return _command_result({'ok': False, 'error_code': exc.code})
+
     raw: dict[str, BaseTool] = {
+        'workspace_run_shell': StructuredTool.from_function(coroutine=workspace_run_shell, name='workspace_run_shell',
+            description=_tool_description('workspace_run_shell'), args_schema=WorkspaceShellInput,
+            handle_validation_error=lambda _error: _command_result({'ok': False, 'error_code': 'SHELL_ARGUMENT_INVALID'})),
         'workspace_run_command': StructuredTool.from_function(
             coroutine=workspace_run_command, name='workspace_run_command',
             description=WORKSPACE_TOOL_DESCRIPTIONS['workspace_run_command'], args_schema=WorkspaceCommandInput,
@@ -425,7 +477,7 @@ async def workspace_tool_policy(
         "workspace_binding_id": binding.id,
         "workspace_kind": binding.workspace_kind,
         "exposed_tools": [
-            {"name": name, "description": WORKSPACE_TOOL_DESCRIPTIONS[name]}
+            {"name": name, "description": _tool_description(name)}
             for name in WORKSPACE_TOOLS if name in exposed
         ],
     }

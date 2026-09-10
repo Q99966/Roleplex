@@ -14,6 +14,8 @@ from collections.abc import Collection, Sequence
 from typing import Any
 
 from langchain_core.tools import BaseTool
+from langchain_core.callbacks import AsyncCallbackManagerForToolRun
+from .tool_context import tool_call_id
 
 # 显式 safe 白名单：只包含只读或纯生成类内置工具。
 # 新增工具默认不在此列表内，必须经安全评审后显式加入。
@@ -49,6 +51,8 @@ def classify_tool(name: str, *, owner_safe_overrides: Collection[str] = ()) -> s
     Returns:
         `safe` 或 `dangerous`；无法确认的工具一律返回 `dangerous`。
     """
+    if name == 'workspace_run_shell':
+        return DANGER_DANGEROUS
     if name in SAFE_BUILTIN_TOOLS:
         return DANGER_SAFE
     if name in owner_safe_overrides:
@@ -76,10 +80,21 @@ class GuardedTool(BaseTool):
             return self._reject()
         return self.inner.run(kwargs or (args[0] if args else {}))
 
-    async def _arun(self, *args: Any, **kwargs: Any) -> Any:
+    async def _arun(self, *args: Any, run_manager: AsyncCallbackManagerForToolRun | None = None, **kwargs: Any) -> Any:
+        """把宿主调用身份转换为领域上下文，模型 schema 中没有该字段。
+
+        Args:
+            args：已校验的位置参数。
+            run_manager：框架注入的宿主运行上下文，与开始/结束领域事件使用相同身份。
+            kwargs：已校验的模型业务参数。
+        """
         if self.danger == DANGER_DANGEROUS and not self.allow_dangerous:
             return self._reject()
-        return await self.inner.arun(kwargs or (args[0] if args else {}))
+        binding = tool_call_id.set(str(run_manager.run_id) if run_manager else None)
+        try:
+            return await self.inner.arun(kwargs or (args[0] if args else {}))
+        finally:
+            tool_call_id.reset(binding)
 
 
 def guard_tools(
@@ -184,7 +199,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name != 'workspace_run_command':
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -210,6 +225,8 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
     if type(result.get('truncated')) is bool:
         summary['truncated'] = result['truncated']
     from ..workspaces.command_worker import WORKER_ERRORS
-    if result.get('error_code') in WORKER_ERRORS | {'COMMAND_TIMEOUT', 'COMMAND_NOT_SUPPORTED'}:
+    if result.get('error_code') in WORKER_ERRORS | {'COMMAND_TIMEOUT', 'COMMAND_NOT_SUPPORTED',
+        'SHELL_REJECTED', 'SHELL_APPROVAL_EXPIRED', 'SHELL_APPROVAL_MISMATCH', 'SHELL_ARGUMENT_INVALID',
+        'SHELL_NOT_SUPPORTED', 'SHELL_REQUEST_CONFLICT', 'WORKSPACE_TOOL_NOT_AVAILABLE'}:
         summary['error_code'] = result['error_code']
     return summary

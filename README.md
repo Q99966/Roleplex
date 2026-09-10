@@ -21,6 +21,9 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
   `workspace_list/read/write`；路径、symlink、敏感文件、原子写和 hash 并发由服务端执行层约束
 - 单聊可按角色/工作区独立开关使用 `workspace_run_command` 执行固定的 pwd/list/read/count；支持输出上限、
   超时、停止后的进程树回收，以及不包含原始输出的工具过程卡
+- W1c Owner 单聊 Shell 已完成人工验收：每次展示完整脚本并单独批准，支持拒绝、过期、停止和刷新恢复；
+  脚本加密保存，重启不自动执行。Shell 可访问宿主其他路径和网络，不是系统沙箱
+  Owner 可展开 Shell 原审批脚本及有界输出，审批等待与执行耗时分开展示；旧调用未保存的输出不补录
 - 新回复按实际顺序穿插文字与工具卡；Owner 可展开查看加密保存的有界输入/输出，Guest 只看摘要。
   详情保留 7 天，旧消息标注“位置未记录”；该优化已完成并通过人工验收
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
@@ -39,7 +42,7 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 W1b 已完成并通过人工验收；当前工具时间线与展开详情优化的范围和验收见
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
-后续工具主线仍为任意 Shell 与 Owner 逐次审批（W1c）。所有聊天标题区显示当前 Workspace 与 Owner
+W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；后续为 W2a。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 
@@ -65,7 +68,10 @@ Workspace 根由当前 World Owner 在设置中心手动输入绝对路径；一
 不需要部署环境预先配置目录白名单。Owner 仍需为工作区和具体角色分别开启原生文件能力。文件内容可能
 发送给角色绑定的模型厂商；当前文件与结构化命令工具只能访问会话绑定的 Workspace 根以内。
 结构化命令需同时开启设置页“结构化命令”和角色“工作区结构化命令”；与文件工具开关独立。
-当前不提供任意 Bash、Git 或 worktree。主机可通过 `WORKSPACE_COMMAND_TIMEOUT_SECONDS` 调整命令超时
+W1c 需另行开启工作区“审批 Shell”和角色 Shell 工具，每次调用还须 Owner 明确批准。主机通过
+`WORKSPACE_SHELL_KIND=auto|bash|powershell` 选择 Shell；auto 在 Linux 使用 Bash，Windows 使用 PowerShell。
+当前 Linux 真实执行已验证；Windows 参数/Job 路径有代码及分层测试，原生 Windows 实机验收尚未覆盖。
+其他 POSIX 平台暂不开放 Shell。当前仍不提供 Git 或 worktree。主机可通过 `WORKSPACE_COMMAND_TIMEOUT_SECONDS` 调整命令超时
 （默认 30 秒，最大 300 秒），通过 `WORKSPACE_COMMAND_OUTPUT_BYTES` 调整合计输出保留量
 （默认 64 KiB，最大 1 MiB）；模型不能覆盖这些限制。
 
