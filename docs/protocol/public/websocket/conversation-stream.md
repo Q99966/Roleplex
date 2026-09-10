@@ -3,8 +3,8 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（含 A 连接解耦；A 已完成人工验收） |
-| 协议版本 | 2（兼容新增订阅控制能力协商、操作标识与同步确认） |
+| 状态 | 已实现（A、B 最近窗口均已人工验收） |
+| 协议版本 | 3（兼容新增最近窗口能力协商） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/realtime/websocket.py`、`backend/app/realtime/events.py`、`backend/app/realtime/store.py` |
 | 关联测试 | `backend/tests/test_ws_recovery.py`、`backend/tests/test_ws_session.py`、`frontend/tests/connection-session.spec.ts`、群聊与 managed-world E2E |
@@ -59,7 +59,8 @@ ws(s)://<host>/api/ws
    {"type":"snapshot","stream_epoch":"占位 epoch","payload":{"conversation_id":42,"event_seq":24,"messages":[],"active_generation_id":null,"active_generation_ids":[]}}
    ```
 
-   客户端必须用快照整体替换本地会话状态，并把游标重置为快照的 `event_seq`；快照包含生成中消息的当前累积内容。
+   客户端必须用快照整体替换本地会话状态，并把游标重置为快照的 `event_seq`；快照包含所选窗口内生成中消息的当前累积内容。
+   B 客户端使用下述最近窗口，未协商窗口的旧客户端仍取完整快照。
 
 一条连接同一时刻只订阅一个会话，再次发送 `subscribe` 表示切换会话：旧订阅立即取消，之后不再收到旧会话事件。
 
@@ -95,7 +96,7 @@ ws(s)://<host>/api/ws
 ### 登录会话级连接与订阅控制（A，已实现）
 
 连接由登录会话管理，会话组件不拥有 socket；同一 socket 同时仅有一个会话订阅。首帧认证仍保持不变，
-`auth_ok` 兼容新增 `capabilities: ["subscription_control_v1"]`。不支持该能力的旧后端不能被新客户端误判为
+`auth_ok` 兼容新增 `capabilities: ["subscription_control_v1", "history_window_v1"]`。不支持这些能力的旧后端不能被新客户端误判为
 同步就绪；新客户端报告 WS_PROTOCOL_UNSUPPORTED。旧客户端不提交订阅标识时，服务端仍返回旧帧格式。
 
 新客户端每次订阅提交 ASCII 字母/数字/下划线/连字符组成的 `subscription_id`（1..64 字符），与
@@ -106,7 +107,7 @@ conversation_id、after_event_seq、stream_epoch 一同发送。每次切换或�
 服务端先登记实时队列，再发送恢复数据，最后发送
 `{type:"sync_complete",subscription_id,conversation_id,stream_epoch,through_event_seq}`。
 through_event_seq 是已经发送的恢复水位；客户端应用完相应事件/快照后才就绪。控制帧不占用业务 event_seq。
-subscribed 仅表示受理，不表示 backlog 已完成。A 继续返回完整历史和快照，不提前实现分页。
+subscribed 仅表示受理，不表示 backlog 已完成。旧调用保留完整快照，新客户端使用下述 B 最近窗口。
 
 `{type:"unsubscribe",subscription_id}` 只释放匹配的订阅，返回
 `{type:"unsubscribed",subscription_id,removed:true|false}`；迟到的旧标识不能取消新订阅。连接保持认证待命。
@@ -120,9 +121,18 @@ CONVERSATION_NOT_FOUND，不泄漏资源存在性。未知/非法控制参数返
 重连只恢复最新选择。数据序号出现缺口时重新订阅补齐，不能跳过缺失事件直接前移游标。
 
 连接状态（待命/连接/认证/重连/失败）与历史加载、订阅同步状态独立；正常切换不显示“连接已断开”。
-退出登录、World 或 Token 上下文变化、应用会话结束时清除连接与未完成请求。A 不缓存历史或 Owner 私有详情。
+退出登录、World 或 Token 上下文变化、应用会话结束时清除连接、未完成请求及 B 的共享历史缓存；Owner 私有详情不进入缓存。
 
-### 业务事件
+### 最近窗口能力（B，已实现，已人工验收）
+
+auth_ok 新增能力 `history_window_v1`。新客户端订阅同时提交 `history_window:"recent"`，
+快照兜底返回最近窗口，payload 包含原消息/活动 generation/事件水位以及消息 REST 定义的分页元数据；
+page_bytes 计入完整 snapshot 信封（含 subscription_id）。未提交该选项的旧客户端仍收到完整快照。
+新客户端必须检查两项能力，不能对旧后端静默退回全量加载。
+窗口快照始终替换当前窗口并使未完成翻页失效，随后按 sync_complete 水位就绪；不能保留未验证旧页。
+活动 generation 列表独立于窗口消息，窗口外仍运行的 generation 也可停止。
+
+### 业务事件内容
 
 | 类型 | 时机 | payload |
 |---|---|---|

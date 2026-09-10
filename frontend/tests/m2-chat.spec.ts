@@ -63,7 +63,7 @@ test.describe('M2 single chat', () => {
       if (socket.url().endsWith('/api/ws')) websocketUrls.push(socket.url())
     })
     page.on('request', (request) => {
-      if (request.method() === 'GET' && /\/api\/conversations\/\d+\/messages$/.test(request.url())) {
+      if (request.method() === 'GET' && /\/api\/conversations\/\d+\/messages$/.test(new URL(request.url()).pathname)) {
         historyRequests.push(request.url())
       }
     })

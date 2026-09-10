@@ -18,7 +18,7 @@ export function MessageParts({ message, isOwner }: { message: Message; isOwner: 
           <MarkdownRenderer content={part.text} isGenerating={message.status === 'generating' && index === message.parts_json.length - 1} />
         </Suspense>
       </div> : null
-      if (part.type === 'tool_call') return <div key={part.call_id}>
+      if (part.type === 'tool_call') return <div key={part.call_id} data-reading-anchor={`m-${message.id}:tool-${part.call_id}`}>
         {legacy && index === message.parts_json.findIndex((item) => item.type === 'tool_call') && <p className="mt-3 text-xs text-slate-500">历史执行记录，位置未记录</p>}
         <ToolCallCard part={part} conversationId={message.conversation_id} messageId={message.id} isOwner={isOwner} />
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle, UsersRound, X
 } from 'lucide-react'
@@ -6,6 +6,7 @@ import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
 import { type Conversation, type Message, type Role } from '../api/client'
 import { MessageParts } from './MessageParts'
+import { useReadingPosition } from './useReadingPosition'
 
 interface ActiveWorkspaceProps {
   isSidebarCollapsed: boolean
@@ -41,14 +42,15 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
-  const { messages, loading, sending, generating, activeGenerationIds, connection, subscription, error } = useChatStore()
+  const { messages, loading, sending, generating, activeGenerationIds, connection, subscription, error,
+    nextCursor, loadingOlder, olderError, oversized, loadOlder } = useChatStore()
   const retryConnection = useChatStore((state) => state.retryConnection)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const stopGeneration = useChatStore((state) => state.stopGeneration)
 
   const [draft, setDraft] = useState('')
   const [mentions, setMentions] = useState<Array<number | 'all'>>([])
-  const feedRef = useRef<HTMLDivElement | null>(null)
+  const { feedRef, contentRef, onScroll, goBottom, newContent } = useReadingPosition(activeConversationId)
 
   const activeConv = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) || null,
@@ -73,10 +75,6 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
     if (!activeConv?.orchestrator_enabled || !activeConv.orchestrator_role_id) return null
     return roles.find((r) => r.id === activeConv.orchestrator_role_id) || null
   }, [activeConv, roles])
-
-  useEffect(() => {
-    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight })
-  }, [messages])
 
   /** 等待加载或同步时保留草稿，只向当前已就绪会话提交。
    * @param event 输入表单的提交事件。
@@ -188,7 +186,17 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
           </div>
         </div>
 
-        <div ref={feedRef} className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div ref={feedRef} role="log" aria-label="会话消息" aria-live="off" onScroll={onScroll}
+          style={{ overflowAnchor: 'none' }} className="flex-1 overflow-y-auto p-6">
+          <div ref={contentRef} className="space-y-4">
+          {nextCursor && <div className="text-center text-xs text-slate-400">
+            {olderError && <p role="alert" className="mb-2 text-amber-400">{olderError}</p>}
+            <button type="button" onClick={() => void loadOlder()} disabled={loadingOlder || subscription !== 'ready'}
+              className="rounded-lg border border-slate-700 px-3 py-2 hover:bg-slate-800 disabled:opacity-50">
+              {loadingOlder ? '正在加载更早消息…' : olderError ? '重试加载更早消息' : '加载更早消息'}
+            </button>
+          </div>}
+          {oversized && <p className="text-center text-xs text-slate-500">包含超出单页预算的完整消息，加载和显示可能较慢。</p>}
           {loading && (
             <div className="flex items-center justify-center gap-2 text-xs text-slate-500 py-6">
               <Loader2 size={14} className="animate-spin" />正在加载会话历史…
@@ -208,7 +216,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
             const senderDeleted = !isUser && Boolean(role?.deleted_at)
             return (
-              <div key={message.id} data-testid="chat-message" className={`flex gap-3.5 max-w-2xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}>
+              <div key={message.id} data-testid="chat-message" data-reading-anchor={`m-${message.id}`} className={`flex gap-3.5 max-w-2xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border shrink-0 ${
                   isUser ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-indigo-900/40 text-indigo-400 border-indigo-500/20'
                 }`}>
@@ -243,6 +251,8 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
           )}
         </div>
 
+        </div>
+        {newContent && <button type="button" onClick={goBottom} className="self-center my-2 rounded-full bg-indigo-600 px-4 py-2 text-xs text-white">有新内容，回到底部</button>}
         <form onSubmit={submit} className="p-4 border-t border-slate-800 bg-slate-900">
           {!hasReplyRole && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">

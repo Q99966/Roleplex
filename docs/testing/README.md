@@ -189,6 +189,17 @@ W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-prov
 失败先清空页面，再保存安全阶段标签，避免把模型正文带入失败产物。
 该用例同时验证真实工具位于最终回答之前，以及 Owner 展开、刷新后重新读取加密详情。
 
+### 2.6.1 真实文档长会话
+
+显式设置 `ROLEPLEX_LONG_CONVERSATION_SOURCE` 为获准发送给供应商的本地 UTF-8 文档路径，再运行
+`npm run test:e2e:real-world -- long-conversation.spec.ts`。未设置时该用例 skip；普通回归不读取用户文件。
+该测试会联网计费，复用 real-world 独立世界和后端加密凭据，六轮实际生成验证历史上下文、切换与刷新。
+文档正文及回答只保存在本轮产品会话数据库，不保存截图/trace/video；报告只含轮数、消息字节数、
+厂商 usage 和是否超过分页预算。模型产出不稳定，须按实测体积判断覆盖，不能用轮数冒充体积边界。
+该用例现在要求实际内容超过 64 KiB，并验证刷新后最近窗口、向上补齐、缓存切回与阅读位置。
+确定性边界入口为 `npm run test:e2e -- history-window.spec.ts` 和 `pytest tests/test_history_window.py -q`，
+覆盖超大单条、体积/条数、连续游标、局部失败、快照失效、版本竞态、LRU 与布局变化，不用真实生成替代这些边界测试。
+
 ### 2.7 W1b 结构化命令 E2E
 
 在 `frontend/` 执行 `npm run test:e2e:commands`。该命令固定 fake Provider，启动真实前后端和独立 World，

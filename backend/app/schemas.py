@@ -241,3 +241,12 @@ class EventEnvelope(BaseModel):
     type: str
     conversation_id: int
     payload: dict[str, Any]
+
+
+class HistoryWindowMetadata(BaseModel):
+    """完整消息窗口的共享元数据；字节数计入实际传输信封。"""
+
+    has_more: bool = False
+    next_cursor: str | None = None
+    oversized: bool = False
+    page_bytes: int = Field(default=0, ge=0)

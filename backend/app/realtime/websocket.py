@@ -16,6 +16,7 @@ from ..db import SessionLocal
 from ..models import Conversation, ConversationMember, User
 from ..security.tokens import token_requires_password_reset
 from ..services import chat
+from ..services.history import build_history_window
 from . import events as events_module
 from . import store as event_store
 from .events import current_epoch
@@ -166,7 +167,7 @@ async def _serve_conversation_stream(websocket: WebSocket, client: str | None) -
         return
     set_log_context(user_id=user.id)
     logger.info("ws.authenticated", extra={"client": client})
-    await websocket.send_json({"type": "auth_ok", "stream_epoch": current_epoch(), 'capabilities': ['subscription_control_v1']})
+    await websocket.send_json({"type": "auth_ok", "stream_epoch": current_epoch(), 'capabilities': ['subscription_control_v1', 'history_window_v1']})
 
     queue: asyncio.Queue | None = None
     conversation_id: int | None = None
@@ -207,6 +208,10 @@ async def _serve_conversation_stream(websocket: WebSocket, client: str | None) -
                 continue
 
             if action == "subscribe":
+                if frame.get('history_window') not in (None, 'recent'):
+                    async with send_lock:
+                        await websocket.send_json({'type': 'error', 'payload': {'code': 'VALIDATION_ERROR'}})
+                    continue
                 new_id = frame.get("conversation_id")
                 if type(new_id) is not int or new_id <= 0 or (requested_sid and 'after_event_seq' in frame and (
                     type(frame['after_event_seq']) is not int or frame['after_event_seq'] < 0
@@ -294,7 +299,8 @@ async def _send_recovery(websocket: WebSocket, conversation_id: int, frame: dict
         latest = await event_store.latest_event_seq(session, conversation_id)
         needs_snapshot = client_epoch != epoch or latest - after_seq > _BACKLOG_LIMIT or after_seq > latest
         if needs_snapshot:
-            snapshot = await chat.build_snapshot(session, conversation_id)
+            snapshot = (await build_history_window(session, conversation_id, snapshot=True, subscription_id=sid)
+                        if frame.get('history_window') == 'recent' else await chat.build_snapshot(session, conversation_id))
             await _send_checked(websocket, {"type": "snapshot", "stream_epoch": epoch, "payload": snapshot}, conversation_id, sid, token)
             if sid:
                 await _send_checked(websocket, {'type': 'sync_complete', 'stream_epoch': epoch,

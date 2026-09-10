@@ -126,6 +126,7 @@ export class SessionStream {
     this.socket.send(JSON.stringify({
       type: 'subscribe', conversation_id: selected.conversationId, subscription_id: selected.id,
       after_event_seq: selected.eventSeq, stream_epoch: selected.epoch,
+      history_window: 'recent',
     }))
   }
 
@@ -134,7 +135,7 @@ export class SessionStream {
     if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return
     if (frame?.type === 'auth_ok') {
       if (this.authenticated) return
-      if (!Array.isArray(frame.capabilities) || !frame.capabilities.includes('subscription_control_v1')) {
+      if (!Array.isArray(frame.capabilities) || !['subscription_control_v1', 'history_window_v1'].every((cap) => frame.capabilities.includes(cap))) {
         this.close()
         this.handlers.onStatusChange('failed')
         this.handlers.onError('WS_PROTOCOL_UNSUPPORTED')
@@ -178,7 +179,7 @@ export class SessionStream {
         this.failSubscription('WS_SYNC_FAILED')
         return
       }
-      this.handlers.onSnapshot(frame.payload)
+      this.handlers.onSnapshot({ ...frame.payload, stream_epoch: frame.stream_epoch })
       selected.eventSeq = frame.payload.event_seq
       selected.epoch = frame.stream_epoch
       return
@@ -230,6 +231,11 @@ export class SessionStream {
     for (const timer of [this.handshakeTimer, this.syncTimer, this.pongTimer]) if (timer !== null) window.clearTimeout(timer)
     if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer)
     this.handshakeTimer = this.syncTimer = this.pongTimer = this.heartbeatTimer = null
+  }
+
+  /** 只提供当前订阅已应用的游标，缓存历史不能自行推进它。 */
+  getCursor() {
+    return this.selection ? { eventSeq: this.selection.eventSeq, streamEpoch: this.selection.epoch } : null
   }
 
   /** 用户显式重试失败连接，不用于正常会话切换。 */

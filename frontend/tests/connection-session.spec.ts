@@ -146,7 +146,7 @@ test('历史超时独立收尾并可重试，不误报传输断线', async ({ pa
   })
   let release!: () => void
   const held = new Promise<void>((resolve) => { release = resolve })
-  const pattern = `**/api/conversations/${ids[0]}/messages`
+  const pattern = `**/api/conversations/${ids[0]}/messages?window=recent`
   await page.route(pattern, async (route) => { await held; await route.continue().catch(() => undefined) })
   await page.getByText('历史超时A', { exact: true }).click()
   await expect(page.getByText('会话历史加载超时，请重试。', { exact: true })).toBeVisible()
@@ -271,7 +271,7 @@ test('会话切换和回到空工作台复用登录连接，慢历史不显示�
   await page.evaluate(async () => (await import('/src/store/app.ts')).useAppStore.getState().loadWorkspace())
   let release!: () => void
   const held = new Promise<void>((resolve) => { release = resolve })
-  await page.route(`**/api/conversations/${ids[0]}/messages`, async (route) => {
+  await page.route(`**/api/conversations/${ids[0]}/messages?window=recent`, async (route) => {
     await held
     await route.continue().catch(() => undefined)
   })

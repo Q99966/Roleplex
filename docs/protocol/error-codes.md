@@ -88,6 +88,8 @@ WebSocket error frame 使用：
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
 |---|---|---|---:|---|---|---|
 | `VALIDATION_ERROR` | 已实现 | REST/WS | 422/— | rejected | conditional | 请求结构或订阅控制参数无效；WS 不回显原始参数 |
+| `HISTORY_CURSOR_INVALID` | 已实现 | REST | 422 | rejected | no | 历史窗口游标无效或属于其他会话；不回显游标 |
+| `HISTORY_CURSOR_EXPIRED` | 已实现 | REST | 409 | rejected | conditional | epoch 已改变；作废缓存后从最近窗口重新加载 |
 | `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
 | `AUTH_REQUIRED` | 已实现 | REST | 401 | rejected | conditional | 缺少 Bearer 凭据 |
 | `AUTH_INVALID` | 已实现 | REST/WS | 401/— | rejected | conditional | 登录凭据、旧密码或 Token 无效；持久 WS 对过期/撤销统一拒绝并关闭 |

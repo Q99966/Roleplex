@@ -24,9 +24,9 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 新回复按实际顺序穿插文字与工具卡；Owner 可展开查看加密保存的有界输入/输出，Guest 只看摘要。
   详情保留 7 天，旧消息标注“位置未记录”；该优化已完成并通过人工验收
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
-- WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
+- WebSocket 首帧认证、按事件序号断线恢复，服务重启后重建当前历史窗口
 - 登录会话持有 WebSocket，切换会话与组件重挂载复用连接；历史加载与订阅同步按真实响应分别显示。
-  A 阶段连接解耦已完成人工验收；历史仍全量加载，分页/缓存尚未实现
+  A 阶段连接解耦与 B 阶段最近内容按需加载、内存缓存及阅读位置恢复均已完成人工验收
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
 - 多世界物理存档、CLI 一致性备份与包装器热切换；每个世界独立数据库和密钥
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
@@ -38,7 +38,7 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 
 W1b 已完成并通过人工验收；当前工具时间线与展开详情优化的范围和验收见
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
-A 连接解耦已完成人工验收，后续再推进分页、缓存与滚动位置；单条超长消息分块延期。
+A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
 后续工具主线仍为任意 Shell 与 Owner 逐次审批（W1c）。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。

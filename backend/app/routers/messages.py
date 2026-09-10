@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import case, select
@@ -18,6 +19,7 @@ from ..security import require_owner
 from ..services.tool_details import detail_payload
 from ..realtime import store as event_store
 from ..services import chat
+from ..services.history import build_history_window
 from ..scheduling import conversation_scheduler
 
 logger = logging.getLogger("roleplex.messages")
@@ -50,9 +52,26 @@ async def list_messages(
     conversation_id: int,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    response: Response,
+    window: Literal['recent'] | None = None,
+    before: str | None = None,
 ):
-    """返回会话历史及当前事件序号，供前端建立事件游标。"""
+    """返回兼容历史或完整消息窗口，并禁止浏览器 HTTP 持久缓存。
+
+    Args:
+        conversation_id：目标会话。
+        user：当前认证用户。
+        session：请求数据库会话。
+        response：用于设置缓存边界。
+        window：新客户端显式选择 recent，旧调用保留完整历史。
+        before：仅用于 recent 的不透明历史游标。
+    """
     await require_member(session, conversation_id, user.id)
+    response.headers['Cache-Control'] = 'no-store'
+    if window == 'recent':
+        return await build_history_window(session, conversation_id, before)
+    if before is not None:
+        raise HTTPException(422, 'HISTORY_CURSOR_INVALID')
     snapshot = await chat.build_snapshot(session, conversation_id)
     return {
         "items": snapshot["messages"],

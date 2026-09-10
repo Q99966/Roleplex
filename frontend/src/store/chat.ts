@@ -2,10 +2,19 @@ import { create } from 'zustand'
 import { api, type Message, type Part, type StreamEvent } from '../api/client'
 import { SessionStream, type ConnectionStatus, type SubscriptionStatus } from '../api/stream'
 import { useAppStore } from './app'
+import { HistoryCache, type ReadingPosition } from './history-cache'
 
 type ChatState = {
   conversationId: number | null
   messages: Message[]
+  nextCursor: string | null
+  historyEpoch: string | null
+  loadingOlder: boolean
+  olderError: string | null
+  oversized: boolean
+  position: ReadingPosition
+  loadOlder: () => Promise<void>
+  setPosition: (conversationId: number, position: ReadingPosition) => void
   loading: boolean
   sending: boolean
   generating: boolean
@@ -27,6 +36,11 @@ let stream: SessionStream | null = null
 let openSequence = 0
 let historyController: AbortController | null = null
 let opening: Promise<void> | null = null
+let olderController: AbortController | null = null
+let windowSequence = 0
+const cache = new HistoryCache()
+const unseenRevisions = new Map<number, number>()
+const bottomPosition: ReadingPosition = { anchor: null, offset: 0, bottom: true }
 
 /** 读取消息正文，仅用于旧格式事件兼容。
  * @param parts 旧消息的内容。
@@ -45,6 +59,12 @@ function invalidateSession() {
 export const useChatStore = create<ChatState>((set, get) => ({
   conversationId: null, messages: [], loading: false, sending: false, generating: false,
   activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null,
+  nextCursor: null, historyEpoch: null, loadingOlder: false, olderError: null, oversized: false, position: bottomPosition,
+
+  /** @param conversationId 滚动事件所属会话，旧组件不能改写新视图。
+   * @param position 当前消息/工具锚点与视口相对偏移。
+   */
+  setPosition: (conversationId, position) => { if (get().conversationId === conversationId) set({ position }) },
 
   /** 为当前已验证的登录上下文建立唯一连接。
    * @param token 当前身份的访问令牌，仅传给首帧认证。
@@ -58,8 +78,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       onSnapshot: (payload) => {
         if (stream !== owned || get().conversationId !== payload.conversation_id) return
+        ++windowSequence
+        olderController?.abort()
+        olderController = null
+        cache.clear()
+        unseenRevisions.clear()
         const ids = (payload.active_generation_ids ?? (payload.active_generation_id == null ? [] : [payload.active_generation_id])) as number[]
-        set({ messages: payload.messages as Message[], generating: ids.length > 0, activeGenerationIds: ids })
+        const messages = payload.messages as Message[]
+        const position = get().position
+        const anchorExists = messages.some((message) => position.anchor === `m-${message.id}` || position.anchor?.startsWith(`m-${message.id}:`))
+        set({ messages, generating: ids.length > 0, activeGenerationIds: ids,
+          nextCursor: payload.next_cursor ?? null, historyEpoch: payload.stream_epoch,
+          loadingOlder: false, olderError: null, oversized: Boolean(payload.oversized),
+          position: anchorExists ? position : bottomPosition })
       },
       onEvent: (event) => {
         if (stream === owned && get().conversationId === event.conversation_id) applyEvent(set, get, event)
@@ -68,7 +99,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (stream !== owned) return
         set({ error, subscription: 'failed',
           ...(['WS_CONNECTION_FAILED', 'WS_PROTOCOL_UNSUPPORTED'].includes(error) ? { connectionError: error } : {}),
-          ...(error === 'CONVERSATION_NOT_FOUND' ? { messages: [], generating: false, activeGenerationIds: [] } : {}) })
+          ...(error === 'CONVERSATION_NOT_FOUND' ? { messages: [], generating: false, activeGenerationIds: [], nextCursor: null, historyEpoch: null } : {}) })
+        if (error === 'CONVERSATION_NOT_FOUND') { ++windowSequence; olderController?.abort(); set({ loadingOlder: false }) }
       },
       onAuthFailure: () => {
         if (stream !== owned) return
@@ -81,6 +113,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   /** 认证/World 上下文结束时释放连接、请求和当前消息。 */
   endSession: () => {
+    cache.clear()
+    unseenRevisions.clear()
+    ++windowSequence
+    olderController?.abort()
+    olderController = null
     ++openSequence
     historyController?.abort()
     historyController = null
@@ -89,10 +126,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     stream = null
     previous?.close()
     set({ conversationId: null, messages: [], loading: false, sending: false, generating: false,
-      activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null })
+      activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null,
+      nextCursor: null, historyEpoch: null, loadingOlder: false, olderError: null, oversized: false, position: bottomPosition })
   },
 
-  /** 加载当前选择的完整历史，再在登录连接上订阅；不缓存其他会话。
+  /** 显示缓存窗口或读取最近页，再校验实时水位；缓存本身不代表就绪。
    * @param conversationId 当前导航选中的会话 ID。
    */
   openConversation: (conversationId) => {
@@ -103,6 +141,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().closeConversation()
     const sequence = ++openSequence
     const owned = stream
+    const cached = cache.take(conversationId)
+    if (cached) {
+      set({ conversationId, messages: cached.messages, loading: false, error: get().connectionError,
+        nextCursor: cached.nextCursor, historyEpoch: cached.streamEpoch, position: cached.position,
+        oversized: cached.oversized, activeGenerationIds: cached.activeGenerationIds, generating: cached.activeGenerationIds.length > 0 })
+      if (get().connection !== 'failed') owned?.subscribe(conversationId, { eventSeq: cached.eventSeq, streamEpoch: cached.streamEpoch })
+      return Promise.resolve()
+    }
     const controller = new AbortController()
     historyController = controller
     set({ conversationId, loading: true, error: get().connectionError, messages: [] })
@@ -113,7 +159,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const history = await api.messages(conversationId, controller.signal)
         if (sequence !== openSequence || owned !== stream || get().conversationId !== conversationId) return
         const ids = history.active_generation_ids ?? (history.active_generation_id === null ? [] : [history.active_generation_id])
-        set({ messages: history.items, loading: false, generating: ids.length > 0, activeGenerationIds: ids })
+        set({ messages: history.items, loading: false, generating: ids.length > 0, activeGenerationIds: ids,
+          nextCursor: history.next_cursor, historyEpoch: history.stream_epoch, oversized: history.oversized })
         if (get().connection === 'failed') return
         owned?.subscribe(conversationId, { eventSeq: history.event_seq, streamEpoch: history.stream_epoch })
       } catch (error) {
@@ -135,13 +182,73 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   /** 取消当前会话选择；由导航服务调用，组件卸载不释放传输连接。 */
   closeConversation: () => {
+    const state = get()
+    const cursor = stream?.getCursor()
+    if (state.conversationId !== null && state.historyEpoch && cursor?.streamEpoch === state.historyEpoch) {
+      cache.put(state.conversationId, { messages: state.messages, nextCursor: state.nextCursor,
+        eventSeq: cursor.eventSeq, streamEpoch: state.historyEpoch, activeGenerationIds: state.activeGenerationIds,
+        position: state.position, oversized: state.oversized })
+    }
+    ++windowSequence
+    olderController?.abort()
+    olderController = null
+    unseenRevisions.clear()
     ++openSequence
     historyController?.abort()
     historyController = null
     opening = null
     stream?.unsubscribe()
     set({ conversationId: null, messages: [], loading: false, sending: false, generating: false,
-      activeGenerationIds: [], subscription: get().connectionError ? 'failed' : 'idle', error: get().connectionError })
+      activeGenerationIds: [], subscription: get().connectionError ? 'failed' : 'idle', error: get().connectionError,
+      nextCursor: null, historyEpoch: null, loadingOlder: false, olderError: null, oversized: false, position: bottomPosition })
+  },
+
+  /** 向上加载连续完整消息，不改订阅游标；失败仅影响这一页。 */
+  loadOlder: async () => {
+    const { conversationId, nextCursor, historyEpoch, loadingOlder, subscription } = get()
+    if (conversationId === null || !nextCursor || loadingOlder || subscription !== 'ready') return
+    const sequence = windowSequence
+    const controller = new AbortController()
+    olderController = controller
+    set({ loadingOlder: true, olderError: null })
+    const timeout = window.setTimeout(() => controller.abort(), 30_000)
+    try {
+      // 窗口外的增量不构造残缺消息；若与页读取交错，只重读该页获取完整新版。
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const page = await api.messages(conversationId, controller.signal, nextCursor)
+        if (sequence !== windowSequence) return
+        if (page.stream_epoch !== historyEpoch) throw Object.assign(new Error('历史窗口已失效'), { code: 'HISTORY_CURSOR_EXPIRED' })
+        if (page.items.some((item) => (unseenRevisions.get(item.id) ?? -1) > item.revision)) continue
+        const merged = new Map(get().messages.map((item) => [item.id, item]))
+        for (const item of page.items) {
+          if (!merged.has(item.id) || merged.get(item.id)!.revision < item.revision) merged.set(item.id, item)
+          unseenRevisions.delete(item.id)
+        }
+        set({ messages: [...merged.values()].sort((a, b) => a.id - b.id), nextCursor: page.next_cursor,
+          oversized: get().oversized || page.oversized })
+        return
+      }
+      throw new Error('历史正在更新，请重试加载。')
+    } catch (error) {
+      if (sequence !== windowSequence) return
+      const code = (error as { code?: string }).code
+      if (['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_REVOKED'].includes(code ?? '')) { invalidateSession(); return }
+      if (code === 'HISTORY_CURSOR_EXPIRED') {
+        cache.clear()
+        // 旧 epoch 的窗口不能继续拼接；重新请求最近页，保留物理连接。
+        set({ historyEpoch: null })
+        get().closeConversation()
+        await get().openConversation(conversationId)
+        return
+      }
+      if (code === 'CONVERSATION_NOT_FOUND') {
+        stream?.unsubscribe()
+        set({ messages: [], nextCursor: null, historyEpoch: null, error: code, subscription: 'failed', generating: false, activeGenerationIds: [] })
+      } else set({ olderError: '更早消息加载失败，请重试。' })
+    } finally {
+      window.clearTimeout(timeout)
+      if (sequence === windowSequence) { olderController = null; set({ loadingOlder: false }) }
+    }
   },
 
   /** 用户主动重试失败连接或历史请求，不用于正常切换。 */
@@ -195,8 +302,27 @@ function upsert(set: any, get: () => ChatState, message: Message) {
   set({ messages })
 }
 
-/** 按事件类型幂等更新本地消息状态；未知事件安全忽略。 */
+/** 按事件类型幂等更新窗口；未加载区域只记录版本，未知事件安全忽略。
+ * @param set 当前状态的唯一写入口。
+ * @param get 读取当前已选择窗口。
+ * @param event 已经传输层验证归属和顺序的领域事件。
+ */
 function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
+  const messageId = event.payload.message?.id ?? event.payload.message_id
+  const outside = typeof messageId === 'number' && get().nextCursor !== null && get().messages.length > 0
+    && messageId < get().messages[0].id
+  if (outside) {
+    unseenRevisions.set(messageId, Math.max(unseenRevisions.get(messageId) ?? -1, event.revision))
+    if (event.type === 'message_created' && event.payload.message?.sender_type === 'role' && event.generation_id !== null) {
+      const ids = [...new Set([...get().activeGenerationIds, event.generation_id])]
+      set({ activeGenerationIds: ids, generating: true })
+    }
+    if (event.type === 'message_done' && event.generation_id !== null) {
+      const ids = get().activeGenerationIds.filter((id) => id !== event.generation_id)
+      set({ activeGenerationIds: ids, generating: ids.length > 0 })
+    }
+    return
+  }
   if (event.type === 'message_created') {
     const incoming = event.payload.message as Message
     const current = get().messages.find((message) => message.id === incoming.id)

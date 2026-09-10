@@ -41,7 +41,8 @@ export type ToolDetails = {
   input: ToolCapture | null; output: ToolCapture | null
 }
 export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
-export type MessageHistory = { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null; active_generation_ids: number[] }
+export type HistoryWindow = { has_more: boolean; next_cursor: string | null; oversized: boolean; page_bytes: number }
+export type MessageHistory = HistoryWindow & { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null; active_generation_ids: number[] }
 export type SendMessageResult = { message: Message; generation_id: number | null; generation_ids: number[]; duplicate: boolean }
 export type HealthStatus = { status: string; stream_epoch: string; world_name: string; world_managed: boolean }
 export type WorldSummary = { name: string; current: boolean; created_at: string }
@@ -230,7 +231,7 @@ export const api = {
   deleteModelConfig: (id: number) => request<void>(`/api/model-configs/${id}`, { method: 'DELETE' }),
 
   // 消息与生成 API
-  messages: (conversationId: number, signal?: AbortSignal) => request<MessageHistory>(`/api/conversations/${conversationId}/messages`, { signal }),
+  messages: (conversationId: number, signal?: AbortSignal, before?: string) => request<MessageHistory>(`/api/conversations/${conversationId}/messages?window=recent${before ? `&before=${encodeURIComponent(before)}` : ''}`, { signal, cache: 'no-store' }),
   sendMessage: (conversationId: number, body: MessageCreate) => request<SendMessageResult>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   stopGeneration: (conversationId: number) => request<{ stopped: boolean; generation_id: number | null }>(`/api/conversations/${conversationId}/stop`, { method: 'POST' }),
 }

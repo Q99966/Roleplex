@@ -2,7 +2,7 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-消息与 WebSocket 已经拆分到领域文档；本文件对这两个领域只保留摘要、状态和链接。尚未实现的邀请、Artifact 和分页协议暂留在本文件，实现时按同样方式拆出。
+消息与 WebSocket（含历史窗口分页）已经拆分到领域文档；本文件对这些领域只保留摘要、状态和链接。尚未实现的邀请、Artifact 和其他列表分页协议暂留在本文件，实现时按同样方式拆出。
 
 > 只有已经存在对应后端处理和前端行为的内容，才能视为当前可用；其余内容属于原型或后续里程碑预留。
 
@@ -36,13 +36,13 @@ docs/protocol/
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
 | REST 当前 World 工作区 | 已实现（W1a/W1b） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
-| 消息发送、历史与停止生成 | 已实现（单聊与 M4a 群聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
+| 消息发送、历史与停止生成 | 已实现（含 B 最近窗口，已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | 工具执行顺序与 Owner 详情 | 已实现，已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
-| WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与订阅切换） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
+| WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与最近窗口快照） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |
 | Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |
-| 分页与兼容性 | 预留/总则 | 本文档 |
+| 其他列表分页与兼容性 | 预留/总则；消息窗口见消息领域 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 | Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
 | 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |
@@ -131,7 +131,10 @@ POST /api/conversations/{conversation_id}/artifacts
 当前状态：Artifact 数据模型已预留；创建、更新和前端预览尚未实现。原始内容读取端点与
 iframe 隔离已作为风险验证实现，见 [产物原始内容读取](protocol/public/resources/artifact-raw.md)。
 
-## 分页（预留）
+## 其他列表分页（预留）
+
+消息最近窗口分页已实现，参数和体积预算只以[消息领域协议](protocol/public/messaging/messages.md)为准。
+本节不覆盖消息窗口，仅记录其他列表的预留方向。
 
 列表接口引入分页后使用游标：
 

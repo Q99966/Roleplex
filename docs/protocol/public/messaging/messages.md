@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 公开 |
 | 状态 | 已实现（单聊与 M4a mentions 串行群聊；Orchestrator 未实现） |
-| 协议版本 | 3（兼容新增群聊调度与队列字段） |
+| 协议版本 | 4（兼容新增显式最近历史窗口） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
-| 关联测试 | `backend/tests/test_chat_flow.py`、`backend/tests/test_group_chat.py`、`backend/tests/test_context_builder.py`、`frontend/tests/m4-group-chat.spec.ts` |
-| 复核日期 | 2026-08-30 |
+| 关联测试 | `backend/tests/test_history_window.py`、`frontend/tests/history-window.spec.ts`、`frontend/tests/real-world/long-conversation.spec.ts`；既有聊天/群聊/ContextBuilder 测试 |
+| 复核日期 | 2026-09-10 |
 
 ## 范围
 
@@ -38,7 +38,25 @@ GET /api/conversations/{conversation_id}/messages
 
 `items` 按消息 `id` 升序返回，`id` 即稳定排序键。`active_generation_ids` 按 generation ID 返回全部排队中
 或运行中的生成；`active_generation_id` 保留为其第一项供旧客户端兼容，无任务时两者分别为 `null` 和 `[]`。
-当前未实现游标分页。
+无分页参数时保留完整历史响应，供旧客户端兼容；新客户端使用下述显式最近窗口。
+
+### 最近窗口（B，已实现，已人工验收）
+
+`GET /api/conversations/{conversation_id}/messages?window=recent[&before=<不透明游标>]`。
+固定最多 50 条、普通页 65536 字节预算，不允许客户端提高上限；按 ID 倒序选取连续消息，再正序返回。
+数据库使用 `(conversation_id,id)` 索引和有界候选读取，不先加载全量正文。模型 ContextBuilder 不使用本接口。
+
+除原字段外增加 `has_more`、`next_cursor`（无更早内容时 null）、`oversized` 和 `page_bytes`。
+预算及 page_bytes 计入整个响应 JSON 的未压缩 UTF-8 字节（含元数据、转义和该计数字段）；
+WebSocket 窗口则计入完整 snapshot 帧。单条超过预算时独立完整返回并标记 oversized=true，不跳过、不截断。
+游标绑定版本、会话、进程 epoch 和最早消息 ID；它不授予访问权限，每次仍检查成员身份。
+不透明游标无效/跨会话返回 `422 HISTORY_CURSOR_INVALID`，进程重启后返回 `409 HISTORY_CURSOR_EXPIRED`。
+客户端必须丢弃已失效窗口并重新加载最近页，不应反复使用旧游标。响应禁止 HTTP 缓存。
+
+首次页事件水位用于订阅；向上页的水位只用于校验 epoch，绝不能改变实时游标或活动 generation 状态。
+翻页按 ID/revision 合并，新版不被旧页覆盖。未加载区域的增量只推进事件流，不构造半条消息；
+向上进入该区域时读取完整消息。完整更新同样不应把旧区域孤立插入当前连续窗口。
+翻页期间记录窗口外事件的 revision；页落后于已观察事件时最多重读该页三次，再失败为局部可重试状态。
 
 `event_seq` 与 `items` 之间允许存在极短的读取时差：生成过程中读取历史时，游标可能比返回的消息稍旧，因此按该游标订阅可能重复收到已经体现在消息里的事件。客户端必须按 `event_seq` 幂等去重（见 [WebSocket 协议](../websocket/conversation-stream.md)）；反方向（游标比消息新导致漏事件）不会发生。
 
