@@ -15,6 +15,10 @@
 
 ## 一、已确认的设计原则
 
+连接解耦阶段增加 `ws.unsubscribed`，仅在活动订阅实际释放时记录，沿用 ws_connection_id、conversation_id。
+同步完成继续对应既有 ws.subscribed 事实，不另记重复 ready 事件；subscription_id 仅作 wire 控制标识，
+不成为另一套 Trace。认证/成员拒绝复用现有事件，不记录 Token 或控制帧原文。
+
 工具执行详情使用独立 World 加密业务表和 Owner 接口，不属于机器日志。领域事件中的 private_input/
 private_output 禁止直接序列化进入任何日志、审计摘要或失败报告；详情 GET 只记录既有 HTTP 访问元数据，
 不记录响应正文。工具过程的开始/完成事件继续使用现有目录，具体内容边界见
@@ -281,7 +285,7 @@ process.started              process.stopped
 process.failed
 http.completed               http.failed
 ws.accepted                  ws.authenticated
-ws.subscribed                ws.disconnected
+ws.subscribed                ws.unsubscribed             ws.disconnected
 generation.created           generation.started
 generation.completed         generation.failed
 generation.cancelled

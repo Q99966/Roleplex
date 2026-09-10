@@ -38,7 +38,7 @@ docs/protocol/
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（单聊与 M4a 群聊） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | 工具执行顺序与 Owner 详情 | 已实现，已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
-| WebSocket 连接、订阅与恢复 | 已实现（单聊与 M4a 群聊事件） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
+| WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与订阅切换） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |
 | Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |

@@ -19,6 +19,14 @@ interface ActiveWorkspaceProps {
  * @param isOwner 当前登录者是否为本世界 Owner。
  */
 function chatErrorMessage(code: string, isOwner: boolean): string {
+  const connectionErrors: Record<string, string> = {
+    HISTORY_LOAD_TIMEOUT: '会话历史加载超时，请重试。',
+    WS_CONNECTION_FAILED: '实时连接失败，请检查网络或后端后重试。',
+    WS_PROTOCOL_UNSUPPORTED: '后端尚不支持当前订阅协议，请更新并重启后端。',
+    WS_SYNC_TIMEOUT: '会话同步超时，请重试。',
+    WS_SYNC_FAILED: '会话同步未完成，请重试。',
+  }
+  if (connectionErrors[code]) return connectionErrors[code]
   if (code === 'CONTEXT_BUDGET_EXCEEDED') {
     return isOwner
       ? '当前消息与角色基础配置超过模型上下文上限。请缩短消息，或调整角色提示词、工具配置、上下文窗口或最大输出长度后重试。'
@@ -33,9 +41,8 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
-  const { messages, loading, sending, generating, activeGenerationIds, connection, error } = useChatStore()
-  const openConversation = useChatStore((state) => state.openConversation)
-  const closeConversation = useChatStore((state) => state.closeConversation)
+  const { messages, loading, sending, generating, activeGenerationIds, connection, subscription, error } = useChatStore()
+  const retryConnection = useChatStore((state) => state.retryConnection)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const stopGeneration = useChatStore((state) => state.stopGeneration)
 
@@ -68,17 +75,15 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   }, [activeConv, roles])
 
   useEffect(() => {
-    if (activeConversationId !== null) void openConversation(activeConversationId)
-    return () => closeConversation()
-  }, [activeConversationId, openConversation, closeConversation])
-
-  useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight })
   }, [messages])
 
+  /** 等待加载或同步时保留草稿，只向当前已就绪会话提交。
+   * @param event 输入表单的提交事件。
+   */
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (!hasReplyRole) return
+    if (!hasReplyRole || loading || sending || subscription !== 'ready') return
     const text = draft
     setDraft('')
     const selectedMentions = mentions
@@ -123,13 +128,19 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                   Orchestrator
                 </span>
               )}
-              {connection === 'closed' && (
+              {(connection === 'reconnecting' || connection === 'failed') && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/60 text-[10px] text-amber-400 border border-amber-900/50">
-                  <WifiOff size={10} />连接已断开
+                  <WifiOff size={10} />{connection === 'reconnecting' ? '正在重新连接' : '实时连接失败'}
                 </span>
               )}
             </div>
             <p className="text-xs text-slate-500 mt-0.5 truncate">
+              {(['connecting', 'authenticating'].includes(connection) || subscription === 'syncing') && connection !== 'reconnecting' && connection !== 'failed' && (
+                <span role="status" className="mr-2 inline-flex items-center gap-1 text-[10px] text-slate-400">
+                  <Loader2 size={10} className="animate-spin" />
+                  {connection === 'connecting' ? '正在连接实时更新' : connection === 'authenticating' ? '正在认证连接' : '正在同步会话'}
+                </span>
+              )}
               会话成员: {memberRoles.map((r) => r.name).join(', ') || '未关联角色'}
             </p>
           </div>
@@ -227,6 +238,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             <div className="flex items-start gap-2 rounded-xl bg-red-950/30 border border-red-900/40 px-4 py-3 text-xs text-red-300">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
               <span>{chatErrorMessage(error, Boolean(user?.is_owner))}</span>
+              {(subscription === 'failed' || connection === 'failed') && <button type="button" onClick={retryConnection} className="ml-auto shrink-0 underline">重试连接与加载</button>}
             </div>
           )}
         </div>
@@ -293,7 +305,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
               ) : (
                 <button
                   type="submit"
-                  disabled={sending || !draft.trim() || !hasReplyRole}
+                  disabled={sending || !draft.trim() || !hasReplyRole || loading || subscription !== 'ready'}
                   aria-label="发送消息"
                   className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition ml-1"
                 >

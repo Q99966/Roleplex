@@ -54,6 +54,8 @@ export function App() {
   // 路由跳转与状态双向同步核心控制器
   useEffect(() => {
     if (loading) return
+    // 认证失效或快速导航已更新 URL，但 hashchange 还未提交时，旧路由状态不能反向覆盖新目标。
+    if ((window.location.hash || '#/') !== currentHash) return
 
     const path = currentHash.replace(/^#/, '') || '/'
 

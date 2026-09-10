@@ -72,6 +72,7 @@ export type WorkspaceCapabilities = {
 
 /** 服务端事件信封；未知事件类型必须被客户端安全忽略。 */
 export type StreamEvent = {
+  subscription_id?: string
   stream_epoch: string
   event_seq: number
   conversation_id: number
@@ -102,12 +103,30 @@ type ApiError = Error & { status?: number; code?: string }
  */
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 let token = localStorage.getItem('roleplex_token')
+let authEpoch = 0
+const tokenListeners = new Set<() => void>()
+
+/** 返回本地认证代次，不把 Token 原文作为状态键。 */
+export function getAuthEpoch() { return authEpoch }
+
+/** 监听认证上下文变化。
+ * @param listener 登录、退出或替换 Token 后执行的回调。
+ */
+export function onTokenChange(listener: () => void) {
+  tokenListeners.add(listener)
+  return () => { tokenListeners.delete(listener) }
+}
 
 /** 保存或清除浏览器会话 Token，不将其暴露给业务状态。 */
 export function setToken(next: string | null) {
+  const changed = token !== next
   token = next
   if (next) localStorage.setItem('roleplex_token', next)
   else localStorage.removeItem('roleplex_token')
+  if (changed) {
+    authEpoch += 1
+    for (const listener of tokenListeners) listener()
+  }
 }
 
 /** 返回当前浏览器会话 Token 的内存副本。 */
@@ -211,7 +230,7 @@ export const api = {
   deleteModelConfig: (id: number) => request<void>(`/api/model-configs/${id}`, { method: 'DELETE' }),
 
   // 消息与生成 API
-  messages: (conversationId: number) => request<MessageHistory>(`/api/conversations/${conversationId}/messages`),
+  messages: (conversationId: number, signal?: AbortSignal) => request<MessageHistory>(`/api/conversations/${conversationId}/messages`, { signal }),
   sendMessage: (conversationId: number, body: MessageCreate) => request<SendMessageResult>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   stopGeneration: (conversationId: number) => request<{ stopped: boolean; generation_id: number | null }>(`/api/conversations/${conversationId}/stop`, { method: 'POST' }),
 }

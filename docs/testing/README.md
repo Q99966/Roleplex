@@ -48,6 +48,15 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+连接解耦 A 的专项浏览器命令是 `npm run test:e2e -- connection-session.spec.ts`，包含同一物理连接切换、
+组件重挂载、延迟同步确认、旧订阅错误/快照、真实掉线恢复、历史超时重试、Token 撤销与旧身份配置隔离。
+这些确定性场景复用普通 fake 测试服务和数据库，不新增测试数据目录类型。后端控制契约见
+`tests/test_ws_session.py`。`test:e2e:worlds` 继续覆盖世界切换，`test:e2e:real-world -- commands-provider.spec.ts`
+验证真实消息/工具链中切换会话仍复用连接；后者会联网计费。
+
+A 验收前需重启后端并刷新前端，使双方都支持 subscription_control_v1；旧后端会显示明确的协议能力错误。
+界面出现“正在同步会话”表示尚未收到同步完成确认，不是按固定延时推断连接失败。
+
 ### 2.1 后端 pytest
 
 工作目录：`backend/`

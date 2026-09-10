@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, Conversation, getPasswordResetRequired, Role, setPasswordResetRequired, setToken, User, ModelConfig, WorldSummary, WorkspaceBinding, WorkspaceCapabilities } from '../api/client'
+import { api, Conversation, getAuthEpoch, getPasswordResetRequired, Role, setPasswordResetRequired, setToken, User, ModelConfig, WorldSummary, WorkspaceBinding, WorkspaceCapabilities } from '../api/client'
 import { navigateToConversation } from '../router'
 
 type AppState = {
@@ -73,9 +73,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   setActiveConversation: (activeConversationId) => set({ activeConversationId }),
 
-  // 仅在存在 Token 时恢复会话；匿名页面避免发起无意义的 401 请求。
+  /** 仅恢复当前 Token 的登录身份；旧认证请求不能覆盖新的登录操作。 */
   bootstrap: async () => {
+    const epoch = getAuthEpoch()
     const health = await api.health().catch(() => null)
+    if (epoch !== getAuthEpoch()) return
     if (health) set({ worldName: health.world_name })
     if (!localStorage.getItem('roleplex_token')) {
       set({ loading: false, user: null, passwordResetRequired: false })
@@ -83,6 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     try {
       const user = await api.me()
+      if (epoch !== getAuthEpoch()) return
       // 刷新页面后本地标记决定是否直接进入重置流程；标记丢失时 loadWorkspace
       // 会收到 403 PASSWORD_RESET_REQUIRED 并自行切回重置流程。
       const pending = getPasswordResetRequired()
@@ -92,11 +95,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (user.is_owner) await get().loadWorlds()
       }
     } catch {
-      setToken(null)
-      setPasswordResetRequired(false)
-      set({ user: null, passwordResetRequired: false })
-    } finally {
+      if (epoch !== getAuthEpoch()) return
+      get().logout()
       set({ loading: false })
+    } finally {
+      if (epoch === getAuthEpoch()) set({ loading: false })
     }
   },
 
@@ -151,14 +154,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   /** 加载世界列表；兼容数据库模式仍显示当前世界，但切换控件保持禁用。 */
   loadWorlds: async () => {
+    const epoch = getAuthEpoch()
     try {
       const result = await api.worlds()
+      if (epoch !== getAuthEpoch() || get().switchingWorld) return
       set({
         worldName: result.current,
         worlds: result.items,
         worldSwitchingSupported: result.switching_supported,
       })
     } catch {
+      if (epoch !== getAuthEpoch() || get().switchingWorld) return
       set({ worlds: [], worldSwitchingSupported: false })
     }
   },
@@ -190,6 +196,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   /** 重新读取当前 World 的能力与 Workspace Binding；切换 World 后不得复用旧列表。 */
   loadWorkspaceBindings: async () => {
+    const epoch = getAuthEpoch()
+    const world = get().worldName
     if (!get().user?.is_owner) {
       set({ workspaceBindings: [], workspaceCapabilities: null })
       return
@@ -198,6 +206,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       api.workspaceCapabilities(),
       api.workspaces(),
     ])
+    if (epoch !== getAuthEpoch() || world !== get().worldName || get().switchingWorld) return
     set({ workspaceCapabilities: capabilities, workspaceBindings: bindings })
   },
   createWorkspaceBinding: async (body) => {
@@ -217,8 +226,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await Promise.all([get().loadWorkspaceBindings(), get().loadWorkspace()])
   },
   
-  // 保留已有的当前会话，否则将最新会话设为当前会话。
+  /** 按当前认证与 World 读取工作台，丢弃迟到的旧身份配置。 */
   loadWorkspace: async () => {
+    const epoch = getAuthEpoch()
+    const world = get().worldName
     try {
       const user = get().user
       const [roles, conversations, modelConfigs, workspaceData] = await Promise.all([
@@ -231,6 +242,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? Promise.all([api.workspaceCapabilities(), api.workspaces()]).catch(() => null)
           : Promise.resolve(null),
       ])
+      // 登录或 World 已更换时，旧配置请求也必须失效，不能把 Owner 配置写回 Guest 工作台。
+      if (epoch !== getAuthEpoch() || world !== get().worldName || get().switchingWorld) return
       // 服务端会连墓碑一起返回：查找表保留全部角色用于历史消息展示，
       // 列表只保留存活角色，避免墓碑出现在侧边栏和成员选择器里。
       set({
@@ -249,6 +262,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         navigateToConversation(null)
       }
     } catch (err) {
+      if (epoch !== getAuthEpoch() || world !== get().worldName || get().switchingWorld) return
       // 待改密的 Token 会让业务接口返回 403：这是预期内的状态而不是故障，
       // 直接切到强制重置流程，避免本地标记丢失后停在空白工作台。
       if ((err as { code?: string }).code === 'PASSWORD_RESET_REQUIRED') {

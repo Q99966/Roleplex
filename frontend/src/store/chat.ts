@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import { api, type Message, type MessageHistory, type Part, type StreamEvent } from '../api/client'
-import { ConversationStream } from '../api/stream'
+import { api, type Message, type Part, type StreamEvent } from '../api/client'
+import { SessionStream, type ConnectionStatus, type SubscriptionStatus } from '../api/stream'
 import { useAppStore } from './app'
 
 type ChatState = {
@@ -10,125 +10,178 @@ type ChatState = {
   sending: boolean
   generating: boolean
   activeGenerationIds: number[]
-  connection: 'connecting' | 'open' | 'closed'
+  connection: ConnectionStatus
+  connectionError: string | null
+  subscription: SubscriptionStatus
   error: string | null
+  startSession: (token: string) => void
+  endSession: () => void
   openConversation: (conversationId: number) => Promise<void>
   closeConversation: () => void
+  retryConnection: () => void
   sendMessage: (text: string, mentions?: Array<number | 'all'>) => Promise<void>
   stopGeneration: () => Promise<void>
 }
 
-let stream: ConversationStream | null = null
-// React StrictMode 会执行一次 mount → cleanup → remount。第一次异步历史请求尚未返回时，
-// cleanup 没有 WebSocket 可关闭；复用请求并用序号淘汰过期调用，避免双 GET 和泄漏连接。
+let stream: SessionStream | null = null
 let openSequence = 0
-const historyLoads = new Map<number, Promise<MessageHistory>>()
+let historyController: AbortController | null = null
+let opening: Promise<void> | null = null
 
-/** 复用同一会话正在进行的历史请求，避免 StrictMode 重挂载产生重复 GET。 */
-function loadHistory(conversationId: number): Promise<MessageHistory> {
-  const pending = historyLoads.get(conversationId)
-  if (pending) return pending
-  const request = api.messages(conversationId).finally(() => {
-    if (historyLoads.get(conversationId) === request) historyLoads.delete(conversationId)
-  })
-  historyLoads.set(conversationId, request)
-  return request
-}
-
-/** 读取消息 part 中的纯文本内容，忽略未知 part 类型。 */
+/** 读取消息正文，仅用于旧格式事件兼容。
+ * @param parts 旧消息的内容。
+ */
 function textOf(parts: Part[]): string {
   return parts.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('')
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
-  conversationId: null,
-  messages: [],
-  loading: false,
-  sending: false,
-  generating: false,
-  activeGenerationIds: [],
-  connection: 'closed',
-  error: null,
+/** 认证失效时清除登录上下文，停止旧连接及请求。 */
+function invalidateSession() {
+  useAppStore.getState().logout()
+  useAppStore.setState({ error: 'AUTH_INVALID' })
+  window.location.hash = '#/auth'
+}
 
-  // 先用 REST 快照建立历史和事件游标，再用同一游标订阅实时事件。
-  openConversation: async (conversationId) => {
+export const useChatStore = create<ChatState>((set, get) => ({
+  conversationId: null, messages: [], loading: false, sending: false, generating: false,
+  activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null,
+
+  /** 为当前已验证的登录上下文建立唯一连接。
+   * @param token 当前身份的访问令牌，仅传给首帧认证。
+   */
+  startSession: (token) => {
+    get().endSession()
+    const owned = new SessionStream(token, {
+      onStatusChange: (connection) => { if (stream === owned) set({ connection, ...(connection === 'open' ? { connectionError: null } : {}) }) },
+      onSubscriptionChange: (subscription) => {
+        if (stream === owned) set({ subscription, ...(subscription === 'ready' ? { error: null } : {}) })
+      },
+      onSnapshot: (payload) => {
+        if (stream !== owned || get().conversationId !== payload.conversation_id) return
+        const ids = (payload.active_generation_ids ?? (payload.active_generation_id == null ? [] : [payload.active_generation_id])) as number[]
+        set({ messages: payload.messages as Message[], generating: ids.length > 0, activeGenerationIds: ids })
+      },
+      onEvent: (event) => {
+        if (stream === owned && get().conversationId === event.conversation_id) applyEvent(set, get, event)
+      },
+      onError: (error) => {
+        if (stream !== owned) return
+        set({ error, subscription: 'failed',
+          ...(['WS_CONNECTION_FAILED', 'WS_PROTOCOL_UNSUPPORTED'].includes(error) ? { connectionError: error } : {}),
+          ...(error === 'CONVERSATION_NOT_FOUND' ? { messages: [], generating: false, activeGenerationIds: [] } : {}) })
+      },
+      onAuthFailure: () => {
+        if (stream !== owned) return
+        invalidateSession()
+      },
+    })
+    stream = owned
+    owned.connect()
+  },
+
+  /** 认证/World 上下文结束时释放连接、请求和当前消息。 */
+  endSession: () => {
+    ++openSequence
+    historyController?.abort()
+    historyController = null
+    opening = null
+    const previous = stream
+    stream = null
+    previous?.close()
+    set({ conversationId: null, messages: [], loading: false, sending: false, generating: false,
+      activeGenerationIds: [], connection: 'idle', connectionError: null, subscription: 'idle', error: null })
+  },
+
+  /** 加载当前选择的完整历史，再在登录连接上订阅；不缓存其他会话。
+   * @param conversationId 当前导航选中的会话 ID。
+   */
+  openConversation: (conversationId) => {
+    if (get().conversationId === conversationId && !get().error) {
+      if (opening) return opening
+      if (get().subscription === 'ready' || get().subscription === 'syncing') return Promise.resolve()
+    }
     get().closeConversation()
     const sequence = ++openSequence
-    set({ conversationId, loading: true, error: null, messages: [] })
-    try {
-      const history = await loadHistory(conversationId)
-      // cleanup、切换会话或 StrictMode 的第二次调用都会推进序号；过期调用不得再建连或改状态。
-      if (sequence !== openSequence || get().conversationId !== conversationId) return
-      set({
-        messages: history.items,
-        loading: false,
-        generating: history.active_generation_id !== null,
-        activeGenerationIds: history.active_generation_ids ?? (
-          history.active_generation_id === null ? [] : [history.active_generation_id]
-        ),
-      })
-      const nextStream = new ConversationStream(conversationId, {
-        onStatusChange: (connection) => { if (sequence === openSequence) set({ connection }) },
-        onSnapshot: (payload) => {
-          if (sequence !== openSequence || get().conversationId !== conversationId) return
-          set({
-            messages: (payload.messages ?? []) as Message[],
-            generating: payload.active_generation_id !== null && payload.active_generation_id !== undefined,
-            activeGenerationIds: (payload.active_generation_ids ?? (
-              payload.active_generation_id == null ? [] : [payload.active_generation_id]
-            )) as number[],
-          })
-        },
-        onEvent: (event) => { if (sequence === openSequence && get().conversationId === conversationId) applyEvent(set, get, event) },
-      })
-      stream = nextStream
-      nextStream.connect({ eventSeq: history.event_seq, streamEpoch: history.stream_epoch })
-    } catch (error) {
-      if (sequence !== openSequence) return
-      set({ loading: false, error: error instanceof Error ? error.message : '加载消息失败' })
-    }
+    const owned = stream
+    const controller = new AbortController()
+    historyController = controller
+    set({ conversationId, loading: true, error: get().connectionError, messages: [] })
+    let timedOut = false
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort() }, 30_000)
+    const operation = (async () => {
+      try {
+        const history = await api.messages(conversationId, controller.signal)
+        if (sequence !== openSequence || owned !== stream || get().conversationId !== conversationId) return
+        const ids = history.active_generation_ids ?? (history.active_generation_id === null ? [] : [history.active_generation_id])
+        set({ messages: history.items, loading: false, generating: ids.length > 0, activeGenerationIds: ids })
+        if (get().connection === 'failed') return
+        owned?.subscribe(conversationId, { eventSeq: history.event_seq, streamEpoch: history.stream_epoch })
+      } catch (error) {
+        if (sequence !== openSequence) return
+        if (['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_REVOKED'].includes((error as { code?: string }).code ?? '')) {
+          invalidateSession()
+          return
+        }
+        set({ loading: false, subscription: 'failed',
+          error: timedOut ? 'HISTORY_LOAD_TIMEOUT' : error instanceof Error ? error.message : '加载消息失败' })
+      } finally {
+        window.clearTimeout(timeout)
+        if (sequence === openSequence) { historyController = null; opening = null }
+      }
+    })()
+    opening = operation
+    return operation
   },
 
+  /** 取消当前会话选择；由导航服务调用，组件卸载不释放传输连接。 */
   closeConversation: () => {
-    openSequence += 1
-    stream?.close()
-    stream = null
-    set({ conversationId: null, messages: [], generating: false, activeGenerationIds: [], connection: 'closed' })
+    ++openSequence
+    historyController?.abort()
+    historyController = null
+    opening = null
+    stream?.unsubscribe()
+    set({ conversationId: null, messages: [], loading: false, sending: false, generating: false,
+      activeGenerationIds: [], subscription: get().connectionError ? 'failed' : 'idle', error: get().connectionError })
   },
 
+  /** 用户主动重试失败连接或历史请求，不用于正常切换。 */
+  retryConnection: () => {
+    const id = get().conversationId
+    if (get().connection === 'failed') stream?.restart()
+    if (id !== null) { get().closeConversation(); void get().openConversation(id) }
+  },
+
+  /** 发送结果仅回写仍然有效的会话操作。
+   * @param text 用户提交的正文。
+   * @param mentions 群聊显式指定的角色或 all。
+   */
   sendMessage: async (text, mentions = []) => {
     const conversationId = get().conversationId
-    if (!conversationId || !text.trim() || get().sending) return
+    if (!conversationId || !text.trim() || get().sending || get().subscription !== 'ready') return
+    const sequence = openSequence
     set({ sending: true, error: null })
     try {
-      // client_message_id 让网络重试不会产生重复用户消息。
       const result = await api.sendMessage(conversationId, {
-        parts: [{ type: 'text', text: text.trim() }],
-        mentions,
-        client_message_id: crypto.randomUUID(),
+        parts: [{ type: 'text', text: text.trim() }], mentions, client_message_id: crypto.randomUUID(),
       })
-      set({
-        generating: result.generation_ids.length > 0,
-        activeGenerationIds: result.generation_ids,
-      })
+      if (sequence !== openSequence) return
+      set({ generating: result.generation_ids.length > 0, activeGenerationIds: result.generation_ids })
       upsert(set, get, result.message)
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : '发送失败' })
+      if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '发送失败' })
     } finally {
-      set({ sending: false })
+      if (sequence === openSequence) set({ sending: false })
     }
   },
 
+  /** 停止当前会话生成，旧请求错误不能污染后续选择。 */
   stopGeneration: async () => {
     const conversationId = get().conversationId
     if (!conversationId) return
-    // 先让界面立即退出生成状态，最终状态仍以服务端事件为准。
+    const sequence = openSequence
     set({ generating: false, activeGenerationIds: [] })
-    try {
-      await api.stopGeneration(conversationId)
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : '停止生成失败' })
-    }
+    try { await api.stopGeneration(conversationId) }
+    catch (error) { if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '停止生成失败' }) }
   },
 }))
 

@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊、M4a 群聊消息与成员事件） |
-| 协议版本 | 2（兼容新增成员事件和队列快照字段） |
+| 状态 | 已实现（含 A 连接解耦；A 已完成人工验收） |
+| 协议版本 | 2（兼容新增订阅控制能力协商、操作标识与同步确认） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/realtime/websocket.py`、`backend/app/realtime/events.py`、`backend/app/realtime/store.py` |
-| 关联测试 | `backend/tests/test_ws_recovery.py`、`backend/tests/test_group_chat.py`、`frontend/tests/m4-group-chat.spec.ts` |
-| 复核日期 | 2026-09-08 |
+| 关联测试 | `backend/tests/test_ws_recovery.py`、`backend/tests/test_ws_session.py`、`frontend/tests/connection-session.spec.ts`、群聊与 managed-world E2E |
+| 复核日期 | 2026-09-10 |
 
 ## 范围
 
@@ -91,6 +91,38 @@ ws(s)://<host>/api/ws
 具体兼容与 Owner 详情边界见 [工具执行详情](../messaging/tool-details.md)。
 
 ## 当前事件类型
+
+### 登录会话级连接与订阅控制（A，已实现）
+
+连接由登录会话管理，会话组件不拥有 socket；同一 socket 同时仅有一个会话订阅。首帧认证仍保持不变，
+`auth_ok` 兼容新增 `capabilities: ["subscription_control_v1"]`。不支持该能力的旧后端不能被新客户端误判为
+同步就绪；新客户端报告 WS_PROTOCOL_UNSUPPORTED。旧客户端不提交订阅标识时，服务端仍返回旧帧格式。
+
+新客户端每次订阅提交 ASCII 字母/数字/下划线/连字符组成的 `subscription_id`（1..64 字符），与
+conversation_id、after_event_seq、stream_epoch 一同发送。每次切换或重新同步使用新标识；它是控制操作身份，
+不是业务 Trace。该订阅的 subscribed、snapshot、业务事件和订阅错误都回显 subscription_id 与 conversation_id。
+客户端同时核对物理连接代次、当前操作标识和会话 ID，迟到帧不能改变新订阅。
+
+服务端先登记实时队列，再发送恢复数据，最后发送
+`{type:"sync_complete",subscription_id,conversation_id,stream_epoch,through_event_seq}`。
+through_event_seq 是已经发送的恢复水位；客户端应用完相应事件/快照后才就绪。控制帧不占用业务 event_seq。
+subscribed 仅表示受理，不表示 backlog 已完成。A 继续返回完整历史和快照，不提前实现分页。
+
+`{type:"unsubscribe",subscription_id}` 只释放匹配的订阅，返回
+`{type:"unsubscribed",subscription_id,removed:true|false}`；迟到的旧标识不能取消新订阅。连接保持认证待命。
+没有标识的旧式 unsubscribe 清理当前订阅；新客户端始终提交标识。切换前取消未完成历史请求，不复用已失效的
+pending 请求；成功/失败由实际响应决定，历史请求 30 秒超时只作为故障兜底并允许手动重试。
+
+持久连接在控制请求、恢复发送和实时发送前复核 Token 与会话权限；新客户端每 15 秒 ping，认证失效以
+AUTH_INVALID 错误和 1008 关闭，客户端清除登录上下文且不循环重试。成员授权失败为当前订阅的
+CONVERSATION_NOT_FOUND，不泄漏资源存在性。未知/非法控制参数返回 VALIDATION_ERROR，不回显原始输入。
+物理握手/认证的客户端兜底为 15 秒，同步及 pong 等待为 30 秒；超时不表示同步成功。真实掉线才进行退避重连，
+重连只恢复最新选择。数据序号出现缺口时重新订阅补齐，不能跳过缺失事件直接前移游标。
+
+连接状态（待命/连接/认证/重连/失败）与历史加载、订阅同步状态独立；正常切换不显示“连接已断开”。
+退出登录、World 或 Token 上下文变化、应用会话结束时清除连接与未完成请求。A 不缓存历史或 Owner 私有详情。
+
+### 业务事件
 
 | 类型 | 时机 | payload |
 |---|---|---|

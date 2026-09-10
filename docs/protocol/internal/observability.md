@@ -8,7 +8,7 @@
 | 维护者 | Roleplex |
 | 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
 | 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
-| 复核日期 | 2026-09-02 |
+| 复核日期 | 2026-09-10 |
 
 本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
 统一引用详细规范，不在本文复制第二份权威定义。
@@ -90,6 +90,9 @@ JSONL 只容忍最后一行崩溃截断；active 文件重启追加前会截断�
 标记整个文件 corrupted；已关闭片段不修补。
 
 ## 敏感数据边界
+
+会话连接解耦后，同一 ws_connection_id 可先后关联多个会话；订阅释放记录 ws.unsubscribed，后续订阅
+仍复用连接身份。同步完成对应 ws.subscribed，不新增重复业务事实；Token 仅在首帧使用，不进入控制日志。
 
 密码、哈希、API Key、访问凭据、Authorization/Cookie、完整用户输入/模型输出、带凭据 query 和 MCP
 敏感参数不落盘。工具摘要先走字段白名单，递归脱敏只是兜底。只允许日志设计中显式登记的 Provider 与

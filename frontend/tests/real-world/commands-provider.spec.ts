@@ -7,6 +7,8 @@ import { expectManagedWorldLayout, readRunEvents, waitForRunEvents } from '../e2
 test.use({ screenshot: 'off', trace: 'off', video: 'off' })
 
 test('real provider runs structured commands in the normal managed world', async ({ page }) => {
+  const sockets: string[] = []
+  page.on('websocket', (socket) => { if (new URL(socket.url()).pathname === '/api/ws') sockets.push(socket.url()) })
   const stamp = process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP!
   const apiOrigin = process.env.ROLEPLEX_E2E_API_ORIGIN!
   const workspacePath = path.join(process.env.ROLEPLEX_E2E_WORKSPACE_ROOT!,
@@ -98,6 +100,16 @@ test('real provider runs structured commands in the normal managed world', async
     expect(observed.timeline).toBe(1)
     expect(observed.order.at(-1)).toBe('text')
     expect(observed.order.filter((kind: string) => kind === 'tool_call')).toHaveLength(4)
+
+    stage = '会话切换复用真实世界连接'
+    const connectionCount = sockets.length
+    await page.getByText(`真实 API 验证 ${stamp}`, { exact: true }).first().click()
+    await expect(page.getByRole('heading', { name: `真实 API 验证 ${stamp}`, exact: true })).toBeVisible()
+    await page.getByText(title, { exact: true }).first().click()
+    await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
+    await expect(page.getByText('正在加载会话历史…')).toHaveCount(0)
+    expect(sockets.length).toBe(connectionCount)
+    await expect(page.getByText('连接已断开', { exact: true })).toHaveCount(0)
 
     stage = 'Owner 展开与刷新后的加密详情'
     const expandRead = page.getByRole('button', { name: '执行详情：workspace_run_command · read', exact: true })

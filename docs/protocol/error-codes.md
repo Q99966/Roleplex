@@ -87,10 +87,10 @@ WebSocket error frame 使用：
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
 |---|---|---|---:|---|---|---|
-| `VALIDATION_ERROR` | 已实现 | REST | 422 | rejected | conditional | FastAPI/Pydantic 请求结构校验失败；details 为字段级原因 |
+| `VALIDATION_ERROR` | 已实现 | REST/WS | 422/— | rejected | conditional | 请求结构或订阅控制参数无效；WS 不回显原始参数 |
 | `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
 | `AUTH_REQUIRED` | 已实现 | REST | 401 | rejected | conditional | 缺少 Bearer 凭据 |
-| `AUTH_INVALID` | 已实现 | REST | 401 | rejected | conditional | 登录凭据、旧密码或 Token 签名无效 |
+| `AUTH_INVALID` | 已实现 | REST/WS | 401/— | rejected | conditional | 登录凭据、旧密码或 Token 无效；持久 WS 对过期/撤销统一拒绝并关闭 |
 | `AUTH_REVOKED` | 已实现 | REST | 401 | rejected | conditional | Token 版本与用户当前版本不一致，旧 Token 已失效 |
 | `OWNER_REQUIRED` | 已实现 | REST | 403 | rejected | conditional | 操作仅允许当前世界 Owner |
 | `PASSWORD_RESET_REQUIRED` | 已实现 | REST | 403 | rejected | conditional | 当前 Token 被标记为必须先修改弱密码 |
@@ -100,6 +100,13 @@ WebSocket error frame 使用：
 | `REGISTRATION_CONFLICT` | 已实现 | REST | 409 | failed | yes | 并发注册提交发生完整性冲突，可重新读取状态后有限重试 |
 
 认证领域的 endpoint 适用范围见 [REST 认证、密码策略与强制重置](public/rest/auth.md)。
+
+### 客户端连接与历史加载诊断
+
+以下代码属于客户端状态，不作为后端 HTTP 错误返回：HISTORY_LOAD_TIMEOUT 表示本次历史请求超时；
+WS_PROTOCOL_UNSUPPORTED 表示认证响应未声明所需订阅控制能力；WS_CONNECTION_FAILED 表示物理连接失败；
+WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FAILED 表示恢复水位或事件序列无法收敛。
+均不得当成成功状态；前端提供明确重试入口，协议不兼容必须更新后端。正常切换不产生这些错误。
 
 ## 六、模型配置与角色错误码
 
