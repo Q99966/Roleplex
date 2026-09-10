@@ -80,6 +80,10 @@ async def init_db() -> None:
     await run_migrations()
     await ensure_instance_settings()
     await recover_interrupted_messages()
+    from .services.tool_details import recover_details
+    async with SessionLocal() as session:
+        await recover_details(session)
+        await session.commit()
 
 
 def _alembic_config():
@@ -141,7 +145,7 @@ async def recover_interrupted_messages() -> None:
             parts = [dict(part) for part in message.parts_json]
             changed = False
             for part in parts:
-                if part.get('type') == 'tool_call' and part.get('tool_name') == 'workspace_run_command' and part.get('status') == 'running':
+                if part.get('type') == 'tool_call' and part.get('status') == 'running':
                     part.update(status='failed', error_code='EXECUTION_INTERRUPTED', exit_code=None)
                     part.pop('command_status', None)
                     changed = True

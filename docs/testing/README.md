@@ -178,6 +178,7 @@ W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-prov
 正常世界包装器和真实 Provider，不调用命令故障注入入口。用例工作区位于上述 `default/w1b-commands/`，
 校验值只写入本轮文件，不写入提示词；模型必须通过真实命令读取并回答。该用例关闭截图/trace/video，
 失败先清空页面，再保存安全阶段标签，避免把模型正文带入失败产物。
+该用例同时验证真实工具位于最终回答之前，以及 Owner 展开、刷新后重新读取加密详情。
 
 ### 2.7 W1b 结构化命令 E2E
 
@@ -189,6 +190,9 @@ W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-prov
 profile；它不会被正常产品启动导入，产品 command allowlist 始终只有四种命令。测试采用 3 秒/1 KiB 限制，
 不改变正常启动默认值；单元/集成测试入口是 `pytest tests/test_workspace_commands.py -q`。
 本层关闭 trace/video；截图必须不含认证输入或真实模型输出。Linux 浏览器检查需安装中文字体，例如文泉驿微米黑。
+工具时间线用例额外在本轮 `default/timeline/` 子目录使用固定占位文本，验证文字/工具顺序、主动断线重连、
+Owner 展开与刷新恢复、Guest 登录后的仅摘要展示及详情 API 403。Guest 成员由独立测试脚本在精确的 fake
+测试库播种，不新增产品入群旁路。后端 `tests/test_tool_timeline.py` 覆盖密文绑定、过期清理、权限和 WS 重放。
 
 ## 三、端口矩阵
 

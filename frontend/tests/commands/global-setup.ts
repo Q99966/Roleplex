@@ -25,4 +25,6 @@ export default async function globalSetup() {
   for (const name of ['hello', 'output', 'exit', 'timeout', 'cancel']) {
     await writeFile(path.join(root, `${name}.txt`), '受控测试文本\n第二行', { flag: 'wx' })
   }
+  await mkdir(path.join(root, 'timeline'))
+  await writeFile(path.join(root, 'timeline', 'hello.txt'), 'TIMELINE-PRIVATE-PLACEHOLDER', { flag: 'wx' })
 }

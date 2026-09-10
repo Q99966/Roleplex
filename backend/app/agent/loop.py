@@ -19,6 +19,7 @@ from langgraph.prebuilt import create_react_agent
 
 from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from .tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output, command_result_summary
+from .tool_capture import capture_input, capture_output
 
 logger = logging.getLogger("roleplex.agent.loop")
 
@@ -334,6 +335,7 @@ async def run_agent(
                     call_id=call_id,
                     tool_name=event.get("name", ""),
                     args_summary=summarize_tool_args(event.get("name", ""), event["data"].get("input")),
+                    private_input=capture_input(event.get('name', ''), event['data'].get('input')),
                 )
             elif kind == _EVENT_TOOL_END:
                 call_id = str(event.get("run_id"))
@@ -347,6 +349,7 @@ async def run_agent(
                     duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
                     output_summary=summarize_tool_output(getattr(output, "content", output)),
                     command_summary=command_result_summary(event.get('name', ''), output),
+                    private_output=capture_output(event.get('name', ''), output),
                 )
     except GraphRecursionError:
         # 某些版本会抛异常而不是静默结束，两条路径都走同一个收尾流程。

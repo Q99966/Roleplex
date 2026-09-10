@@ -15,6 +15,11 @@
 
 ## 一、已确认的设计原则
 
+工具执行详情使用独立 World 加密业务表和 Owner 接口，不属于机器日志。领域事件中的 private_input/
+private_output 禁止直接序列化进入任何日志、审计摘要或失败报告；详情 GET 只记录既有 HTTP 访问元数据，
+不记录响应正文。工具过程的开始/完成事件继续使用现有目录，具体内容边界见
+[工具执行详情](../protocol/public/messaging/tool-details.md)。
+
 W1b 命令复用 tool.call_started/completed，不新增重复事实或逐输出日志。安全参数摘要只保留登记的
 command ID；进程结果通过内部领域事件与工具卡传递有界安全元数据，禁止原始 stdout/stderr/cwd。
 详细字段见 [结构化命令契约](../protocol/internal/workspace-commands.md)。

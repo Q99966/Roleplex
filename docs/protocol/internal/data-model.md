@@ -47,6 +47,7 @@
 | `artifacts` / `artifact_versions` | 产物身份与不可变版本内容 | 预留（读取端点已实现，创建/更新未实现） |
 | `attachments` | 上传文件元数据 | 预留 |
 | `tool_calls` | 工具调用审计 | 已实现（每次工具调用结束时写入） |
+| `tool_execution_details` | Owner 私有加密执行详情 | 已实现 |
 
 "预留"表示表已经由迁移建好、但当前里程碑没有任何代码写入，看到空表是正常的。
 
@@ -336,6 +337,25 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 | `filename` | 原始文件名（用户提供，仅用于展示） |
 | `mime` / `size` | 类型与字节数，用于白名单和限额校验 |
 | `path` | 服务端生成的存储路径，全库唯一；**不使用用户提供的文件名做路径** |
+
+## tool_execution_details
+
+Owner 专属的有界执行内容，与共享消息和机器审计分开。具体接口、权限、截断和保留语义见
+[工具执行详情](../public/messaging/tool-details.md)，迁移为 `0007_tool_execution_details`。
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 标准整数主键 |
+| `message_id` | 所属消息 FK，物理删除级联 |
+| `execution_id` | 持久 execution FK，物理删除级联 |
+| `call_id` | 本消息内调用身份；与 message_id 联合唯一 |
+| `tool_name` | 白名单工具名 |
+| `status` | 与工具 part 同一所有者事务维护的运行/终态；启动遗留 running 改为 interrupted，工具卡通过 EXECUTION_INTERRUPTED 标记降级 |
+| `input_encrypted` / `output_encrypted` | 当前 World 独立用途派生密钥的密文；可空，明文绑定 message_id/call_id |
+| `started_at` / `ended_at` | 实际观察的开始/结束 UTC 时间；未知结束保持空 |
+| `expires_at` | 开始后 7 天；带清理索引，过期不可读，启动清空密文 |
+
+消息 `meta_json.timeline_version=1` 标记有序展示；文本 part_id 只是展示定位字段，不改变模型历史正文。
 
 ## tool_calls
 

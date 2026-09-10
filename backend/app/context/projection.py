@@ -19,6 +19,10 @@ def parts_text(parts: list[dict[str, Any]]) -> str:
         parts：消息持久化的 parts_json。
     """
     fragments: list[str] = []
+    if any(part.get('type') == 'text' and part.get('part_id') for part in parts or []):
+        # 展示分段不能改变 C1 的模型正文；沿用原先完整正文 + 工具占位的投影语义。
+        parts = [{'type': 'text', 'text': ''.join(part.get('text', '') for part in parts if part.get('type') == 'text')},
+                 *[part for part in parts if part.get('type') != 'text']]
     for part in parts or []:
         part_type = str(part.get("type", "unknown"))
         if part_type == "text":

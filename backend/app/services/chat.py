@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall
+from ..models import Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall, ToolExecutionDetail
 from ..config.logging import set_log_context
 from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
 from ..context.domain import ContextBuildError, ContextBuildResult
@@ -23,6 +23,7 @@ from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
 from ..realtime import store as event_store
 from ..workspaces.tools import create_workspace_tools, retain_execution_workspace
+from .tool_details import update_detail
 
 logger = logging.getLogger("roleplex.chat")
 
@@ -73,6 +74,7 @@ def message_payload(message: Message) -> dict:
         "revision": message.revision,
         "chain_id": message.chain_id,
         "created_at": message.created_at.isoformat(),
+        'timeline_version': (message.meta_json or {}).get('timeline_version', 0),
     }
 
 
@@ -204,16 +206,26 @@ async def _record_tool_call(
 
 
 def _with_text_part(parts: list[dict], text: str) -> list[dict]:
-    """替换文本 part，同时保留同一消息中的工具过程卡片。
+    """按已封闭段的长度更新尾部文本，旧消息沿用兼容表示。
 
     Args:
         parts：消息当前 parts。
         text：最新累计文本。
 
     Returns:
-        文本 part 位于首位、其他 part 保持原顺序的新数组。
+        已封闭文本和工具位置不变，只更新或追加末尾文本段。
     """
-    return [{"type": "text", "text": text}, *[part for part in parts if part.get("type") != "text"]]
+    if not any(part.get('type') == 'text' and part.get('part_id') for part in parts):
+        return [{"type": "text", "text": text}, *[part for part in parts if part.get("type") != "text"]]
+    updated = [dict(part) for part in parts]
+    has_tail = bool(updated) and updated[-1].get('type') == 'text'
+    sealed = updated[:-1] if has_tail else updated
+    offset = sum(len(part.get('text', '')) for part in sealed if part.get('type') == 'text')
+    if has_tail:
+        updated[-1]['text'] = text[offset:]
+    elif len(text) > offset:
+        updated.append({'type': 'text', 'part_id': f'text-{len(updated)}', 'text': text[offset:]})
+    return updated
 
 
 async def _update_tool_part(
@@ -226,6 +238,11 @@ async def _update_tool_part(
     status: str,
     duration_ms: int | None = None,
     command_summary: dict | None = None,
+    accumulated_text: str | None = None,
+    execution_id: str | None = None,
+    triggered_by_user_id: int | None = None,
+    private_input: dict | None = None,
+    private_output: dict | None = None,
 ) -> None:
     """更新角色消息中的工具过程 part，并按事件先落库后广播。
 
@@ -238,12 +255,19 @@ async def _update_tool_part(
         status：`running/success/failed/rejected/cancelled`。
         duration_ms：结束时的耗时；开始事件为空。
         command_summary：防腐层已按允许字段提取的命令摘要，不包含路径或输出。
+        accumulated_text：消息所有者的完整正文，用于在工具边界封闭文本段。
+        execution_id：持久执行身份，供私有详情关联。
+        triggered_by_user_id：原始触发者，详情仅为 Owner 保存。
+        private_input：白名单工具的有界输入，不进入公开 part。
+        private_output：白名单工具的有界输出，不进入公开 part。
     """
     async with SessionLocal() as session:
         message = await session.get(Message, message_id)
         if message is None:
             return
         parts = [dict(part) for part in (message.parts_json or [])]
+        if accumulated_text is not None:
+            parts = _with_text_part(parts, accumulated_text)
         replacement = {
             "type": "tool_call",
             "call_id": call_id,
@@ -262,6 +286,11 @@ async def _update_tool_part(
             replacement = {**parts[index], **replacement}
             parts[index] = replacement
         replacement.update(command_summary or {})
+        has_detail = await update_detail(session, message_id=message_id, call_id=call_id, tool_name=tool_name,
+            status=status, execution_id=execution_id, user_id=triggered_by_user_id,
+            private_input=private_input, private_output=private_output)
+        if has_detail:
+            replacement['detail_available'] = True
         message.parts_json = parts
         message.revision += 1
         pending = await event_store.append_event(
@@ -289,6 +318,13 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
         events_to_publish = []
         if message is not None:
             message.parts_json = _with_text_part(message.parts_json or [], text)
+            for part in message.parts_json:
+                if part.get('type') == 'tool_call' and part.get('status') == 'running':
+                    part.update(status='interrupted', error_code='EXECUTION_INTERRUPTED')
+            from sqlalchemy import update
+            await session.execute(update(ToolExecutionDetail).where(
+                ToolExecutionDetail.message_id == message.id, ToolExecutionDetail.status == 'running',
+            ).values(status='interrupted'))
             message.status = {"completed": "done", "stopped": "stopped", "failed": "error"}[status]
             message.revision += 1
             events_to_publish.append(
@@ -317,6 +353,7 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
 async def _finish_tool_event(
     event: ToolCallFinished, *, args_summary: str, conversation_id: int, message_id: int,
     generation_id: int, role_id: int, triggered_by_user_id: int | None, execution_id: str,
+    accumulated_text: str | None = None,
 ) -> None:
     """由消息所有者顺序等待审计、过程卡与完成日志落地。
 
@@ -329,19 +366,48 @@ async def _finish_tool_event(
         role_id：执行角色。
         triggered_by_user_id：原始触发者。
         execution_id：持久执行身份。
+        accumulated_text：所有者已收到的正文，工具结束时同步封闭。
     """
     await _record_tool_call(event, args_summary=args_summary, conversation_id=conversation_id,
         message_id=message_id, role_id=role_id, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
     status = {'ok': 'success', 'error': 'failed', 'rejected': 'rejected'}[event.status]
     await _update_tool_part(conversation_id=conversation_id, message_id=message_id, generation_id=generation_id,
         call_id=event.call_id, tool_name=event.tool_name, status=status, duration_ms=event.duration_ms,
-        command_summary=event.command_summary)
+        command_summary=event.command_summary, accumulated_text=accumulated_text,
+        execution_id=execution_id, triggered_by_user_id=triggered_by_user_id, private_output=event.private_output)
     logger.info('tool.call_completed', extra={
         'conversation_id': conversation_id, 'generation_id': generation_id,
         'tool_name': event.tool_name, 'tool_call_id': event.call_id,
         'status': 'timeout' if event.command_summary.get('command_status') == 'timed_out' else status,
         'error_code': event.command_summary.get('error_code'), 'duration_ms': event.duration_ms,
     })
+
+
+async def _persist_text_delta(
+    message_id: int, conversation_id: int, generation_id: int, text: str, delta: str, delta_seq: int,
+) -> None:
+    """节流批次或工具边界统一落库并广播，不为每个 Provider 分片开事务。
+
+    Args:
+        message_id：角色消息。
+        conversation_id：所属会话。
+        generation_id：本轮生成。
+        text：消息所有者完整正文快照。
+        delta：自上一批次之后的增量。
+        delta_seq：持久事件批次序号。
+    """
+    async with SessionLocal() as session:
+        message = await session.get(Message, message_id)
+        if message is None:
+            return
+        parts = _with_text_part(message.parts_json or [], text)
+        message.parts_json = parts
+        message.revision += 1
+        pending = await event_store.append_event(session, conversation_id, 'message_delta',
+            {'message_id': message_id, 'text': delta, 'part_id': parts[-1]['part_id'], 'part_index': len(parts) - 1},
+            revision=message.revision, delta_seq=delta_seq, generation_id=generation_id)
+        await session.commit()
+    await event_store.publish_events(pending)
 
 
 async def run_scheduled_generation(
@@ -422,7 +488,8 @@ async def run_scheduled_generation(
                 conversation_id=conversation_id,
                 sender_type="role",
                 sender_id=role.id,
-                parts_json=[{"type": "text", "text": ""}],
+                parts_json=[{"type": "text", "part_id": "text-0", "text": ""}],
+                meta_json={'timeline_version': 1},
                 status="generating",
                 revision=0,
                 chain_id=generation.run_id,
@@ -496,7 +563,8 @@ async def run_scheduled_generation(
                 extra={**provider_fields, "model": role.model_name},
             )
 
-        last_persist = asyncio.get_running_loop().time()
+        last_persist = asyncio.get_running_loop().time() - _PERSIST_INTERVAL_SECONDS
+        pending_text = ''
         failed_code: str | None = None
         async for event in run_agent(
             model=model,
@@ -505,35 +573,25 @@ async def run_scheduled_generation(
             system_prompt=context.system_prompt,
             history=context.history,
         ):
+            if not isinstance(event, TextDelta) and pending_text:
+                delta_seq += 1
+                await _persist_text_delta(assistant_id, conversation_id, generation_id, accumulated, pending_text, delta_seq)
+                pending_text = ''
+                last_persist = asyncio.get_running_loop().time()
             if isinstance(event, TextDelta):
                 accumulated += event.text
-                delta_seq += 1
+                pending_text += event.text
                 now = asyncio.get_running_loop().time()
-                should_persist = now - last_persist >= _PERSIST_INTERVAL_SECONDS
-                async with SessionLocal() as session:
-                    message = await session.get(Message, assistant_id)
-                    if message is None:
-                        return
-                    if should_persist:
-                        message.parts_json = _with_text_part(message.parts_json or [], accumulated)
-                        last_persist = now
-                    message.revision += 1
-                    delta_event = await event_store.append_event(
-                        session,
-                        conversation_id,
-                        "message_delta",
-                        {"message_id": assistant_id, "text": event.text},
-                        revision=message.revision,
-                        delta_seq=delta_seq,
-                        generation_id=generation_id,
-                    )
-                    await session.commit()
-                await event_store.publish_events(delta_event)
+                if now - last_persist >= _PERSIST_INTERVAL_SECONDS:
+                    delta_seq += 1
+                    await _persist_text_delta(assistant_id, conversation_id, generation_id, accumulated, pending_text, delta_seq)
+                    pending_text = ''
+                    last_persist = now
             elif isinstance(event, ToolCallStarted):
                 tool_args[event.call_id] = event.args_summary
+                command_calls[event.call_id] = (event, perf_counter())
                 command_summary = {}
                 if event.tool_name == 'workspace_run_command':
-                    command_calls[event.call_id] = (event, perf_counter())
                     command_summary = json.loads(event.args_summary)
                 await _update_tool_part(
                     conversation_id=conversation_id,
@@ -543,6 +601,8 @@ async def run_scheduled_generation(
                     tool_name=event.tool_name,
                     status="running",
                     command_summary=command_summary,
+                    accumulated_text=accumulated, execution_id=execution_id,
+                    triggered_by_user_id=triggered_by_user_id, private_input=event.private_input,
                 )
                 logger.info(
                     "tool.call_started",
@@ -556,8 +616,9 @@ async def run_scheduled_generation(
                     event, args_summary=tool_args.pop(event.call_id, ''), conversation_id=conversation_id,
                     message_id=assistant_id, generation_id=generation_id, role_id=role_id,
                     triggered_by_user_id=triggered_by_user_id, execution_id=execution_id,
+                    accumulated_text=accumulated,
                 )
-                if event.tool_name == 'workspace_run_command':
+                if event.call_id in command_calls:
                     # 已观察到结果后，取消不能把审计提交与消息更新切断或补造第二条取消事实。
                     completed_task = asyncio.create_task(completion, context=copy_context())
                     cancelled = False
@@ -705,6 +766,7 @@ async def run_scheduled_generation(
                 conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
                 call_id=call_id, tool_name=started_event.tool_name, status='cancelled', duration_ms=duration_ms,
                 command_summary={'command_status': 'cancelled', 'exit_code': None},
+                accumulated_text=accumulated,
             )
             logger.info('tool.call_completed', extra={
                 'tool_call_id': call_id, 'tool_name': started_event.tool_name,

@@ -422,3 +422,25 @@ class ToolCall(Base):
         Index("ix_tool_calls_conversation_id_id", "conversation_id", "id"),
         Index("ix_tool_calls_execution_id", "execution_id"),
     )
+
+
+class ToolExecutionDetail(Base):
+    """Owner 私有执行详情；原始内容只以当前 World 密文保存。"""
+
+    __tablename__ = 'tool_execution_details'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False)
+    call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_encrypted: Mapped[str | None] = mapped_column(Text)
+    output_encrypted: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('message_id', 'call_id', name='uq_tool_detail_message_call'),
+        Index('ix_tool_detail_expires_at', 'expires_at'),
+    )

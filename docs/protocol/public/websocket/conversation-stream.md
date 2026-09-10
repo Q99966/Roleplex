@@ -87,6 +87,9 @@ ws(s)://<host>/api/ws
 
 事件先写入持久化事件日志再广播，因此恢复来源始终是事件日志而不是内存；在线推送队列满时会丢弃推送，客户端按游标重连即可补齐。
 
+有序消息的 `message_delta` 新增 `part_id` 与 `part_index`，用于定位文本段；不得合并所有文本或删除工具 part。
+具体兼容与 Owner 详情边界见 [工具执行详情](../messaging/tool-details.md)。
+
 ## 当前事件类型
 
 | 类型 | 时机 | payload |

@@ -162,6 +162,7 @@ WebSocket error frame 使用：
 | `COMMAND_NOT_SUPPORTED` | 已实现（W1b） | 工具 | — | rejected | conditional | 当前平台无法提供受控命令 adapter |
 | `COMMAND_TIMEOUT` | 已实现（W1b） | 工具 | — | timeout | conditional | 命令超过部署超时，进程树已回收 |
 | `COMMAND_FAILED` | 已实现（W1b） | 工具 | — | failed | conditional | 受控进程启动失败或非零退出；不暴露宿主异常 |
+| `TOOL_DETAILS_NOT_FOUND` | 已实现 | REST | 404 | rejected | no | 消息、会话、调用不匹配或不属于当前 Owner |
 
 适用接口和路径隐藏规则见 [当前 World 工作区](public/rest/workspaces.md)。
 

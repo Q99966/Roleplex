@@ -33,7 +33,13 @@ export type Role = { id: number; name: string; avatar: string | null; descriptio
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; workspace_binding_id: number | null; role_ids: number[]; revision: number; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
-export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string }
+export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number }
+export type ToolCapture = { text: string; bytes: number; truncated: boolean }
+export type ToolDetails = {
+  availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
+  tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
+  input: ToolCapture | null; output: ToolCapture | null
+}
 export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
 export type MessageHistory = { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null; active_generation_ids: number[] }
 export type SendMessageResult = { message: Message; generation_id: number | null; generation_ids: number[]; duplicate: boolean }
@@ -148,6 +154,9 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const api = {
+  toolDetails: (conversationId: number, messageId: number, callId: string, signal?: AbortSignal) => request<ToolDetails>(
+    `/api/conversations/${conversationId}/messages/${messageId}/tools/${encodeURIComponent(callId)}`, { signal, cache: 'no-store' },
+  ),
   health: () => request<HealthStatus>('/api/health'),
   register: (body: { username: string; password: string; nickname: string }) => request<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   login: (body: { username: string; password: string }) => request<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),

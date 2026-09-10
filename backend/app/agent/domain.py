@@ -28,6 +28,7 @@ class ToolCallStarted:
     call_id: str
     tool_name: str
     args_summary: str
+    private_input: dict[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class ToolCallFinished:
     duration_ms: int
     output_summary: str
     command_summary: dict[str, Any] = field(default_factory=dict)
+    private_output: dict[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)

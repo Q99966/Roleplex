@@ -4,16 +4,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..realtime.events import current_epoch
-from ..models import AgentExecution, Conversation, ConversationMember, Generation, Message, QueueJob, Role, User
+from ..models import AgentExecution, Conversation, ConversationMember, Generation, Message, QueueJob, Role, User, ToolExecutionDetail
 from ..config.logging import current_request_id, set_log_context
 from ..schemas import MessageCreate
 from ..security.tokens import get_current_user
+from ..security import require_owner
+from ..services.tool_details import detail_payload
 from ..realtime import store as event_store
 from ..services import chat
 from ..scheduling import conversation_scheduler
@@ -221,6 +223,35 @@ async def send_message(
         "generation_ids": generation_ids,
         "duplicate": False,
     }
+
+
+@router.get('/{conversation_id}/messages/{message_id}/tools/{call_id}')
+async def get_tool_details(
+    conversation_id: int, message_id: int, call_id: str, response: Response,
+    user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """鉴权后读取 Owner 私有详情，绝不通过共享消息返回内容。
+
+    Args:
+        conversation_id：当前 World 会话。
+        message_id：必须属于该会话的消息。
+        call_id：必须存在于该消息的工具调用。
+        response：设置禁止缓存响应头。
+        user：通过认证与 Owner 权限校验的用户。
+        session：当前请求数据库会话。
+    """
+    response.headers['Cache-Control'] = 'no-store'
+    await require_member(session, conversation_id, user.id)
+    conversation = await session.get(Conversation, conversation_id)
+    message = await session.get(Message, message_id)
+    if conversation.created_by != user.id or message is None or message.conversation_id != conversation_id:
+        raise HTTPException(status_code=404, detail='TOOL_DETAILS_NOT_FOUND')
+    if not any(part.get('type') == 'tool_call' and part.get('call_id') == call_id for part in message.parts_json):
+        raise HTTPException(status_code=404, detail='TOOL_DETAILS_NOT_FOUND')
+    row = await session.scalar(select(ToolExecutionDetail).where(
+        ToolExecutionDetail.message_id == message_id, ToolExecutionDetail.call_id == call_id,
+    ))
+    return detail_payload(row) if row is not None else {'availability': 'not_recorded', 'input': None, 'output': None}
 
 
 @router.post("/{conversation_id}/stop", status_code=202)

@@ -1,32 +1,16 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle, UsersRound, X
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
-import { type Conversation, type Message, type Part, type Role } from '../api/client'
-
-const MarkdownRenderer = lazy(async () => {
-  const module = await import('./MarkdownRenderer')
-  return { default: module.MarkdownRenderer }
-})
+import { type Conversation, type Message, type Role } from '../api/client'
+import { MessageParts } from './MessageParts'
 
 interface ActiveWorkspaceProps {
   isSidebarCollapsed: boolean
   onOpenRoleModal: (role?: Role) => void
   onManageMembers: (conversation: Conversation) => void
-}
-
-/** 读取消息中的文本内容；未知 part 类型会被渲染为占位提示。 */
-function messageText(parts: Part[]): string {
-  return parts.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('')
-}
-
-/** 列出消息中当前尚未支持渲染的 part 类型。 */
-function unknownPartTypes(parts: Part[]): string[] {
-  return Array.from(new Set(
-    parts.filter((part) => !['text', 'tool_call'].includes(part.type)).map((part) => part.type),
-  ))
 }
 
 /**
@@ -45,7 +29,7 @@ function chatErrorMessage(code: string, isOwner: boolean): string {
 
 /** 渲染单聊与 M4a 群聊工作台：历史、@ 补全、串行队列、停止和成员面板。 */
 export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageMembers }: ActiveWorkspaceProps) {
-  const { conversations, activeConversationId, roles, roleDirectory, user } = useAppStore()
+  const { conversations, activeConversationId, roles, roleDirectory, user, worldName } = useAppStore()
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
@@ -212,9 +196,6 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             const role = message.sender_id === null ? undefined : roleDirectory[message.sender_id]
             const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
             const senderDeleted = !isUser && Boolean(role?.deleted_at)
-            const text = messageText(message.parts_json)
-            const toolParts = message.parts_json.filter((part) => part.type === 'tool_call')
-            const unknown = unknownPartTypes(message.parts_json)
             return (
               <div key={message.id} data-testid="chat-message" className={`flex gap-3.5 max-w-2xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border shrink-0 ${
@@ -235,37 +216,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                   <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border break-words ${
                     isUser ? 'bg-indigo-600 text-white border-indigo-500 whitespace-pre-wrap' : 'bg-slate-900/60 text-slate-300 border-slate-800'
                   }`}>
-                    {isUser ? (
-                      text
-                    ) : (
-                      <Suspense fallback={<span className="whitespace-pre-wrap">{text || '…'}</span>}>
-                        <MarkdownRenderer
-                          content={text}
-                          isGenerating={message.status === 'generating'}
-                        />
-                      </Suspense>
-                    )}
-                    {unknown.length > 0 && (
-                      <p className="mt-2 text-[10px] text-slate-500">
-                        [当前版本暂不支持渲染的内容：{unknown.join(', ')}]
-                      </p>
-                    )}
-                    {toolParts.map((part) => (
-                      <div key={part.call_id} className="mt-2 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-400">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-mono text-indigo-300">{part.tool_name ?? 'tool'}</span>
-                          <span className={part.status === 'failed' || part.status === 'rejected' ? 'text-red-400' : 'text-emerald-400'}>
-                            {part.status === 'running' ? '执行中' : part.status === 'success' ? '已完成' : part.status === 'rejected' ? '已拒绝' : part.status === 'cancelled' ? '已取消' : '失败'}
-                          </span>
-                        </div>
-                        {typeof part.duration_ms === 'number' && <p className="mt-1 text-slate-600">耗时 {part.duration_ms}ms</p>}
-                        {part.command && <p>命令 {part.command}</p>}
-                        {typeof part.exit_code === 'number' && <p>退出码 {part.exit_code}</p>}
-                        {part.command_status === 'timed_out' && <p className="text-amber-400">命令超时，进程已回收</p>}
-                        {part.truncated && <p className="text-amber-400">输出已截断</p>}
-                        {part.error_code && <p className="text-red-400">{part.error_code}</p>}
-                      </div>
-                    ))}
+                    <MessageParts key={`${worldName}:${user?.id}:${message.id}`} message={message} isOwner={Boolean(user?.is_owner)} />
                   </div>
                 </div>
               </div>

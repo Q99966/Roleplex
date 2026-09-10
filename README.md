@@ -21,6 +21,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
   `workspace_list/read/write`；路径、symlink、敏感文件、原子写和 hash 并发由服务端执行层约束
 - 单聊可按角色/工作区独立开关使用 `workspace_run_command` 执行固定的 pwd/list/read/count；支持输出上限、
   超时、停止后的进程树回收，以及不包含原始输出的工具过程卡
+- 新回复按实际顺序穿插文字与工具卡；Owner 可展开查看加密保存的有界输入/输出，Guest 只看摘要。
+  详情保留 7 天，旧消息标注“位置未记录”；该优化已完成并通过人工验收
 - 上下文稳定层、工具策略、历史裁剪和 Provider cache usage 可通过不含 Prompt 原文的结构化日志追溯
 - WebSocket 首帧认证、按事件序号断线恢复、epoch 变化回落完整快照
 - HTTP、后台生成与 WebSocket 共用关联 ID；终端可读日志与轮转 JSONL 日志统一输出
@@ -32,7 +34,8 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
 产物原始内容的 iframe 隔离。结论记录在 `docs/protocol/internal/agent-runtime.md`。
 
-W1b 已完成并通过人工验收，下一阶段是任意 Shell 与 Owner 逐次审批（W1c）。所有聊天标题区显示当前 Workspace 与 Owner
+W1b 已完成并通过人工验收；当前工具时间线与展开详情优化的范围和验收见
+[实施计划](docs/plan/tool-timeline-details-v1.md)。之后的主线是任意 Shell 与 Owner 逐次审批（W1c）。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 

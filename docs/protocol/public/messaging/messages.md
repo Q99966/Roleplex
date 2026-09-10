@@ -131,9 +131,12 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 当前公开 part：
 
+新角色消息的有序文本段、工具位置、timeline_version 和 Owner 详情见 [工具执行详情](tool-details.md)。
+该功能不向普通消息 payload 添加原始工具输入输出。
+
 - `text`：`{"type":"text","text":"占位文本"}`。
 - `tool_call`：`{"type":"tool_call","call_id":"占位调用","tool_name":"占位工具","status":"running","duration_ms":12}`。
-  `status` 为 `running | success | failed | rejected | cancelled`；`duration_ms` 只在结束后出现。为避免泄密，公开 part
+  `status` 为 `running | success | failed | rejected | cancelled | interrupted`；`duration_ms` 只在观察到结束后出现。为避免泄密，公开 part
   不含原始参数或工具输出。W1b 兼容新增可选 `command`、`command_status`、`exit_code`、`truncated`、
   `error_code`，含义见 [结构化命令](../../internal/workspace-commands.md)；未知字段忽略。
 

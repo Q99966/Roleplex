@@ -234,12 +234,20 @@ async def test_stop_generation_cancels_command_and_finishes_card(command_root, m
     async with command_conversation(command_root) as (client, headers, conversation_id, _, _):
         await send_command(client, headers, conversation_id, '[W1B_CANCEL]')
         await asyncio.wait_for(started.wait(), 5)
+        history = (await client.get(f'/api/conversations/{conversation_id}/messages', headers=headers)).json()
+        running = next(message for message in history['items'] if message['sender_type'] == 'role')
+        call = next(part for part in running['parts_json'] if part['type'] == 'tool_call')
+        route = f"/api/conversations/{conversation_id}/messages/{running['id']}/tools/{call['call_id']}"
+        detail = (await client.get(route, headers=headers)).json()
+        assert detail['status'] == 'running' and detail['input'] is not None and detail['output'] is None
         stopped = await client.post(f'/api/conversations/{conversation_id}/stop', headers=headers)
         assert stopped.status_code == 202
         message = await wait_command_messages(client, headers, conversation_id)
         cards = [part for part in message['parts_json'] if part['type'] == 'tool_call']
         assert message['status'] == 'stopped'
         assert cards[0]['status'] == cards[0]['command_status'] == 'cancelled'
+        detail = (await client.get(route, headers=headers)).json()
+        assert detail['status'] == 'cancelled' and detail['output'] is None
         async with SessionLocal() as session:
             calls = (await session.scalars(select(ToolCall).where(ToolCall.conversation_id == conversation_id))).all()
             assert len(calls) == 1 and calls[0].status == 'cancelled'

@@ -332,12 +332,13 @@ W1b 的最小流程固定为：在 W1a 的 `hello.txt` 上运行 pwd/list/read/c
 profile → 输出截断 → timeout → 停止 generation 并回收进程树。W1b 独立人工验收和提交后，才进入 W1c。
 
 命令结果统一为：`status=exited/timed_out/cancelled`、可空 `exit_code`、有界 `stdout/stderr`、各流最终 seq、
-bytes、truncated 和 duration。原始输出只回模型，不出现在公开工具过程卡；前端只展示 command ID、运行状态、
+bytes、truncated 和 duration。原始输出不出现在共享工具过程卡；W1b 后的[工具详情优化](tool-timeline-details-v1.md)
+新增独立 Owner 受保护详情接口。共享卡片只展示 command ID、运行状态、
 退出码、耗时和截断提示。
 
 ### 5.5 W1c：任意 Shell 与 Owner 审批
 
-W1c 才新增 `tool_approval_requests`，迁移命名为 `0007_shell_approvals`，并开放
+W1c 才新增 `tool_approval_requests`，迁移预留名顺延为 `0008_shell_approvals`，并开放
 `workspace_run_shell(script)`。它只接受非空脚本文本，不接受 cwd、shell path、环境、身份或审批状态。
 
 ```text
@@ -423,7 +424,7 @@ Provider 共 5 次调用，汇总 input/output/total/cache hit=`8811/954/9765/71
 ### 6.1 数据模型
 
 新增与 Workspace Binding 一对一的 `repository_bindings`，并允许对应 `workspace_bindings.workspace_kind`
-从 `managed_directory` 变为 `git_repository`。建议迁移为 `0008_repository_bindings`：
+从 `managed_directory` 变为 `git_repository`。建议迁移为 `0009_repository_bindings`：
 
 | 字段 | 约束与含义 |
 |---|---|
@@ -507,7 +508,7 @@ W2b 复用 W1a 已验收的 `workspace_list/read` 路径与输出契约，但绑
 
 ### 8.1 Execution Workspace 扩展
 
-W3 通过迁移 `0009_git_execution_workspaces` 扩展 W1 已有的 `execution_workspaces`；不创建第二套 workspace
+W3 通过迁移 `0010_git_execution_workspaces` 扩展 W1 已有的 `execution_workspaces`；不创建第二套 workspace
 身份：
 
 | 字段 | 约束与含义 |

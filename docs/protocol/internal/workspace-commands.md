@@ -55,8 +55,9 @@ generation 取消继续使用 stopped 终态；取消时模型不再接收结果
 复用 ToolCallStarted/ToolCallFinished，不向业务层暴露框架或操作系统事件。
 开始摘要只含允许的 command ID；结束新增可选 command_summary，字段为 command、command_status、
 exit_code、truncated、error_code。工具过程卡使用相同允许字段；duration_ms 沿用既有字段。
-未知字段可忽略，旧客户端继续展示既有工具卡。原始 cwd、路径、stdout/stderr 永不进入卡片、正式日志、
-审计参数摘要、测试报告；仅本轮模型工具结果可见。工具日志复用已有开始/完成事实，不逐输出块写日志。
+未知字段可忽略，旧客户端继续展示既有工具卡。原始 cwd、路径、stdout/stderr 不进入共享卡片、正式日志、
+审计参数摘要、测试报告；本轮模型可见，Owner 可通过独立受保护的[执行详情接口](../public/messaging/tool-details.md)
+查看有界内容。工具日志复用已有开始/完成事实，不逐输出块写日志。
 
 错误语义以 [错误码注册表](../error-codes.md) 为权威；权限与绑定接口以
 [当前 World 工作区](../public/rest/workspaces.md) 为权威。安全检查不能依赖模型或命令名称自述。

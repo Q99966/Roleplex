@@ -68,8 +68,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       })
       const nextStream = new ConversationStream(conversationId, {
-        onStatusChange: (connection) => set({ connection }),
+        onStatusChange: (connection) => { if (sequence === openSequence) set({ connection }) },
         onSnapshot: (payload) => {
+          if (sequence !== openSequence || get().conversationId !== conversationId) return
           set({
             messages: (payload.messages ?? []) as Message[],
             generating: payload.active_generation_id !== null && payload.active_generation_id !== undefined,
@@ -78,7 +79,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             )) as number[],
           })
         },
-        onEvent: (event) => applyEvent(set, get, event),
+        onEvent: (event) => { if (sequence === openSequence && get().conversationId === conversationId) applyEvent(set, get, event) },
       })
       stream = nextStream
       nextStream.connect({ eventSeq: history.event_seq, streamEpoch: history.stream_epoch })
@@ -133,6 +134,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 /** 插入或按 id 替换一条消息，保持按消息序号排序。 */
 function upsert(set: any, get: () => ChatState, message: Message) {
+  const current = get().messages.find((item) => item.id === message.id)
+  if (current && current.revision >= message.revision) return
   const messages = get().messages.filter((item) => item.id !== message.id)
   messages.push(message)
   messages.sort((a, b) => a.id - b.id)
@@ -142,6 +145,9 @@ function upsert(set: any, get: () => ChatState, message: Message) {
 /** 按事件类型幂等更新本地消息状态；未知事件安全忽略。 */
 function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
   if (event.type === 'message_created') {
+    const incoming = event.payload.message as Message
+    const current = get().messages.find((message) => message.id === incoming.id)
+    if (current && current.revision >= incoming.revision) return
     upsert(set, get, event.payload.message as Message)
     if ((event.payload.message as Message)?.sender_type === 'role') {
       const generationIds = event.generation_id === null
@@ -160,7 +166,7 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
       return {
         ...message,
         revision: event.revision,
-        parts_json: [{ type: 'text', text: textOf(message.parts_json) + (event.payload.text ?? '') }],
+        parts_json: appendTextDelta(message.parts_json, event.payload),
       }
     })
     set({ messages })
@@ -168,6 +174,8 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
   }
 
   if (event.type === 'message_done') {
+    const current = get().messages.find((message) => message.id === (event.payload.message as Message).id)
+    if (current && current.revision > (event.payload.message as Message).revision) return
     upsert(set, get, event.payload.message as Message)
     const generationIds = event.generation_id === null
       ? get().activeGenerationIds
@@ -182,7 +190,7 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
     const current = get().messages.find((message) => message.id === incoming.id)
     // 工具事件从数据库带回的文本可能落后于内存流；保留客户端已经应用的文本增量，
     // 只用服务端完整消息校正非文本 part，最终 message_done 仍会统一收口。
-    const merged = current ? {
+    const merged = current && !incoming.timeline_version ? {
       ...incoming,
       parts_json: [
         { type: 'text', text: textOf(current.parts_json) },
@@ -197,4 +205,23 @@ function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
     // 其他浏览器或窗口调整成员时刷新共享会话；服务端 revision 决定最终状态。
     void useAppStore.getState().loadWorkspace()
   }
+}
+
+/** 按稳定文本段身份追加增量，保留工具及前置文本。
+ * @param parts 当前有序消息内容。
+ * @param payload 服务端已排序的增量负载；旧服务端可能没有分段身份。
+ */
+export function appendTextDelta(parts: Part[], payload: Record<string, any>): Part[] {
+  const updated = parts.map((part) => ({ ...part }))
+  if (typeof payload.part_id === 'string' && Number.isInteger(payload.part_index)) {
+    const index = updated.findIndex((part) => part.part_id === payload.part_id && part.type === 'text')
+    if (index >= 0) updated[index].text = (updated[index].text ?? '') + (payload.text ?? '')
+    else if (payload.part_index === updated.length) updated.push({ type: 'text', part_id: payload.part_id, text: payload.text ?? '' })
+    return updated
+  }
+  // 兼容旧事件也必须保留工具卡，不能让一次增量清空其他 part。
+  const index = updated.findIndex((part) => part.type === 'text')
+  if (index >= 0) updated[index].text = (updated[index].text ?? '') + (payload.text ?? '')
+  else updated.push({ type: 'text', text: payload.text ?? '' })
+  return updated
 }

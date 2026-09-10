@@ -80,6 +80,8 @@ class ScriptedChatModel(BaseChatModel):
         if turn.tool_calls:
             call = turn.tool_calls[0]
             return [
+                *[ChatGenerationChunk(message=AIMessageChunk(content=turn.text[i:i + self.chunk_size]))
+                  for i in range(0, len(turn.text), self.chunk_size)],
                 ChatGenerationChunk(
                     message=AIMessageChunk(
                         content="",
@@ -106,6 +108,16 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[TOOL_TIMELINE_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[
+            ScriptedTurn(text='先读取😀。', tool_calls=[{
+                'name': 'workspace_run_command', 'args': {'command': 'read', 'args': {'path': 'hello.txt'}}, 'id': 'timeline_read',
+            }]),
+            ScriptedTurn(text='读取完成，再统计。', tool_calls=[{
+                'name': 'workspace_run_command', 'args': {'command': 'count', 'args': {'path': 'hello.txt'}}, 'id': 'timeline_count',
+            }]),
+            ScriptedTurn(text='处理完成。'),
+        ], delay=delay)
     if "[W1A_FAKE_E2E]" in prompt:
         first = "W1a 第一版"
         first_hash = hashlib.sha256(first.encode("utf-8")).hexdigest()

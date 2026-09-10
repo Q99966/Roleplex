@@ -30,6 +30,11 @@
 `MessageDone` 与 `ProviderError` 互斥，且必然是流的最后一个事件。取消不是事件：
 `asyncio.CancelledError` 原样向上传播，由调度层按 `stopped` 收尾。
 
+ToolCallStarted/Finished 新增 repr 隐藏的 private_input/private_output，仅显式采集当前工作区工具的有界内容，
+交给消息所有者加密保存。不得直接序列化领域事件到日志/共享 WS；公开状态与私有记录在同一消息事务维护。
+采集、权限与保留见[工具执行详情](../public/messaging/tool-details.md)。文本增量由聊天所有者按节流批次或
+工具边界落库，delta_seq 计数持久事件批次，不代表 Provider Token 数。
+
 `ToolCallFinished.status` 取值：`ok`（正常返回）、`rejected`（危险级别在执行层被拒绝）、
 `error`（工具自身抛错）。被拒绝属于正常结束路径，本轮生成仍应完成。
 W1b 命令取消时调度层在等待进程回收后，以 `cancelled` 补齐未收到结束事件的审计与工具卡；不恢复模型调用。

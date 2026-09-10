@@ -84,6 +84,9 @@ test('real provider runs structured commands in the normal managed world', async
       const cards = reply.parts_json.filter((part: { type: string }) => part.type === 'tool_call')
       return {
         done: reply.status === 'done', verified,
+        timeline: reply.timeline_version,
+        order: reply.parts_json.filter((part: { type: string; text?: string }) => part.type !== 'text' || Boolean(part.text))
+          .map((part: { type: string }) => part.type),
         commands: cards.map((part: { command: string }) => part.command),
         succeeded: cards.every((part: { status: string; exit_code: number }) => part.status === 'success' && part.exit_code === 0),
       }
@@ -92,6 +95,17 @@ test('real provider runs structured commands in the normal managed world', async
     expect(observed.verified).toBe(true)
     expect(observed.commands).toEqual(['pwd', 'list', 'read', 'count'])
     expect(observed.succeeded).toBe(true)
+    expect(observed.timeline).toBe(1)
+    expect(observed.order.at(-1)).toBe('text')
+    expect(observed.order.filter((kind: string) => kind === 'tool_call')).toHaveLength(4)
+
+    stage = 'Owner 展开与刷新后的加密详情'
+    const expandRead = page.getByRole('button', { name: '执行详情：workspace_run_command · read', exact: true })
+    await expandRead.click()
+    await expect.poll(async () => (await page.getByRole('region', { name: '工具输出' }).textContent())?.includes(proof) ?? false).toBe(true)
+    await page.reload()
+    await page.getByRole('button', { name: '执行详情：workspace_run_command · read', exact: true }).click()
+    await expect.poll(async () => (await page.getByRole('region', { name: '工具输出' }).textContent())?.includes(proof) ?? false).toBe(true)
 
     stage = '真实 usage、执行身份与日志脱敏'
     const tools = await waitForRunEvents((event) => event.event === 'tool.call_completed'
