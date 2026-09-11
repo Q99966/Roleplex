@@ -48,6 +48,15 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+M 多行输入专项：`npm run test:e2e -- multiline-composer.spec.ts`；后端正文与模型投影验证：
+`pytest tests/test_context_builder.py tests/test_chat_flow.py -q`。浏览器覆盖剪贴板多行粘贴、Enter/Shift+Enter、
+组合事件与 229 确认键、光标中间 @ 补全、HTTP 失败/迟到响应、加载草稿、Owner/Guest `/ps`、自动增高及阅读锚点。
+复用普通 fake 前后端与隔离数据库；Guest 成员通过 `tests/seed_tool_viewer.py` 在严格匹配的本轮测试库播种，
+不增加产品成员管理旁路。桌面/窄屏截图仅使用无实际价值的占位代码。
+触屏软键盘验证是浏览器模拟，真实中文输入法和手机键盘仍需人工检查；M 不要求真实 Provider 计费验证。
+人工验收前刷新前端并重启后端，使模型侧使用保留正文空白的新投影。切换会话或刷新不保留未提交草稿，
+失败草稿保护仅作用于仍挂载的当前输入框，不是持久草稿功能。
+
 连接解耦 A 的专项浏览器命令是 `npm run test:e2e -- connection-session.spec.ts`，包含同一物理连接切换、
 组件重挂载、延迟同步确认、旧订阅错误/快照、真实掉线恢复、历史超时重试、Token 撤销与旧身份配置隔离。
 这些确定性场景复用普通 fake 测试服务和数据库，不新增测试数据目录类型。后端控制契约见

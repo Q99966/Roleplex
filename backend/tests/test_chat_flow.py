@@ -179,7 +179,7 @@ async def test_single_chat_streams_and_persists():
     assert provider_call.base_url_source == "fake"
 
     loaded = next(record for record in records if record.getMessage() == "context.loaded")
-    assert loaded.context_schema_version == 1
+    assert loaded.context_schema_version == 2
     assert len(loaded.runtime_prefix_hash) == 64
     assert len(loaded.role_prefix_hash) == 64
     assert len(loaded.conversation_prefix_hash) == 64
@@ -314,6 +314,54 @@ async def test_second_turn_receives_first_terminal_turn_as_history(monkeypatch: 
     ):
         assert getattr(loaded[0], field) == getattr(loaded[1], field)
     assert [record.context_message_count for record in loaded] == [0, 2]
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_multiline_text_survives_api_and_both_context_turns(monkeypatch: pytest.MonkeyPatch):
+    """消息 API、当前 Prompt 与下一轮历史均保留非空正文，纯空白提交拒绝。
+
+    Args:
+        monkeypatch：以确定性 Agent 捕获内存输入，不将正文写入日志。
+    """
+    from app.agent.domain import MessageDone
+    from app.main import app
+    from app.db import engine
+    from app.services import chat
+
+    observed: list[tuple[str, list]] = []
+
+    async def inspect_agent(**kwargs):
+        """仅在内存收集模型输入。
+
+        Args:
+            **kwargs：实际 ContextBuilder 构造的执行输入。
+        """
+        observed.append((kwargs['prompt'], list(kwargs['history'])))
+        yield MessageDone(text='多行测试完成')
+
+    monkeypatch.setattr(chat, 'run_agent', inspect_agent)
+    text = "\n    def 示例():\n        return '中文🙂'\n\n  "
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+            ctx = await _bootstrap(client, '多行原文')
+            route = f"/api/conversations/{ctx['conversation_id']}/messages"
+            blank = await client.post(route, headers=ctx['headers'], json={'parts': [{'type': 'text', 'text': ' \n\t '}]})
+            assert blank.status_code == 422
+            assert blank.json()['error']['code'] == 'TEXT_PART_REQUIRED'
+            sent = await client.post(route, headers=ctx['headers'], json={'parts': [{'type': 'text', 'text': text}]})
+            assert sent.status_code == 202
+            assert sent.json()['message']['parts_json'][0]['text'] == text
+            rows = await _wait_for_role_status(client, ctx['headers'], ctx['conversation_id'], 'done')
+            assert rows[0]['parts_json'][0]['text'] == text
+            assert observed[0][0] == text
+            await client.post(route, headers=ctx['headers'], json={'parts': [{'type': 'text', 'text': '下一轮'}]})
+            for _ in range(100):
+                if len(observed) == 2:
+                    break
+                await asyncio.sleep(.05)
+            assert len(observed) == 2
+            assert any(isinstance(message, HumanMessage) and str(message.content).endswith(text) for message in observed[1][1])
     await engine.dispose()
 
 

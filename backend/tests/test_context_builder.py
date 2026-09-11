@@ -63,6 +63,15 @@ def test_unknown_part_type_cannot_inject_raw_control_text():
     assert result.startswith("[不支持的消息内容:")
 
 
+def test_multiline_projection_preserves_whitespace_and_ignores_blank_history():
+    """多行代码原文保留缩进和外围空行；纯空白历史仍不进入模型。"""
+    text = "\n    def 示例():\n        return '中文🙂'\n\n  "
+    assert parts_text([{"type": "text", "text": text}]) == text
+    projected = project_message(_message(status="done", sender_type="user", text=text), target_role_id=7)
+    assert projected.content == f"[user:7] {text}"
+    assert project_message(_message(status="done", text=" \n\t "), target_role_id=7) is None
+
+
 def test_utf8_fallback_is_conservative_and_separate_from_provider_usage():
     """未知 tokenizer 使用 UTF-8 上界并明确标记为非 Provider 精确值。"""
     raw = "中文abc🙂"

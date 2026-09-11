@@ -30,7 +30,7 @@ type ChatState = {
   openConversation: (conversationId: number) => Promise<void>
   closeConversation: () => void
   retryConnection: () => void
-  sendMessage: (text: string, mentions?: Array<number | 'all'>) => Promise<void>
+  sendMessage: (text: string, mentions?: Array<number | 'all'>) => Promise<boolean>
   stopGeneration: () => Promise<void>
 }
 
@@ -266,21 +266,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /** 发送结果仅回写仍然有效的会话操作。
    * @param text 用户提交的正文。
    * @param mentions 群聊显式指定的角色或 all。
+   * @returns 当前会话已获服务端接收确认才返回 true，供输入框安全清理本次草稿。
    */
   sendMessage: async (text, mentions = []) => {
     const conversationId = get().conversationId
-    if (!conversationId || !text.trim() || get().sending || get().subscription !== 'ready') return
+    if (!conversationId || !text.trim() || get().loading || get().sending || get().subscription !== 'ready') return false
     const sequence = openSequence
     set({ sending: true, error: null })
     try {
       const result = await api.sendMessage(conversationId, {
-        parts: [{ type: 'text', text: text.trim() }], mentions, client_message_id: crypto.randomUUID(),
+        parts: [{ type: 'text', text }], mentions, client_message_id: crypto.randomUUID(),
       })
-      if (sequence !== openSequence) return
+      if (sequence !== openSequence) return false
       set({ generating: result.generation_ids.length > 0, activeGenerationIds: result.generation_ids })
       upsert(set, get, result.message)
+      return true
     } catch (error) {
       if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '发送失败' })
+      return false
     } finally {
       if (sequence === openSequence) set({ sending: false })
     }

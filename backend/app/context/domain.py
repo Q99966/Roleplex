@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from langchain_core.messages import BaseMessage
 
 
-CONTEXT_SCHEMA_VERSION = 1
+# v2 保留非空正文的外围空白；投影变化必须使稳定前缀版本同步变化。
+CONTEXT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)

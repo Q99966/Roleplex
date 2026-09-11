@@ -1,4 +1,4 @@
-"""只为命令 E2E 临时数据库播种 Guest 成员，不给产品新增入群旁路。"""
+"""只为普通/命令 fake E2E 临时数据库播种 Guest 成员，不给产品新增入群旁路。"""
 from __future__ import annotations
 
 import asyncio
@@ -12,21 +12,24 @@ sys.path.insert(0, str(BACKEND))
 
 
 async def seed(database: Path, conversation_id: int) -> None:
-    """在精确的 fake E2E World 内幂等播种 Guest 与成员关系。
+    """在精确的 fake E2E 数据库内幂等播种 Guest 与成员关系。
 
     Args:
-        database：项目 data 下命令测试本轮 default 数据库。
+        database：项目 data 下普通 fake 测试库或命令测试本轮 default 数据库。
         conversation_id：本轮由浏览器建立的测试会话。
     """
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.models import Conversation, ConversationMember, User
     from app.security import hash_password
-    if database != database.resolve() or database.parent.name != 'default' or database.name != 'roleplex.db':
+    if database != database.resolve():
         raise ValueError('Invalid test database')
-    if database.parent.parent.parent != BACKEND.parent / 'data':
-        raise ValueError('Invalid test database scope')
-    match = re.fullmatch(r'roleplex-command-e2e-(\d{14})', database.parent.parent.name)
+    data_root = BACKEND.parent / 'data'
+    match = None
+    if database.parent == data_root:
+        match = re.fullmatch(r'roleplex-e2e-(\d{14})\.db', database.name)
+    elif database.parent.name == 'default' and database.name == 'roleplex.db' and database.parent.parent.parent == data_root:
+        match = re.fullmatch(r'roleplex-command-e2e-(\d{14})', database.parent.parent.name)
     if not match or not database.is_file():
         raise ValueError('Missing isolated test database')
     engine = create_async_engine(f'sqlite+aiosqlite:///{database}', hide_parameters=True)

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Pin, Archive, Trash2, Bot, Send, Square, Loader2, WifiOff, AlertCircle, UsersRound, X
+  Pin, Archive, Trash2, Bot, Loader2, WifiOff, AlertCircle, UsersRound
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
@@ -8,6 +8,7 @@ import { type Conversation, type Message, type Role } from '../api/client'
 import { MessageParts } from './MessageParts'
 import { ShellApprovals } from './ShellApprovals'
 import { ProcessPanel } from './ProcessPanel'
+import { ChatComposer } from './ChatComposer'
 import { useReadingPosition } from './useReadingPosition'
 
 interface ActiveWorkspaceProps {
@@ -44,16 +45,11 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const updateConversationPreferences = useAppStore((state) => state.updateConversationPreferences)
   const deleteConversation = useAppStore((state) => state.deleteConversation)
 
-  const { messages, loading, sending, generating, activeGenerationIds, connection, subscription, error,
+  const { messages, loading, connection, subscription, error,
     nextCursor, loadingOlder, olderError, oversized, loadOlder } = useChatStore()
   const retryConnection = useChatStore((state) => state.retryConnection)
-  const sendMessage = useChatStore((state) => state.sendMessage)
-  const stopGeneration = useChatStore((state) => state.stopGeneration)
-
-  const [draft, setDraft] = useState('')
   const [processPanel, setProcessPanel] = useState(false)
   const [processNotice, setProcessNotice] = useState('')
-  const [mentions, setMentions] = useState<Array<number | 'all'>>([])
   const { feedRef, contentRef, onScroll, goBottom, newContent } = useReadingPosition(activeConversationId)
 
   const activeConv = useMemo(
@@ -68,61 +64,18 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
       .map((roleId) => roles.find((role) => role.id === roleId))
       .filter((role): role is Role => Boolean(role))
   }, [activeConv, roles])
-  const hasReplyRole = memberRoles.some((role) => role.active && !role.deleted_at)
-  const mentionMatch = activeConv?.type === 'group' ? draft.match(/@([^\s@]*)$/) : null
-  const mentionQuery = mentionMatch?.[1]?.toLocaleLowerCase() ?? ''
-  const mentionSuggestions = activeConv?.type === 'group' && mentionMatch
-    ? memberRoles.filter((role) => role.name.toLocaleLowerCase().includes(mentionQuery))
-    : []
 
   const orchestrator = useMemo(() => {
     if (!activeConv?.orchestrator_enabled || !activeConv.orchestrator_role_id) return null
     return roles.find((r) => r.id === activeConv.orchestrator_role_id) || null
   }, [activeConv, roles])
 
-  /** 等待加载或同步时保留草稿，只向当前已就绪会话提交。
-   * @param event 输入表单的提交事件。
-   */
-  function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (draft.trim() === '/ps') {
-      setDraft('')
-      if (user?.is_owner) setProcessPanel(true)
-      else setProcessNotice('仅 Owner 可查看和管理会话进程。')
-      return
-    }
-    if (!hasReplyRole || loading || sending || subscription !== 'ready') return
-    const text = draft
-    setDraft('')
-    const selectedMentions = mentions
-    setMentions([])
-    void sendMessage(text, selectedMentions)
-  }
-
-  /** @param target 选择的角色 ID，`all` 表示按稳定成员顺序全部回复。 */
-  function selectMention(target: number | 'all') {
-    if (!mentionMatch || mentionMatch.index === undefined) return
-    const label = target === 'all' ? '全部' : memberRoles.find((role) => role.id === target)?.name
-    if (!label) return
-    setDraft(`${draft.slice(0, mentionMatch.index)}@${label} `)
-    setMentions((current) => {
-      if (target === 'all') return ['all']
-      if (current.includes('all') || current.includes(target)) return current
-      return [...current, target]
-    })
-  }
-
-  /** @param target 从本轮待发送 mentions 中移除的稳定目标。 */
-  function removeMention(target: number | 'all') {
-    setMentions((current) => current.filter((item) => item !== target))
-  }
-
   if (!activeConv) {
     return <section className="flex flex-1 items-center justify-center text-slate-500 bg-slate-950">未选中任何会话</section>
   }
 
   return (
-    <section className="flex flex-1 h-full overflow-hidden bg-slate-950 text-slate-300">
+    <section className="flex flex-1 min-w-0 h-full overflow-hidden bg-slate-950 text-slate-300">
       <div className="flex-1 flex flex-col h-full min-w-0">
         {processPanel && user?.is_owner && <ProcessPanel key={`process:${worldName}:${user.id}:${activeConv.id}`} conversationId={activeConv.id} onClose={() => setProcessPanel(false)} />}
         <div className="h-16 shrink-0 border-b border-slate-800 bg-slate-900 px-6 flex items-center justify-between">
@@ -267,85 +220,16 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
         {newContent && <button type="button" onClick={goBottom} className="self-center my-2 rounded-full bg-indigo-600 px-4 py-2 text-xs text-white">有新内容，回到底部</button>}
         <ShellApprovals key={`${worldName}:${user?.id}:${activeConv.id}`} conversationId={activeConv.id} />
         {processNotice && <p role="alert" className="px-4 text-xs text-amber-300">{processNotice}</p>}
-        <form onSubmit={submit} className="p-4 border-t border-slate-800 bg-slate-900">
-          {!hasReplyRole && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-              <AlertCircle size={13} className="shrink-0" />
-              <span>角色已删除，当前会话仅可查看历史消息。</span>
-            </div>
-          )}
-          {activeConv.type === 'group' && (
-            <div className="mb-2 flex min-h-6 flex-wrap items-center gap-1.5">
-              {mentions.map((target) => {
-                const label = target === 'all' ? '全部' : memberRoles.find((role) => role.id === target)?.name
-                if (!label) return null
-                return (
-                  <span key={target} className="flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-950/40 px-2 py-1 text-[10px] text-indigo-300">
-                    @{label}
-                    <button type="button" onClick={() => removeMention(target)} aria-label={`移除 @${label}`}>
-                      <X size={10} />
-                    </button>
-                  </span>
-                )
-              })}
-              {mentions.length === 0 && <span className="text-[10px] text-slate-600">无 @ 时消息只记录，不触发 Agent。</span>}
-            </div>
-          )}
-          <div className="relative flex items-center gap-2 rounded-xl bg-slate-950/80 p-2.5 border border-slate-800 focus-within:border-indigo-500/40 transition-all">
-            {activeConv.type === 'group' && mentionMatch && (
-              <div className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl" role="listbox" aria-label="@ 角色补全">
-                <button type="button" role="option" aria-selected={false} onClick={() => selectMention('all')} className="block w-full px-3 py-2 text-left text-xs text-indigo-300 hover:bg-slate-800">
-                  @全部 · 按成员顺序回复
-                </button>
-                {mentionSuggestions.map((role) => (
-                  <button key={role.id} type="button" role="option" aria-selected={mentions.includes(role.id)} onClick={() => selectMention(role.id)} className="block w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-800">
-                    @{role.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            <input
-              value={draft}
-              onKeyDown={(event) => {
-                // 本地管理命令不依赖聊天发送按钮的加载/生成状态。
-                if (event.key === 'Enter' && draft.trim() === '/ps') submit(event)
-              }}
-              onChange={(event) => {
-                setDraft(event.target.value)
-                if (!event.target.value.trim()) setMentions([])
-              }}
-              disabled={!hasReplyRole}
-              placeholder={hasReplyRole ? (activeConv.type === 'group' ? '输入 @ 选择回复角色…' : '输入消息，回车发送…') : '角色已删除，无法继续发送'}
-              aria-label="消息输入框"
-              className="w-full bg-transparent text-sm text-slate-200 outline-none placeholder:text-slate-600 disabled:cursor-not-allowed disabled:text-slate-600"
-            />
-            <div className="flex items-center gap-1 shrink-0">
-              {generating ? (
-                <button
-                  type="button"
-                  onClick={() => void stopGeneration()}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 transition text-xs font-medium"
-                >
-                  <Square size={12} />
-                  {activeConv.type === 'group' ? '停止整条链' : '停止生成'}
-                  {activeConv.type === 'group' && activeGenerationIds.length > 1 ? ` · ${activeGenerationIds.length}` : ''}
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={sending || !draft.trim() || !hasReplyRole || loading || subscription !== 'ready'}
-                  aria-label="发送消息"
-                  className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition ml-1"
-                >
-                  <Send size={14} />
-                </button>
-              )}
-            </div>
-          </div>
-        </form>
+        <ChatComposer conversationId={activeConv.id} group={activeConv.type === 'group'} memberRoles={memberRoles}
+          // Guest 无权读取 Owner 角色配置；公开成员 ID 决定入口，最终可回复性仍由后端复核。
+          hasReplyRole={user?.is_owner ? memberRoles.some((role) => role.active && !role.deleted_at) : activeConv.role_ids.length > 0}
+          onProcessCommand={() => {
+            if (user?.is_owner) setProcessPanel(true)
+            else setProcessNotice('仅 Owner 可查看和管理会话进程。')
+          }} />
       </div>
 
-      <div className="w-72 border-l border-slate-800 bg-slate-900 shrink-0 flex flex-col h-full overflow-hidden">
+      <div className="w-72 border-l border-slate-800 bg-slate-900 shrink-0 hidden xl:flex flex-col h-full overflow-hidden">
         <div className="h-16 shrink-0 border-b border-slate-800 px-5 flex items-center bg-slate-900/40">
           <span className="font-semibold text-sm text-slate-400 tracking-wide uppercase">会话成员 ({memberRoles.length})</span>
         </div>

@@ -7,7 +7,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-11 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -46,6 +46,10 @@ Shell 始终 dangerous，Owner safe override 无效；等待/执行语义见 [Sh
 单聊、后续群聊角色和 Orchestrator 必须通过 `app/context/` 构造模型输入。当前实现以已落库用户消息 ID
 作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
 revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。
+
+M 多行输入将内部 context schema 从 1 升为 2：非空正文的首尾空格、缩进和换行不再被投影裁剪，
+纯空白正文仍视为空。稳定身份前缀、未知 part 降级、timeline 拼接和终态历史选择规则不变。
+新构建使用新版本及对应指纹；不重写旧消息/日志，不重放已有执行，不新增数据库字段或公开消息版本。
 
 M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同一 chain 中已经提交的前序角色终态回复；
 后一个角色只有在前一个 `message_done` 提交后才开始 build。其他 chain、generating 占位和失败半成品仍不可见，

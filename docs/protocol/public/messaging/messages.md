@@ -7,8 +7,8 @@
 | 协议版本 | 4（兼容新增显式最近历史窗口） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
-| 关联测试 | `backend/tests/test_history_window.py`、`frontend/tests/history-window.spec.ts`、`frontend/tests/real-world/long-conversation.spec.ts`；既有聊天/群聊/ContextBuilder 测试 |
-| 复核日期 | 2026-09-10 |
+| 关联测试 | `backend/tests/test_history_window.py`、`test_chat_flow.py`、`test_context_builder.py`、`frontend/tests/multiline-composer.spec.ts`、`history-window.spec.ts`、`real-world/long-conversation.spec.ts`；既有聊天/群聊测试 |
+| 复核日期 | 2026-09-11 |
 
 ## 范围
 
@@ -77,6 +77,10 @@ POST /api/conversations/{conversation_id}/messages
 
 `parts` 至少一项，part 信封允许未知字段以保持向前兼容；当前必须包含一个非空 `text` part，否则返回
 `422 TEXT_PART_REQUIRED`。
+
+M 多行输入约定：纯空白文本仍拒绝，但非空正文的首尾空格、缩进和换行按原文发送、存储、返回；
+客户端不得把用于判空的 trim 结果作为正文。浏览器 textarea 按 LF 表示换行，不承诺还原粘贴源的 CRLF 字节。
+此约定不新增消息字段；历史已经丢失的空白不补造。模型投影版本见内部 Agent 协议。
 
 触发规则：
 

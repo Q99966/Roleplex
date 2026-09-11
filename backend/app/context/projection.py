@@ -33,7 +33,9 @@ def parts_text(parts: list[dict[str, Any]]) -> str:
         else:
             safe_type = _SAFE_PART_TYPE.sub("_", part_type).strip("_")[:64] or "unknown"
             fragments.append(f"[不支持的消息内容:{safe_type}]")
-    return "\n".join(fragment for fragment in fragments if fragment).strip()
+    text = "\n".join(fragment for fragment in fragments if fragment)
+    # 判空与正文分开：裁剪会破坏首行代码缩进及用户刻意保留的外围空行。
+    return text if text.strip() else ""
 
 
 def project_message(message: Message, *, target_role_id: int) -> BaseMessage | None:

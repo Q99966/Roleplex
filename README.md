@@ -34,6 +34,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - 多世界物理存档、CLI 一致性备份与包装器热切换；每个世界独立数据库和密钥
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
+- M 多行输入已实现并通过人工验收：Enter 发送、Shift+Enter 换行、按内容增高、光标位置 @ 补全；
+  发送失败保留当前草稿，发送和模型输入保留代码缩进与换行。范围与验收见[输入与 diff 计划](docs/plan/code-diff-multiline-v1.md)，代码 diff 尚未实施
 
 M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph 防腐层与统一领域事件、工具危险
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
@@ -42,7 +44,8 @@ M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph �
 W1b 已完成并通过人工验收；当前工具时间线与展开详情优化的范围和验收见
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
-W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；W1d Linux 首版已完成人工验收，后续为 W2a。所有聊天标题区显示当前 Workspace 与 Owner
+W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；W1d Linux 首版与 M 多行输入已完成人工验收，
+下一项为[工具职责关口及代码 diff/局部编辑](docs/plan/code-diff-multiline-v1.md)，之后继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 
