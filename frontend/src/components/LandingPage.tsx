@@ -455,7 +455,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                     selectedNodeId === 'user'
                       ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(245,158,11,0.4)] ring-2 ring-indigo-500/30'
                       : activeStep === 0 && !selectedNodeId
-                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]' 
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                         : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:border-slate-700'
                   }`}
                 >
@@ -489,7 +489,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                     selectedNodeId === 'coder'
                       ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(245,158,11,0.4)] ring-2 ring-indigo-500/30'
                       : (activeStep === 2 || activeStep === 3) && !selectedNodeId
-                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]' 
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                         : activeStep === 4 && !selectedNodeId
                           ? 'bg-slate-950 border-indigo-900/60 text-indigo-400/80'
                           : 'bg-slate-950 border-slate-800/80 text-slate-500 hover:border-slate-700'
