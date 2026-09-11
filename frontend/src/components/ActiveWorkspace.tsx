@@ -245,7 +245,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                     {message.status === 'error' && <span className="text-[10px] text-red-400">生成失败</span>}
                   </div>
                   <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border break-words ${
-                    isUser ? 'bg-indigo-600 text-white border-indigo-500 whitespace-pre-wrap' : 'bg-slate-900/60 text-slate-300 border-slate-800'
+                    isUser ? 'bg-slate-800 text-slate-100 border-slate-700/80 shadow-sm whitespace-pre-wrap' : 'bg-slate-900/60 text-slate-300 border-slate-800'
                   }`}>
                     <MessageParts key={`${worldName}:${user?.id}:${message.id}`} message={message} isOwner={Boolean(user?.is_owner)} />
                   </div>

@@ -51,17 +51,16 @@ export function AuthScreen() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 relative overflow-hidden">
-      {/* 极光发光软罩 (静态背景) */}
-      <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-indigo-500/5 blur-[120px] pointer-events-none z-0"></div>
-      <div className="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 rounded-full bg-purple-500/5 blur-[120px] pointer-events-none z-0"></div>
+      {/* 极简碳黑环境光 (低饱和克制背景) */}
+      <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-indigo-500/[0.03] blur-[140px] pointer-events-none z-0"></div>
 
-      <section className="w-full max-w-md rounded-3xl bg-slate-900/60 border border-slate-800 p-8 shadow-2xl backdrop-blur-xl relative z-10">
+      <section className="w-full max-w-md rounded-3xl bg-slate-900/80 border border-slate-800 p-8 shadow-2xl backdrop-blur-xl relative z-10">
         <div className="mb-8 flex items-center gap-3">
-          <div className="rounded-2xl bg-indigo-600 p-3 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)]">
+          <div className="rounded-2xl bg-indigo-600 p-3 text-white shadow-glow">
             <WandSparkles size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-slate-100 to-indigo-300 bg-clip-text text-transparent">Roleplex</h1>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">Roleplex</h1>
             <p className="text-sm text-slate-400">你的 Agent 群聊工作台</p>
           </div>
         </div>

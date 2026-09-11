@@ -256,9 +256,8 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
         }
       `}</style>
 
-      {/* 背景氛围发光斑 */}
-      <div className="absolute top-0 left-1/4 w-[500px] h-[500px] rounded-full bg-indigo-500/5 blur-[150px] pointer-events-none z-0"></div>
-      <div className="absolute bottom-10 right-1/4 w-[500px] h-[500px] rounded-full bg-cyan-500/5 blur-[150px] pointer-events-none z-0"></div>
+      {/* 背景微光 */}
+      <div className="absolute top-0 left-1/4 w-[500px] h-[500px] rounded-full bg-indigo-500/[0.03] blur-[150px] pointer-events-none z-0"></div>
 
       {/* 头部导航栏 */}
       <header className="sticky top-0 z-50 border-b border-slate-900 bg-slate-950/85 backdrop-blur-xl h-16 shrink-0 px-6 md:px-12 flex items-center justify-between transition-all">
@@ -328,7 +327,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
             
             <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
               多智能体协同，<br />
-              <span className="bg-gradient-to-r from-indigo-400 via-indigo-200 to-cyan-400 bg-clip-text text-transparent">重新定义群聊。</span>
+              <span className="bg-gradient-to-r from-white via-slate-100 to-indigo-300 bg-clip-text text-transparent">重新定义群聊。</span>
             </h1>
             
             <p className="text-slate-400 text-sm md:text-base leading-relaxed max-w-lg">
@@ -454,9 +453,9 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                   onClick={() => setSelectedNodeId(selectedNodeId === 'user' ? null : 'user')}
                   className={`absolute left-1/2 -translate-x-1/2 top-0 z-10 transition-all duration-300 rounded-xl px-4 py-2 border font-semibold shadow-md cursor-pointer ${
                     selectedNodeId === 'user'
-                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(99,102,241,0.5)] ring-2 ring-indigo-500/30'
+                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(245,158,11,0.4)] ring-2 ring-indigo-500/30'
                       : activeStep === 0 && !selectedNodeId
-                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                         : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:border-slate-700'
                   }`}
                 >
@@ -488,9 +487,9 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
                   onClick={() => setSelectedNodeId(selectedNodeId === 'coder' ? null : 'coder')}
                   className={`absolute left-[5%] top-[148px] w-[40%] z-10 transition-all duration-300 rounded-xl p-3 border font-semibold shadow-md cursor-pointer ${
                     selectedNodeId === 'coder'
-                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(99,102,241,0.4)] ring-2 ring-indigo-500/30'
+                      ? 'bg-slate-900 border-indigo-400 text-indigo-200 scale-105 shadow-[0_0_20px_rgba(245,158,11,0.4)] ring-2 ring-indigo-500/30'
                       : (activeStep === 2 || activeStep === 3) && !selectedNodeId
-                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(99,102,241,0.25)]' 
+                        ? 'bg-slate-900 border-indigo-500 text-indigo-300 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                         : activeStep === 4 && !selectedNodeId
                           ? 'bg-slate-950 border-indigo-900/60 text-indigo-400/80'
                           : 'bg-slate-950 border-slate-800/80 text-slate-500 hover:border-slate-700'
