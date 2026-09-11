@@ -418,14 +418,29 @@ async def create_workspace_tools(
 
     async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
         """exclusive 新建或按 expected hash 原子替换 UTF-8 文件。"""
-        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
-            authorized = await service("workspace_write")
-            if authorized is None:
-                return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
-            try:
-                return authorized.json_result(await authorized.write(path, content, expected_sha256=expected_sha256))
-            except WorkspaceFileError as exc:
-                return _error_result(exc.code)
+        from ..agent.write_capture import begin_write_capture
+        receipt = begin_write_capture(path)
+        try:
+            async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+                authorized = await service("workspace_write")
+                if authorized is None:
+                    if receipt:
+                        receipt.not_executed()
+                    return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
+                result = await authorized.write(path, content, expected_sha256=expected_sha256,
+                    capture_applied=receipt.applied if receipt else None)
+                output = authorized.json_result(result)
+            # 库计算或排队绝不能延长文件/工作区写锁的持有时间。
+            if receipt:
+                await receipt.finish(output)
+            return output
+        except WorkspaceFileError as exc:
+            if receipt:
+                receipt.not_executed()
+            return _error_result(exc.code)
+        finally:
+            if receipt:
+                receipt.release()
 
     async def workspace_run_command(command: str, args: dict | None = None) -> str:
         """在获得串行槽后重新鉴权并执行固定命令。

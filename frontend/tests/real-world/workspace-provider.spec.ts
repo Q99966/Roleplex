@@ -8,13 +8,16 @@ const API_ORIGIN = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8004
 const WORKSPACE_ROOT = process.env.ROLEPLEX_E2E_WORKSPACE_ROOT ?? '/home/chen/workspace/testworkspace'
 const WORKSPACE_RELATIVE_ROOT = process.env.ROLEPLEX_E2E_WORKSPACE_RELATIVE_ROOT ?? 'missing'
 
+test.use({ screenshot: 'off', trace: 'off', video: 'off' })
+
 test('real provider uses native tools inside an isolated managed-world workspace', async ({ page }) => {
   const username = `realtest${STAMP}`
   const title = `真实 API W1a 工作区 ${STAMP}`
   const firstContent = `REAL-W1A-FIRST-${STAMP}`
   const finalContent = `REAL-W1A-FINAL-${STAMP}`
   const workspacePath = path.join(WORKSPACE_ROOT, WORKSPACE_RELATIVE_ROOT, 'default')
-
+  let stage = '准备原生文件工具'
+  try {
   await page.goto('/#/auth')
   await page.getByPlaceholder('owner').fill(username)
   await page.getByPlaceholder('密码', { exact: true }).fill('Roleplex-Real-E2E-1')
@@ -98,6 +101,35 @@ test('real provider uses native tools inside an isolated managed-world workspace
   )
   expect(actual).toBe(finalContent)
 
+  stage = 'Owner 私有差异与刷新恢复'
+  const capture = await page.evaluate(async ({ base, cid, firstContent, finalContent }) => {
+    const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+    const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+    const message = history.items.find((item: { sender_type: string }) => item.sender_type === 'role')
+    const calls = message.parts_json.filter((part: { type: string }) => part.type === 'tool_call')
+    for (let index = 0; index < calls.length; index++) {
+      const part = calls[index]
+      if (part.tool_name !== 'workspace_write') continue
+      const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${part.call_id}`, { headers })).json()
+      const file = detail.write?.files?.[0]
+      if (file?.operation !== 'modified') continue
+      const lines = file.hunks.flatMap((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines)
+      return { index, correct: detail.write.availability === 'recorded' && file.applied === true && file.added === 1 && file.removed === 1
+        && lines.some((line: { kind: string; text: string }) => line.kind === 'delete' && line.text === firstContent)
+        && lines.some((line: { kind: string; text: string }) => line.kind === 'insert' && line.text === finalContent) }
+    }
+    return { index: -1, correct: false }
+  }, { base: API_ORIGIN, cid: conversationId, firstContent, finalContent })
+  expect(capture.correct).toBe(true)
+  for (const refresh of [false, true]) {
+    if (refresh) await page.reload()
+    const card = page.getByTestId('chat-message').nth(1).getByTestId('tool-call-card').nth(capture.index)
+    await card.scrollIntoViewIfNeeded()
+    await expect(card.getByRole('button', { name: '执行详情：workspace_write', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    expect(await card.getByRole('region', { name: '文件差异：provider-proof.txt' }).evaluate((element, values) =>
+      element.textContent?.includes(values.firstContent) && element.textContent?.includes(values.finalContent), { firstContent, finalContent })).toBe(true)
+  }
+
   const toolEvents = await waitForRunEvents(
     (event) => event.event === 'tool.call_completed' && event.conversation_id === conversationId,
     5,
@@ -121,4 +153,8 @@ test('real provider uses native tools inside an isolated managed-world workspace
   expect(serialized).not.toContain(firstContent)
   expect(serialized).not.toContain(finalContent)
   expect(serialized).not.toContain(WORKSPACE_ROOT)
+  } catch {
+    await page.goto('about:blank').catch(() => undefined)
+    throw new Error(`真实文件与差异验收失败：${stage}`)
+  }
 })

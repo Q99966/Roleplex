@@ -48,6 +48,14 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+D 写入 diff：后端 `pytest tests/test_write_diff.py -q`；浏览器
+`npm run test:e2e:commands -- write-diff.spec.ts`，覆盖实际文件写入、时间线位置、写入卡默认展开与单层折叠、长行软换行、刷新、Guest 隔离及展示降级。
+后端另验证队列/输入/输出预算、取消/关闭回收、密文身份、过期、历史不重建，以及计算/保存失败不重写文件。
+复用命令测试类别下本轮 `write-diff/` 用例目录，不平铺随机工作区；结束回收测试服务。
+真实入口复用 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`，会联网计费，
+验证原生创建/修改的私有差异和既有完整工具集两轮开发。未触发工具路径不冒充覆盖，真实截图/trace/video 关闭。
+差异预算、状态与隐私契约见[工具详情](../protocol/public/messaging/tool-details.md)，D 未包含局部编辑或批量文件执行。
+
 G 共同执行授权、read 全文件 hash 闭环、diff 候选试验与真实两轮场景的结果和未覆盖项见
 [G 验证记录](tool-execution-g.md)。工具开关/服务生命周期不因 diff 选型而改为固定启动入口；候选试验不属于产品功能。
 

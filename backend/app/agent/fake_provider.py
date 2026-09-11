@@ -139,6 +139,15 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             }]),
             ScriptedTurn(text='处理完成。'),
         ], delay=delay)
+    if '[WRITE_DIFF_FAKE]' in prompt:
+        first = "export const title = '第一版';\nexport const keep = '保持';\n"
+        after = "export const title = '第二版🙂';\nexport const keep = '保持';\n"
+        return ScriptedChatModel(turns=[
+            ScriptedTurn(text='先创建文件。', tool_calls=[{'name': 'workspace_write', 'args': {'path': 'demo.ts', 'content': first}, 'id': 'diff_create'}]),
+            ScriptedTurn(text='现在修改标题。', tool_calls=[{'name': 'workspace_write', 'args': {
+                'path': 'demo.ts', 'content': after, 'expected_sha256': hashlib.sha256(first.encode()).hexdigest()}, 'id': 'diff_update'}]),
+            ScriptedTurn(text='修改完成。'),
+        ], delay=delay)
     if "[W1A_FAKE_E2E]" in prompt:
         first = "W1a 第一版"
         first_hash = hashlib.sha256(first.encode("utf-8")).hexdigest()

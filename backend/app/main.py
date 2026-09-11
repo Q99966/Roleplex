@@ -96,6 +96,8 @@ async def lifespan(_app: FastAPI):
         )
         await init_db()
         await runtime_manager.initialize()
+        from .workspaces.diffs import initialize_current_pool
+        initialize_current_pool()
         runtime_started = True
         await conversation_scheduler.start(chat.run_scheduled_generation)
         await retention.purge_expired_on_startup()
@@ -116,6 +118,8 @@ async def lifespan(_app: FastAPI):
         finally:
             try:
                 await conversation_scheduler.shutdown()
+                from .workspaces.diffs import close_current_pool
+                await close_current_pool()
                 if runtime_manager.stop_jobs:
                     await asyncio.gather(*list(runtime_manager.stop_jobs.values()), return_exceptions=True)
             except BaseException as exc:

@@ -272,6 +272,51 @@ class ToolCaptureView(BaseModel):
     truncated: bool
 
 
+class FileDiffLineView(BaseModel):
+    """私有差异的一行；不适用的行号显式为 null。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    kind: Literal['context', 'insert', 'delete']
+    old_line: int | None = Field(ge=1)
+    new_line: int | None = Field(ge=1)
+    text: str = Field(max_length=65536)
+    ending: Literal['lf', 'crlf', 'none']
+
+
+class FileDiffHunkView(BaseModel):
+    """项目自己的有界差异块，不依赖第三方组件字段。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    old_start: int = Field(ge=1)
+    old_lines: int = Field(ge=0)
+    new_start: int = Field(ge=1)
+    new_lines: int = Field(ge=0)
+    lines: list[FileDiffLineView] = Field(max_length=1000)
+
+
+class FileChangeView(BaseModel):
+    """一次确认提交的文件节点；统计未知时不得回退为零。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    id: Literal['file-0']
+    path: str = Field(max_length=4096)
+    operation: Literal['created', 'modified', 'unchanged']
+    applied: bool | None
+    before_sha256: str | None = Field(pattern=r'^[a-f0-9]{64}$')
+    after_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    before_bytes: int = Field(ge=0)
+    after_bytes: int = Field(ge=0)
+    added: int | None = Field(ge=0)
+    removed: int | None = Field(ge=0)
+    hunks: list[FileDiffHunkView] = Field(max_length=1000)
+
+
+class WriteDetailView(BaseModel):
+    """D Owner 私有变更扩展；D 只产生一个文件节点。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    version: Literal[1]
+    availability: Literal['recorded', 'partial', 'unavailable', 'not_executed', 'result_unconfirmed', 'pending', 'not_recorded']
+    reason: Literal['input_budget', 'line_budget', 'queue_full', 'queue_timeout', 'compute_timeout', 'cancelled', 'capture_failed', 'not_text', 'shutdown'] | None
+    files: list[FileChangeView] = Field(max_length=1)
+
+
 class ShellDetailView(BaseModel):
     """Shell 详情 wire contract，未知执行信息保持 null，不从总耗时推算。"""
 

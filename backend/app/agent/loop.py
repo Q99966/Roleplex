@@ -342,6 +342,10 @@ async def run_agent(
                 output = event["data"].get("output")
                 pending_tool_calls = max(0, pending_tool_calls - 1)
                 tool_started = started_at.pop(call_id, None)
+                from .write_capture import take_write_capture
+                private_output = capture_output(event.get('name', ''), output)
+                if event.get('name') == 'workspace_write':
+                    private_output = take_write_capture(call_id, private_output)
                 yield ToolCallFinished(
                     call_id=call_id,
                     tool_name=event.get("name", ""),
@@ -349,7 +353,7 @@ async def run_agent(
                     duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
                     output_summary=summarize_tool_output(getattr(output, "content", output)),
                     command_summary=command_result_summary(event.get('name', ''), output),
-                    private_output=capture_output(event.get('name', ''), output),
+                    private_output=private_output,
                 )
     except GraphRecursionError:
         # 某些版本会抛异常而不是静默结束，两条路径都走同一个收尾流程。

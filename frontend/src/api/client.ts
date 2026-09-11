@@ -41,6 +41,20 @@ export type Conversation = { id: number; type: 'single' | 'group'; title: string
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
 export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number }
 export type ToolCapture = { text: string; bytes: number; truncated: boolean }
+export type FileDiffLine = {
+  kind: 'context' | 'insert' | 'delete'; old_line: number | null; new_line: number | null;
+  text: string; ending: 'lf' | 'crlf' | 'none'
+}
+export type FileDiffHunk = { old_start: number; old_lines: number; new_start: number; new_lines: number; lines: FileDiffLine[] }
+export type FileChange = {
+  id: string; path: string; operation: 'created' | 'modified' | 'unchanged'; applied: boolean | null;
+  before_sha256: string | null; after_sha256: string; before_bytes: number; after_bytes: number;
+  added: number | null; removed: number | null; hunks: FileDiffHunk[]
+}
+export type WriteDetails = {
+  version: number; availability: 'recorded' | 'partial' | 'unavailable' | 'not_executed' | 'result_unconfirmed' | 'pending' | 'not_recorded';
+  reason: string | null; files: FileChange[]
+}
 export type ShellApproval = {
   id: number; execution_id: string; tool_call_id: string; tool_name: string; workspace_binding_id: number;
   workspace_name: string; world_name: string; root_path: string; script: string; shell_kind: string;
@@ -53,6 +67,7 @@ export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
   input: ToolCapture | null; output: ToolCapture | null
+  write?: WriteDetails | null
   shell?: {
     script: ToolCapture | null; approval_status: 'pending' | 'approved' | 'rejected' | 'expired' | null;
     approval_wait_ms: number | null; execution_duration_ms: number | null;

@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 from .paths import WorkspacePathError, is_link_like, normalize_relative_path, resolve_workspace_path
 
@@ -63,6 +64,22 @@ def _sha256(content: bytes) -> str:
 def _translate(exc: WorkspacePathError) -> WorkspaceFileError:
     """保持路径层稳定错误码并转换为文件服务异常。"""
     return WorkspaceFileError(exc.code)
+
+
+def _capture_applied(callback: Callable | None, before: bytes | None, after: bytes) -> None:
+    """观察器失败不能改变已经提交的文件结果；观察器自行维护不可用状态。
+
+    Args:
+        callback：内部私有采集函数，不能读取额外宿主内容。
+        before：旧版本，创建为 None。
+        after：提交的新版本。
+    """
+    if callback is not None:
+        try:
+            callback(before, after)
+        except Exception:
+            # 不持久化观察器异常对象，它可能持有文件原文。
+            pass
 
 
 class WorkspaceFileService:
@@ -173,8 +190,16 @@ class WorkspaceFileService:
             sha256=_sha256(data),
         )
 
-    async def write(self, path: str, content: str, *, expected_sha256: str | None = None) -> WorkspaceWriteResult:
-        """exclusive 新建或按 expected hash 原子替换 UTF-8 文件。"""
+    async def write(self, path: str, content: str, *, expected_sha256: str | None = None,
+                    capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:
+        """新建或按 hash 替换；只在确认提交后交出本次前后版本。
+
+        Args:
+            path：授权工作区内相对路径。
+            content：新 UTF-8 内容。
+            expected_sha256：更新时必需的全文件旧 hash。
+            capture_applied：内部私有观察器，只能同步预留，不能等待计算或执行额外写入。
+        """
         encoded = content.encode("utf-8")
         if len(encoded) > MAX_FILE_BYTES:
             raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
@@ -199,6 +224,7 @@ class WorkspaceFileService:
                         os.fsync(handle.fileno())
                 except FileExistsError:
                     raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT") from None
+                _capture_applied(capture_applied, None, encoded)
                 return WorkspaceWriteResult(created=True, bytes=len(encoded), sha256=_sha256(encoded))
 
             if target.is_symlink() or not target.is_file():
@@ -223,6 +249,7 @@ class WorkspaceFileService:
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)
+            _capture_applied(capture_applied, current, encoded)
             return WorkspaceWriteResult(created=False, bytes=len(encoded), sha256=_sha256(encoded))
 
     @staticmethod

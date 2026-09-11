@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView
 
 
 def _cipher() -> Fernet:
@@ -84,7 +84,20 @@ async def update_detail(
     if status != 'running':
         row.ended_at = now
     if private_output is not None:
-        row.output_encrypted = _encrypt(message_id, call_id, private_output)
+        try:
+            row.output_encrypted = _encrypt(message_id, call_id, private_output)
+        except Exception:
+            if tool_name != 'workspace_write' or private_output.get('format') != 'write-v1':
+                raise
+            # 差异保存失败不能将已成功写入伪装成模型工具失败；仅保留有界提交元数据。
+            value = private_output['write']
+            fallback = {**private_output, 'write': {**value, 'availability': 'unavailable', 'reason': 'capture_failed',
+                'files': [{**file, 'hunks': [], 'added': None, 'removed': None} for file in value['files']]}}
+            try:
+                row.output_encrypted = _encrypt(message_id, call_id, fallback)
+            except Exception:
+                # 加密边界整体不可用时不保存明文、不保留可能过时的输出；明确降级为未记录。
+                row.output_encrypted = None
     return True
 
 
@@ -100,8 +113,19 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     if expires <= datetime.now(timezone.utc):
         return {**result, 'availability': 'expired'}
     try:
-        return {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted),
-                'output': _decrypt(row, row.output_encrypted)}
+        output = _decrypt(row, row.output_encrypted)
+        payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
+        if row.tool_name == 'workspace_write':
+            if output and output.get('format') == 'write-v1':
+                value = WriteDetailView.model_validate(output['write']).model_dump()
+                if len(json.dumps(value, ensure_ascii=False).encode()) > 65536 or sum(
+                    len(hunk['lines']) for file in value['files'] for hunk in file['hunks']) > 1000:
+                    raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                payload['write'] = value
+                payload['output'] = ToolCaptureView.model_validate(output['result']).model_dump() if output.get('result') is not None else None
+            else:
+                payload['write'] = {'version': 1, 'availability': 'pending' if row.status == 'running' else 'not_recorded', 'reason': None, 'files': []}
+        return payload
     except (InvalidToken, ValueError, KeyError, TypeError):
         return {**result, 'availability': 'unavailable'}
 

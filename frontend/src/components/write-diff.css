@@ -1,0 +1,19 @@
+.roleplex-write-diff .diff {
+  --diff-background-color: #09090b;
+  --diff-text-color: #e4e4e7;
+  --diff-gutter-insert-background-color: #16412b;
+  --diff-code-insert-background-color: #123322;
+  --diff-gutter-delete-background-color: #562222;
+  --diff-code-delete-background-color: #401b1b;
+  font-size: 12px;
+  font-family: var(--diff-font-family);
+  line-height: 1.6;
+}
+/* 固定宽表格内软换行，使长行留在着色单元格中，不用横向滚动寻找行首。 */
+.roleplex-write-diff .diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.roleplex-write-diff .diff-gutter-col { width: 6ch; }
+.roleplex-write-diff .diff-gutter { padding-right: .5ch; padding-left: .5ch; white-space: nowrap; }

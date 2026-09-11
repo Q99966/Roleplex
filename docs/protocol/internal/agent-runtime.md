@@ -43,6 +43,12 @@ Shell 始终 dangerous，Owner safe override 无效；等待/执行语义见 [Sh
 
 ## ContextBuilder 边界
 
+D write 私有采集由 generation 所有者创建有界作用域，GuardedTool 的宿主 call_id 关联凭据，
+写入处同步记录已提交的前后版本并预留有界计算槽，释放写锁后计算；防腐层在工具结束时仅通过
+ToolCallFinished.private_output 交给消息所有者。原文不进入模型工具返回或共享框架事件，未消费凭据上限 32 个。
+取消时消息所有者保存已观察到的写入事实并清除作用域；进程崩溃不补造差异，不另造 Trace 或业务调度器。
+详情与兼容字段以[工具详情](../public/messaging/tool-details.md)为准。
+
 单聊、后续群聊角色和 Orchestrator 必须通过 `app/context/` 构造模型输入。当前实现以已落库用户消息 ID
 作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
 revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。

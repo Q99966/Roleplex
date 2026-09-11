@@ -3,8 +3,8 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | 已实现，已人工验收（含 W1c Shell 扩展） |
-| 协议版本 | 2（兼容新增 Shell 私有详情） |
+| 状态 | 已实现并通过人工验收，含 D 写入差异与单层展开修订 |
+| 协议版本 | 3（兼容新增 write 私有差异） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
 | 复核日期 | 2026-09-10 |
@@ -60,6 +60,34 @@ stdout/stderr 正文合计保留最多 65536 UTF-8 字节，元数据另计，�
 旧 Shell part 没有 detail_available 时也允许 Owner 主动查询：审批可关联则恢复脚本及已知决定，未保存的输出和
 实测执行耗时必须标记未记录。拒绝/过期明确为未执行；批准本身不证明进程实际执行或成功。
 不从总耗时减审批耗时估算执行耗时，不从模型回答、文件或机器日志还原输出，不重新执行旧脚本。
+
+## D 写入差异扩展（已实现，已人工验收）
+
+同一 Owner 详情端点兼容增加 `write`，旧 input/output 与 shell 语义不变。write 为
+`{version:1, availability, reason, files}`，独立对象序列化 UTF-8 最多 65536 字节；D 的 files 最多一个，
+不代表批量执行。availability 为 recorded/partial/unavailable/not_executed/result_unconfirmed/pending/not_recorded；
+reason 可空，非空仅 input_budget/line_budget/queue_full/queue_timeout/compute_timeout/cancelled/capture_failed/not_text/shutdown。
+
+文件节点含 id（本调用内 file-0）、path（规范相对路径）、operation（created/modified/unchanged）、applied（bool 或 null）、
+before_sha256（新建为 null）、after_sha256、before_bytes、after_bytes、added/removed（无法完整计算时 null）、hunks。
+hunk 含 old_start/old_lines/new_start/new_lines 与 lines；行含 kind（context/insert/delete）、old_line/new_line（不适用为 null）、
+text（不含该行换行符）与 ending（lf/crlf/none）。CR 未紧邻 LF 时作为原文控制字符，不伪造额外行。
+界面将控制字符可见转义，绝不执行 HTML/终端序列；partial 不等于内容无变化，完整统计和已保留行数分开。
+
+差异依据本次原生 write 执行处的旧字节和成功提交的新字节，不能在读取详情时再读宿主文件；不从模型返回值构造旧内容。
+计算输入合计 256 KiB、最多 10000 行；展示最多 1000 行、上下文各 3 行。候选库 difflib 使用独立可回收计算进程，
+进程内最多 2 个计算、4 个等待（等待原文最多 1 MiB），等待上限 250ms、计算截止 1s；满载/超时只降级差异，
+不重写、回滚已完成文件或改变模型可见的 write 结果。计算期间不持有原生写锁或数据库事务。
+
+执行作用域内私有采集通过领域 ToolCallFinished.private_output 交给原消息所有者，不进入模型工具响应、共享 WS 或日志。
+复用 output_encrypted 保存带格式版本 write-v1 的私有记录，读取时拆出原 output 和 write；不新增表。
+加密绑定、鉴权、7 天期限、过期清理和消息物理删除规则不变；关闭/切换清除前端内容，旧调用返回 not_recorded，不补造差异。
+按人工确认的展示修订，Owner 的 write 卡默认展开并在进入可视范围后加载私有详情；diff 直接位于工具卡内，
+不再显示原始 input/output 或提供文件节点二级折叠。该调整不删除后端原始记录、不改变接口字段或 Guest 鉴权。
+取消后只保留已观察事实：已确认写入可为 applied=true 而差异 unavailable/cancelled；写入结果无法确认则 result_unconfirmed。
+not_executed 只用于已知写前拒绝，不用于可能发生部分写入的 OS 故障。落库失败不能据此声称文件未修改，也不自动重试写入。
+差异正文加密保存失败时尽力保存有界提交元数据和 capture_failed；加密边界整体不可用则不保存明文并降级未记录。
+计算进程无法确认回收时关闭该池准入，不通过新建池绕过限制；应用关闭仍复核回收，失败不伪装成成功。
 
 ## 消息顺序与兼容
 

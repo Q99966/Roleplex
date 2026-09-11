@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Loader2, Terminal } from 'lucide-react'
 import { api, type Part, type ToolCapture, type ToolDetails } from '../api/client'
 import { useChatStore } from '../store/chat'
 import { visibleScript } from './ShellApprovals'
+
+const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).WriteDiff }))
 
 const STATUS: Record<string, string> = {
   running: '执行中', success: '已完成', failed: '失败', rejected: '已拒绝', cancelled: '已取消', interrupted: '已中断',
@@ -54,7 +56,7 @@ function ShellDetails({ value }: { value: NonNullable<ToolDetails['shell']> }) {
   </>
 }
 
-/** 默认折叠的工具过程；Owner 主动展开才请求私有详情，关闭即释放正文。
+/** 工具过程卡；Owner 写入卡默认展开但到可视范围才取详情，其他工具仍由用户展开。
  * @param part 当前调用的安全元数据。
  * @param conversationId 所属会话，参与服务端归属校验。
  * @param messageId 所属消息。
@@ -63,7 +65,10 @@ function ShellDetails({ value }: { value: NonNullable<ToolDetails['shell']> }) {
 export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
   part: Part; conversationId: number; messageId: number; isOwner: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const fileWrite = part.tool_name === 'workspace_write'
+  const [open, setOpen] = useState(fileWrite && isOwner)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [seen, setSeen] = useState(false)
   const [detail, setDetail] = useState<ToolDetails | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -73,10 +78,21 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
   const canLoad = Boolean(part.detail_available) || shell
   const approvalVersion = useChatStore((state) => shell && part.status === 'running' ? state.approvalVersion : 0)
   useEffect(() => {
+    if (!fileWrite || !isOwner || seen || !cardRef.current) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setSeen(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '200px' })
+    observer.observe(cardRef.current)
+    return () => observer.disconnect()
+  }, [fileWrite, isOwner, seen])
+  useEffect(() => {
     setDetail(null)
     setFailed(false)
     setLoading(false)
-    if (!open || !isOwner || !canLoad || !callId) return
+    if (!open || !isOwner || !canLoad || !callId || (fileWrite && !seen)) return
     const controller = new AbortController()
     let active = true
     setLoading(true)
@@ -84,9 +100,9 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
       if (active) setDetail(value)
     }).catch(() => { if (active) setFailed(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [open, isOwner, conversationId, messageId, callId, part.status, canLoad, approvalVersion])
+  }, [open, isOwner, conversationId, messageId, callId, part.status, canLoad, approvalVersion, fileWrite, seen])
   const status = part.error_code === 'EXECUTION_INTERRUPTED' ? '已中断' : STATUS[part.status ?? ''] ?? '状态未知'
-  return <div data-testid="tool-call-card" className="my-3 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/60 text-xs">
+  return <div ref={cardRef} data-testid="tool-call-card" className="my-3 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/60 text-xs">
     <button type="button" aria-expanded={open} aria-controls={controlId}
       aria-label={`执行详情：${part.tool_name ?? '工具'}${part.command ? ` · ${part.command}` : ''}`}
       onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-slate-800/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
@@ -114,7 +130,9 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
         {detail?.availability === 'available' && <>
           <p>开始：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
           <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
-          {detail.shell ? <ShellDetails value={detail.shell} /> : <>
+          {fileWrite ? (detail.write
+            ? <Suspense fallback={<p role="status">正在加载差异视图…</p>}><WriteDiff value={detail.write} /></Suspense>
+            : <p className="mt-2">此调用未记录文件差异，无法补回。</p>) : detail.shell ? <ShellDetails value={detail.shell} /> : <>
             <CaptureText title="工具输入" capture={detail.input} />
             <CaptureText title="工具输出" capture={detail.output} />
           </>}

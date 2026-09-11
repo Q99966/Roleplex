@@ -446,6 +446,9 @@ async def run_scheduled_generation(
     delta_seq = 0
     tool_args: dict[str, str] = {}
     command_calls: dict[str, tuple[ToolCallStarted, float]] = {}
+    from ..agent.write_capture import WriteCaptureScope, write_capture_scope
+    write_captures = WriteCaptureScope()
+    write_capture_token = write_capture_scope.set(write_captures)
     provider_call_count = 0
     first_ttft_ms: int | None = None
     usage_summary: dict[str, int | float | None] = {
@@ -767,6 +770,8 @@ async def run_scheduled_generation(
                 call_id=call_id, tool_name=started_event.tool_name, status='cancelled', duration_ms=duration_ms,
                 command_summary={'command_status': 'cancelled', 'exit_code': None},
                 accumulated_text=accumulated,
+                execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
+                private_output=write_captures.take(call_id) if started_event.tool_name == 'workspace_write' else None,
             )
             logger.info('tool.call_completed', extra={
                 'tool_call_id': call_id, 'tool_name': started_event.tool_name,
@@ -808,6 +813,8 @@ async def run_scheduled_generation(
             },
         )
     finally:
+        write_captures.clear()
+        write_capture_scope.reset(write_capture_token)
         await retain_execution_workspace(execution_id)
 
 

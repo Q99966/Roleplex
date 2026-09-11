@@ -37,6 +37,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let failedStage: string | null = null
   let normalCleanup = false
   let toolPaths: string[][] = []
+  let nativeDiffObserved = false
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -164,6 +165,23 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     const instances = (await api(`/api/conversations/${cid}/processes`)).items
     if (toolPaths[1].includes('workspace_write') && (instances.find((row: { id: string }) => row.id === firstService.id)?.state !== 'stopped'
       || !instances.some((row: { id: string; state: string }) => row.id !== firstService.id && row.state === 'ready'))) throw new Error('原生编辑停服重启未闭环')
+    if (toolPaths[1].includes('workspace_write')) {
+      stage = '第二轮原生差异核对'
+      nativeDiffObserved = await page.evaluate(async ({ base, cid, secondUserId }) => {
+        const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+        const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+        for (const message of history.items.filter((item: { id: number }) => item.id > secondUserId)) {
+          for (const call of message.parts_json.filter((part: { type: string; tool_name?: string; status?: string }) => part.type === 'tool_call' && part.tool_name === 'workspace_write' && part.status === 'success')) {
+            const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
+            const file = detail.write?.files?.[0]
+            if (detail.write?.availability === 'recorded' && file?.applied && file.operation === 'modified'
+              && file.hunks.some((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines.some((line) => line.kind === 'insert' && line.text.includes('HelloWorld Updated')))) return true
+          }
+        }
+        return false
+      }, { base, cid, secondUserId })
+      if (!nativeDiffObserved) throw new Error('已触发原生修改但差异未记录')
+    }
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
     await page.reload()
     await page.getByLabel('消息输入框').fill('/ps')
@@ -196,7 +214,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.goto('about:blank').catch(() => undefined)
     const reportPath = testInfo.outputPath('tool-path-observation.json')
     await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
-      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: 'not_implemented_in_G', native_diff: 'not_implemented_in_G',
+      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: 'not_implemented_in_D', native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })
   }
