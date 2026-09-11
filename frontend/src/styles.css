@@ -17,17 +17,17 @@ button { cursor: pointer; }
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b; /* slate-800 */
+  background: #27272a; /* zinc-800 */
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155; /* slate-700 */
+  background: #3f3f46; /* zinc-700 */
 }
 
 /* Firefox 滚动条兼容配置 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #1e293b transparent;
+  scrollbar-color: #27272a transparent;
 }
 
 /* =========================================================================

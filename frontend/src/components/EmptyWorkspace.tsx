@@ -16,11 +16,11 @@ export function EmptyWorkspace({ onOpenSettings, onOpenRoleModal, onOpenConvModa
 
   return (
     <section className="flex flex-1 flex-col items-center justify-center bg-slate-950 px-6 py-12 overflow-y-auto relative">
-      {/* 背景光斑 */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-indigo-500/5 blur-[150px] pointer-events-none"></div>
+      {/* 背景微光 */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-indigo-500/[0.03] blur-[150px] pointer-events-none"></div>
 
       <div className="mb-6 rounded-3xl bg-slate-900 border border-slate-800/80 p-6 text-indigo-400 shadow-xl relative z-10 animate-bounce" style={{ animationDuration: '4s' }}>
-        <WandSparkles size={36} className="drop-shadow-[0_0_15px_rgba(99,102,241,0.6)]" />
+        <WandSparkles size={36} className="drop-shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
       </div>
 
       <h2 className="text-3xl font-extrabold text-white tracking-tight relative z-10">欢迎来到 Roleplex</h2>
