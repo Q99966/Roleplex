@@ -804,28 +804,6 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
             <div className="block">
               <span className="text-slate-400 font-medium">绑定内置运行工具 (Builtin Tools)</span>
               <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => toggleTool('web_search')}
-                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
-                    form.builtin_tools.includes('web_search')
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  联网搜索 (web_search)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toggleTool('fetch_url')}
-                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
-                    form.builtin_tools.includes('fetch_url')
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  抓取 URL (fetch_url)
-                </button>
                 {([
                   ['workspace_list', '列出工作区'],
                   ['workspace_read', '读取工作区文件'],

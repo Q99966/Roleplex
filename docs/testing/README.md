@@ -48,6 +48,9 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+G 共同执行授权、read 全文件 hash 闭环、diff 候选试验与真实两轮场景的结果和未覆盖项见
+[G 验证记录](tool-execution-g.md)。工具开关/服务生命周期不因 diff 选型而改为固定启动入口；候选试验不属于产品功能。
+
 M 多行输入专项：`npm run test:e2e -- multiline-composer.spec.ts`；后端正文与模型投影验证：
 `pytest tests/test_context_builder.py tests/test_chat_flow.py -q`。浏览器覆盖剪贴板多行粘贴、Enter/Shift+Enter、
 组合事件与 229 确认键、光标中间 @ 补全、HTTP 失败/迟到响应、加载草稿、Owner/Guest `/ps`、自动增高及阅读锚点。

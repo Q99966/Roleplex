@@ -3,6 +3,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { ensureOwnerSession } from '../owner'
+import { isExpectedHeadingEdit } from '../controlled-page'
+
+test('受控页面局部修改核对不混淆 title、h1 与保留内容', () => {
+  const before = '<title>HelloWorld</title><h1 class="title">\nHelloWorld\n</h1><p id="keep">KEEP</p>'
+  const after = '<title>HelloWorld</title><h1 class="title">\nHelloWorld Updated\n</h1><p id="keep">KEEP</p>'
+  expect(isExpectedHeadingEdit(before, after)).toBe(true)
+  expect(isExpectedHeadingEdit(before, before.replace('HelloWorld', 'HelloWorld Updated'))).toBe(false)
+  expect(isExpectedHeadingEdit(before, after.replace('KEEP', 'changed'))).toBe(false)
+})
 
 /** 只在本轮准备阶段选择端口，服务运行时不允许静默换端口。 */
 async function availablePort(): Promise<number> {
@@ -41,9 +50,13 @@ test('后台服务回复后仍可访问，/ps 不调用模型并能读取日志�
   await page.getByText('后台服务验收', { exact: true }).click()
   await page.getByLabel('消息输入框').fill(`[SERVICE_FAKE:${port}]`)
   await page.getByLabel('发送消息').click()
+  await expect(page.getByText('后台脚本可能创建或修改文件；启动失败或停止成功不代表这些副作用已回滚。', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '批准后台服务启动', exact: true }).click()
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
   await expect.poll(async () => (await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
+  await page.getByRole('button', { name: '执行详情：workspace_start_service', exact: true }).click()
+  await expect(page.getByText('未采集文件差异，不代表没有修改。', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '执行详情：workspace_start_service', exact: true }).click()
   await page.getByLabel('消息输入框').fill('[SHELL_APPROVAL_FAKE]')
   await page.getByLabel('发送消息').click()
   await expect(page.getByRole('button', { name: '批准本次 Shell', exact: true })).toBeVisible()

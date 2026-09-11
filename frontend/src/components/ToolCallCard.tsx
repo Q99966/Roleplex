@@ -104,6 +104,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
       {part.error_code && <span className="text-red-400">{part.error_code}</span>}
     </div>
     {open && <div id={controlId} className="border-t border-slate-800 px-3 pb-3 pt-2 text-slate-400">
+      {(shell || part.tool_name === 'workspace_start_service') && <p className="mb-2 text-amber-300">未采集文件差异，不代表没有修改。</p>}
       {!isOwner ? <p>详细输入和输出仅 Owner 可见。</p> : !canLoad ? <p>此调用未记录执行详情。</p> : <>
         {loading && <p role="status">正在加载执行详情…</p>}
         {failed && <p role="alert">无法加载执行详情，请收起后重试。</p>}

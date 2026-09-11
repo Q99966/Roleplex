@@ -350,6 +350,9 @@ class RuntimeManager:
         token_reader = None
         final_state, error_code = 'stopped', None
         try:
+            from ..workspaces.approvals import authorized_execution
+            if not await authorized_execution(request):
+                raise registry.RuntimeRejected('WORKSPACE_TOOL_NOT_AVAILABLE')
             # 预检不抢占端口；真正 ready 还必须确认 listener 的进程归属。
             try:
                 with socket.socket() as probe:
@@ -398,6 +401,9 @@ class RuntimeManager:
                     host.ring.append(stream_name, decoder.decode(chunk))
                 host.ring.append(stream_name, decoder.decode(b'', final=True))
             readers = [asyncio.create_task(drain(name), context=copy_context()) for name in ('stdout', 'stderr')]
+            # 宿主创建和状态登记均可能等待；交付实际脚本前再次复核。ready 后不再用 generation 存活约束服务。
+            if not await authorized_execution(request):
+                raise registry.RuntimeRejected('WORKSPACE_TOOL_NOT_AVAILABLE')
             host.process.stdin.write((request['script'] + '\n').encode())
             await host.process.stdin.drain()
             host.process.stdin.close()

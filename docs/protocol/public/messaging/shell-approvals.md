@@ -16,6 +16,7 @@
 调用身份由 Agent 防腐层绑定，不接受模型传入 cwd、环境、工具调用 ID、审批 ID 或 shell 可执行文件。
 仅 Owner 触发的 single、active role 显式启用工具、active workspace.shell_enabled、running execution/generation
 且未停止、ready lease 及规范根匹配时可用；Shell 永远 dangerous，safe override 不适用。
+G 补齐共同授权：触发 Owner 和执行角色必须仍是当前会话成员，工具创建时通过检查不替代后续审批与执行复核。
 同工作区有正常运行的服务不再直接拒绝 Shell；继续逐次审批并计入三级进程配额。批量清理门槛或服务回收未确认
 仍会阻止调用。该能力不是只读 Shell，批准的脚本可能修改文件或影响服务；不承诺与服务并发写入的一致性。
 命令卡安全摘要保留三层 RUNTIME_*_LIMIT 和 RUNTIME_SCOPE_CLOSING 固定错误码，区分配额/清理拒绝与审批拒绝，不复制脚本或输出。

@@ -10,6 +10,20 @@ const password = OWNER.password
 const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8001'
 
 test.describe('M1 authentication and workspace', () => {
+  test('role tool settings omit unimplemented web placeholders', async ({ page }, testInfo) => {
+    await ensureOwnerSession(page)
+    await page.getByTitle('定制 Agent 角色').click()
+    await expect(page.getByRole('button', { name: '联网搜索 (web_search)', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '抓取 URL (fetch_url)', exact: true })).toHaveCount(0)
+    const write = page.getByRole('button', { name: '写入工作区文件 (workspace_write)', exact: true })
+    await expect(write).toHaveAttribute('aria-pressed', 'false')
+    await write.click()
+    await expect(write).toHaveAttribute('aria-pressed', 'true')
+    const screenshot = testInfo.outputPath('implemented-tools.png')
+    await write.locator('xpath=../..').screenshot({ path: screenshot })
+    await testInfo.attach('已实现工具选择', { path: screenshot, contentType: 'image/png' })
+  })
+
   test('registers a new account through the form and renders an empty workspace', async ({ page }) => {
     // 先确保共享 Owner 已注册：本用例注册的是一次性账号，若它抢到了实例的
     // 首个注册者位置，后续所有需要 Owner 权限的用例都会失败。

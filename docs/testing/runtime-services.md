@@ -28,7 +28,7 @@
 | 状态与恢复事件 | `test_runtime_events.py`：状态与事件同事务，真实 WS 断线回放版本/序号，旧 epoch 快照后重读登记 |
 | World 操作 | `test_world_runtime_operations.py`：Owner/Guest 备份边界、导出失败重试、下载中断清理、切换目标不覆盖、离线文件操作租约、已关闭默认世界可删除 |
 | 浏览器闭环 | `test:e2e:commands` 的服务/审批/工具时间线；`test:e2e:worlds` 的实际服务→备份下载→重新审批启动→切换回收 |
-| 真实模型 | 独立 `runtime-service-provider.spec.ts`：真实厂商启动 npm 固件、读取状态/随机日志验证值、回答后存活、`/ps` 停止 |
+| 真实模型 | 独立 `runtime-service-provider.spec.ts`：完整工具集两轮创建/修改页面、generation 后服务存续与正常回收已通过；实际工具路径及未覆盖项见 [G 记录](tool-execution-g.md) |
 
 后端专项可执行：
 

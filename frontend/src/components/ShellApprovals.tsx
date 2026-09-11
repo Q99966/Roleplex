@@ -69,6 +69,7 @@ export function ShellApprovals({ conversationId }: { conversationId: number }) {
       <p>世界：{row.world_name} · 工作区：{row.workspace_name} · {row.shell_kind}</p>
       <p className="break-all">执行目录：{row.root_path}</p>
       {row.runtime_id && <p>后台服务 · 端口 {row.port} · 探针 {row.health_path} · 就绪等待 {row.ready_timeout_seconds} 秒 · 最长运行 {row.lifetime_seconds} 秒；回答结束后继续运行。</p>}
+      {row.runtime_id && <p className="text-amber-300">后台脚本可能创建或修改文件；启动失败或停止成功不代表这些副作用已回滚。</p>}
       <p className="text-amber-300">审批不是系统沙箱：脚本可以访问宿主其他路径和网络。请完整检查后再批准。</p>
       {!row.runtime_id && <p role="note" className="text-amber-300">
         {(row.active_service_count ?? 0) > 0 ? `读取审批时，该工作区有 ${row.active_service_count} 个未结束的服务实例（含待审批或回收中）。` : ''}

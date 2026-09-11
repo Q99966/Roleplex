@@ -10,6 +10,27 @@ from test_workspace_commands import command_conversation, command_root, isolated
 pytestmark = pytest.mark.skipif(sys.platform != 'linux', reason='受托管服务当前仅在 Linux 开放')
 
 
+@pytest.fixture(autouse=True)
+def authorized_probe_fixture(monkeypatch, isolated_command_database):
+    """探针单元用例直接构造 Host，不构造审批身份；实际授权由工具集成矩阵覆盖。
+
+    Args:
+        monkeypatch：仅在本模块隔离新增加的审批后授权依赖，不替换配额、清理或真实进程检查。
+        isolated_command_database：先完成模块重载，再为本轮新模块设置探针依赖。
+    """
+    from app.workspaces import approvals
+
+    async def allowed(_request):
+        """接受本模块受控启动输入。
+
+        Args:
+            _request：手工构造的探针固件，不是模型调用。
+        """
+        return True
+
+    monkeypatch.setattr(approvals, 'authorized_execution', allowed)
+
+
 @pytest.mark.anyio
 async def test_cleanup_during_spawn_never_delivers_script(command_root, isolated_command_database, monkeypatch):
     """冻结清单覆盖尚未交付的 spawn，进程出现后不再交付用户脚本。

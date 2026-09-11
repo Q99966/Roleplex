@@ -67,8 +67,8 @@ def decrypt_request(row: ToolApprovalRequest) -> dict:
         raise WorkspaceCommandError('SHELL_APPROVAL_MISMATCH') from None
 
 
-async def _authorized(request: dict) -> bool:
-    """在创建、决定和启动三个边界复核权限及冻结配置。
+async def authorized_execution(request: dict) -> bool:
+    """复核实时执行权限和冻结配置，不依赖 runtime 处于审批前状态。
 
     Args:
         request：已经校验身份的冻结请求。
@@ -77,16 +77,29 @@ async def _authorized(request: dict) -> bool:
     service = await _authorized_service(execution_id=request['execution_id'], conversation_id=request['conversation_id'],
         role_id=request['role_id'], triggered_by_user_id=request['owner_id'], workspace_binding_id=request['workspace_binding_id'],
         root_path_snapshot=request['root_path'], tool_name=request['tool_name'])
+    if service is None:
+        return False
+    try:
+        current = shell_configuration()
+    except WorkspaceCommandError:
+        return False
+    return all(request[key] == value for key, value in current.items())
+
+
+async def _authorized(request: dict) -> bool:
+    """创建/决定/启动复用执行授权，并在服务预留状态下复核运行门槛。
+
+    Args:
+        request：已经校验身份的冻结请求。
+    """
+    if not await authorized_execution(request):
+        return False
     if request['tool_name'] == 'workspace_start_service':
         if request.get('ready_timeout_seconds') != settings.runtime_ready_timeout_seconds:
             return False
         from ..runtime.registry import check_start
         await check_start(request['runtime_id'])
-    try:
-        current = shell_configuration()
-    except WorkspaceCommandError:
-        return False
-    return service is not None and all(request[key] == value for key, value in current.items())
+    return True
 
 
 def _log(row: ToolApprovalRequest, request: dict, *, reason: str | None = None) -> None:

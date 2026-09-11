@@ -39,7 +39,7 @@ docs/protocol/
 | 消息发送、历史与停止生成 | 已实现（B 最近窗口与 M 多行输入均已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | 工具执行顺序与 Owner 详情 | 已人工验收，含 W1c Shell 详情修正 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
 | Shell 逐次审批 | W1c 已实现，已人工验收 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
-| 会话运行实例、服务与回收 | 已实现（Linux，已人工验收） | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |
+| 会话运行实例、服务与回收 | Linux W1d 与 G 授权复核补齐均已验收 | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与最近窗口快照） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
 | 邀请兑换 | 预留 | 本文档（待实现时拆分） |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |

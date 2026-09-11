@@ -1,13 +1,15 @@
 import { expect, test } from '@playwright/test'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { readRunEvents, waitForRunEvents } from '../e2e-log-assertions'
+import { readRunEvents } from '../e2e-log-assertions'
+import { isExpectedHeadingEdit } from '../controlled-page'
 
 test.use({ screenshot: 'off', trace: 'off', video: 'off' })
 
-test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后仍存活并可停止', async ({ page }) => {
+test('完整工具集两轮开发：页面创建、回答后服务存续、局部修改与正常回收', async ({ page }, testInfo) => {
+  test.setTimeout(300_000)
   const stamp = process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP!
   const base = process.env.ROLEPLEX_E2E_API_ORIGIN!
   const root = path.join(process.env.ROLEPLEX_E2E_WORKSPACE_ROOT!, process.env.ROLEPLEX_E2E_WORKSPACE_RELATIVE_ROOT!, 'default', 'runtime-service')
@@ -25,19 +27,37 @@ test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后�
     "import http from 'node:http'; import fs from 'node:fs';",
     "const proof = fs.readFileSync('proof.txt','utf8');",
     "const port = Number(process.argv[process.argv.indexOf('--port') + 1]);",
-    "const server = http.createServer((_req,res) => { res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); res.end('<h1>HelloWorld</h1><p>'+proof+'</p>'); });",
+    "const server = http.createServer((_req,res) => { res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(fs.readFileSync('index.html')); });",
     "server.listen(port,'127.0.0.1',()=>console.log('verification='+proof));",
   ].join('\n'))
   const script = `npm --userconfig ./npm-user.cfg --globalconfig ./npm-global.cfg --cache ./.npm-cache run dev -- --port ${port}`
+  const checkScript = `curl --fail --silent --show-error --max-time 5 http://127.0.0.1:${port}/`
   let stage = '登录与准备'
+  let cid: number | null = null
+  let failedStage: string | null = null
+  let normalCleanup = false
+  let toolPaths: string[][] = []
   const title = `真实后台服务 ${stamp}`
+  const preview = await page.context().newPage()
+  await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
+  /** 仅用当前 Owner 会话访问本轮资源；Token 不传回测试进程。
+   * @param route 本轮 API 路径。
+   * @param method 读取或显式停止。
+   */
+  async function api(route: string, method = 'GET') {
+    return page.evaluate(async ({ base, route, method }) => {
+      const response = await fetch(base + route, { method, signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })
+      if (!response.ok) throw new Error('受控 API 失败')
+      return response.status === 204 ? null : response.json()
+    }, { base, route, method })
+  }
   try {
     await page.goto('/#/auth')
     await page.getByPlaceholder('owner').fill(`realtest${stamp}`)
     await page.getByPlaceholder('密码', { exact: true }).fill('Roleplex-Real-E2E-1')
     await page.getByRole('button', { name: '进入工作台' }).click()
     await expect(page.getByText(`真实 API 验证 ${stamp}`, { exact: true })).toBeVisible({ timeout: 20000 })
-    const cid = await page.evaluate(async ({ base, root, title, stamp }) => {
+    cid = await page.evaluate(async ({ base, root, title, stamp }) => {
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
       const request = async (route: string, body?: unknown, method = 'POST') => {
         const response = await fetch(base + route, { headers, ...(body ? { method, body: JSON.stringify(body) } : {}) })
@@ -49,72 +69,136 @@ test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后�
       const seed = roles.find((role: { model_config_id: number | null; deleted_at: string | null }) => role.model_config_id && !role.deleted_at)
       const workspace = await request('/api/workspaces', { display_name: title, root_path: root, acknowledge_existing_content: true })
       await request('/api/runtime/config', { scope: 'workspace', scope_id: workspace.id, limit: 5, expected_revision: 0, services_enabled: true }, 'PUT')
-      await request(`/api/workspaces/${workspace.id}`, { shell_enabled: true }, 'PATCH')
-      const role = await request('/api/roles', { name: `服务助手 ${stamp}`, system_prompt: '精确执行用户限定的服务启动脚本。启动完成后必须使用服务状态和日志工具，依据真实日志回答验证值。不猜测，不使用其他脚本或端口。',
-        model_config_id: seed.model_config_id, model_name: seed.model_name, params: { max_tokens: 2048 },
-        builtin_tools: ['workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
+      await request(`/api/workspaces/${workspace.id}`, { shell_enabled: true, file_tools_enabled: true, basic_commands_enabled: true }, 'PATCH')
+      const role = await request('/api/roles', { name: `服务助手 ${stamp}`, system_prompt: '根据用户目标和实际工具结果完成开发。尊重审批与服务占用规则，不换工具规避拒绝。不猜测文件或页面内容。',
+        model_config_id: seed.model_config_id, model_name: seed.model_name, params: { max_tokens: 4096 },
+        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_run_command', 'workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
       return (await request('/api/conversations', { title, type: 'single', role_ids: [role.id], workspace_binding_id: workspace.id })).id as number
     }, { base, root, title, stamp })
     await page.reload()
     await page.getByText(title, { exact: true }).click()
     stage = '限定服务脚本审批'
-    await page.getByLabel('消息输入框').fill(`预置程序已准备，不需要安装依赖。调用 workspace_start_service，script 精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=60。等待 Owner 批准后，用返回的 runtime_id 查询状态和日志。最终只回复日志中的 verification 值，保留服务运行，不使用其他命令。`)
+    await page.getByLabel('消息输入框').fill(`请创建 index.html，包含一个 h1 标题 HelloWorld，以及 id="keep" 的 p，其文本原样为 proof.txt 内容。不要修改其他预置文件，不安装依赖。运行设施已准备，启动服务的 script 必须精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=300。本轮只批准该服务脚本和精确的只读检查脚本 ${checkScript}，其余操作按原生工具能力自行选择。确认页面后结束本轮回复，保留服务运行。`)
     await page.getByLabel('发送消息').click()
     await expect(page.getByRole('button', { name: '批准后台服务启动', exact: true })).toBeVisible({ timeout: 90000 })
     const valid = await page.evaluate(async ({ base, cid, script, port }) => {
       const rows = await (await fetch(`${base}/api/conversations/${cid}/tool-approvals`, { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })).json()
-      return rows.length === 1 && rows[0].script.trim() === script && rows[0].port === port && rows[0].health_path === '/' && rows[0].lifetime_seconds === 60
+      return rows.length === 1 && rows[0].script.trim() === script && rows[0].port === port && rows[0].health_path === '/' && rows[0].lifetime_seconds === 300
     }, { base, cid, script, port })
     if (!valid) {
       await page.getByRole('button', { name: '拒绝后台服务启动', exact: true }).click()
       throw new Error('Model request outside smoke approval')
     }
-    await page.getByRole('button', { name: '批准后台服务启动', exact: true }).click()
+    const [, startupDecision] = await Promise.all([
+      page.getByRole('button', { name: '批准后台服务启动', exact: true }).click({ timeout: 8000 }),
+      page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/decision'), { timeout: 10000 }),
+    ])
+    if (!startupDecision.ok()) throw new Error('启动审批失败')
     stage = '真实状态、日志与回答'
-    await expect.poll(() => page.evaluate(async (proof) => {
-      const state = (await import('/src/store/chat.ts')).useChatStore.getState()
-      return !state.generating && state.messages.some((item) => item.sender_type === 'role' && item.status === 'done' && item.parts_json.some((part) => part.type === 'text' && part.text?.includes(proof)))
-    }, proof), { timeout: 90000 }).toBe(true)
-    expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
-    stage = '服务存活期间的真实 Shell 审批与 HTTP 检查'
-    const checkScript = `curl --fail --silent --show-error --max-time 5 http://127.0.0.1:${port}/`
-    await page.getByLabel('消息输入框').fill(`保留刚才的服务。现在只调用 workspace_run_shell，script 精确为：${checkScript}。等待 Owner 批准后执行。成功后简短确认 HTTP 检查完成，不要停止服务，不要启动其他服务。`)
-    await page.getByLabel('发送消息').click()
-    await expect(page.getByRole('button', { name: '批准本次 Shell', exact: true })).toBeVisible({ timeout: 90000 })
-    const checkValid = await page.evaluate(async ({ base, cid, checkScript }) => {
-      const rows = await (await fetch(`${base}/api/conversations/${cid}/tool-approvals`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` },
-      })).json()
-      return rows.length === 1 && rows[0].tool_name === 'workspace_run_shell' && rows[0].script.trim() === checkScript && rows[0].active_service_count === 1
-    }, { base, cid, checkScript })
-    if (!checkValid) {
-      await page.getByRole('button', { name: '拒绝本次 Shell', exact: true }).click()
-      throw new Error('Model Shell outside smoke approval')
+    let firstFinished = false
+    let firstChecks = 0
+    const firstDeadline = Date.now() + 90_000
+    while (Date.now() < firstDeadline) {
+      for (const row of await api(`/api/conversations/${cid}/tool-approvals`)) {
+        const allowed = row.tool_name === 'workspace_run_shell' && row.script.trim() === checkScript && firstChecks < 3
+        const [, decision] = await Promise.all([
+          page.getByRole('button', { name: `${allowed ? '批准' : '拒绝'}${row.runtime_id ? '后台服务启动' : '本次 Shell'}`, exact: true }).click({ timeout: 8000 }),
+          page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/tool-approvals/${row.id}/decision`), { timeout: 10000 }),
+        ])
+        if (!decision.ok()) throw new Error('附加审批失败')
+        if (!allowed) throw new Error('第一轮附加请求超出范围')
+        firstChecks++
+      }
+      const history = await api(`/api/conversations/${cid}/messages`)
+      if (!history.active_generation_ids.length && history.items.some((item: { sender_type: string; status: string }) => item.sender_type === 'role' && item.status === 'done')) {
+        firstFinished = true
+        break
+      }
+      await page.waitForTimeout(150)
     }
-    await expect(page.getByRole('note')).toContainText('该工作区有 1 个未结束的服务实例')
-    await page.getByRole('button', { name: '批准本次 Shell', exact: true }).click()
-    await expect.poll(() => page.evaluate(async () => {
-      const state = (await import('/src/store/chat.ts')).useChatStore.getState()
-      return !state.generating && state.messages.some((message) => message.parts_json.some((part) =>
-        part.type === 'tool_call' && part.tool_name === 'workspace_run_shell' && part.status === 'success' && part.exit_code === 0))
-    }), { timeout: 90000 }).toBe(true)
+    if (!firstFinished) throw new Error('第一轮未完成')
+    expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
+    const initial = await readFile(path.join(root, 'index.html'), 'utf8')
+    if (!initial.includes(proof)) throw new Error('受控文件缺少保留内容')
+    const firstService = (await api(`/api/conversations/${cid}/processes`)).items.find((row: { state: string }) => row.state === 'ready')
+    if (!firstService) throw new Error('generation 结束后服务未存续')
+    await preview.goto(`http://127.0.0.1:${port}/?checkpoint=first`)
+    await expect(preview.getByRole('heading', { name: 'HelloWorld', exact: true })).toBeVisible()
+    if (await preview.locator('#keep').textContent() !== proof) throw new Error('实际页面保留内容不符')
+    stage = '第二轮局部修改与按实际路径审批'
+    await page.getByLabel('消息输入框').fill(`现在仅将 index.html 的 h1 从 HelloWorld 改为 HelloWorld Updated，其余文本、结构及 #keep 内容原样保留。按实际权限与服务占用规则操作，不擅停其他会话服务；需要重启时重新申请相同脚本、端口及 300 秒寿命。只读检查可用 ${checkScript}，除此和前轮服务脚本外不批准其他 Shell。工具按需要选择，不要求使用某个编辑工具。确认后结束回复并保留预览。`)
+    const sentResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/conversations/${cid}/messages`))
+    await page.getByLabel('发送消息').click()
+    const secondUserId = (await (await sentResponse).json()).message.id
+    let finished = false
+    let decisions = 0
+    const deadline = Date.now() + 110_000
+    while (Date.now() < deadline) {
+      const approvals = await api(`/api/conversations/${cid}/tool-approvals`)
+      for (const row of approvals) {
+        const allowed = row.runtime_id ? row.script.trim() === script && row.port === port && row.health_path === '/' && row.lifetime_seconds === 300
+          : row.script.trim() === checkScript
+        const [, decision] = await Promise.all([
+          page.getByRole('button', { name: `${allowed ? '批准' : '拒绝'}${row.runtime_id ? '后台服务启动' : '本次 Shell'}`, exact: true }).click({ timeout: 8000 }),
+          page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/tool-approvals/${row.id}/decision`), { timeout: 10000 }),
+        ])
+        if (!decision.ok()) throw new Error('第二轮审批失败')
+        if (!allowed || ++decisions > 3) throw new Error('超出本轮脚本或执行次数范围')
+      }
+      const history = await api(`/api/conversations/${cid}/messages`)
+      if (!history.active_generation_ids.length && history.items.some((item: { id: number; sender_type: string; status: string }) => item.id > secondUserId && item.sender_type === 'role' && item.status === 'done')) {
+        toolPaths = [history.items.filter((item: { id: number }) => item.id < secondUserId), history.items.filter((item: { id: number }) => item.id > secondUserId)]
+          .map((items) => items.flatMap((item: { parts_json: Array<{ type: string; tool_name?: string }> }) => item.parts_json.filter((part) => part.type === 'tool_call').map((part) => part.tool_name ?? 'unknown')))
+        finished = true
+        break
+      }
+      await page.waitForTimeout(150)
+    }
+    if (!finished) throw new Error('第二轮未完成')
+    const updated = await readFile(path.join(root, 'index.html'), 'utf8')
+    stage = '独立文件与第二轮页面核对'
+    if (!isExpectedHeadingEdit(initial, updated)) throw new Error('修改或保留内容不符')
+    await preview.goto(`http://127.0.0.1:${port}/?checkpoint=second`)
+    await expect(preview.getByRole('heading', { name: 'HelloWorld Updated', exact: true })).toBeVisible()
+    if (await preview.locator('#keep').textContent() !== proof) throw new Error('实际页面未保留内容')
+    const instances = (await api(`/api/conversations/${cid}/processes`)).items
+    if (toolPaths[1].includes('workspace_write') && (instances.find((row: { id: string }) => row.id === firstService.id)?.state !== 'stopped'
+      || !instances.some((row: { id: string; state: string }) => row.id !== firstService.id && row.state === 'ready'))) throw new Error('原生编辑停服重启未闭环')
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
     await page.reload()
     await page.getByLabel('消息输入框').fill('/ps')
     await page.getByLabel('消息输入框').press('Enter')
     const panel = page.getByRole('dialog', { name: '会话进程与详情' })
     await expect(panel.getByText('就绪', { exact: true })).toBeVisible()
-    await panel.getByRole('article').filter({ hasText: 'workspace_start_service' }).getByRole('button', { name: /^查看日志 / }).click()
-    expect(await panel.getByRole('region', { name: '服务日志' }).evaluate((node, proof) => node.textContent?.includes(proof), proof)).toBe(true)
     stage = '停止及日志隔离'
     await panel.getByRole('button', { name: /^停止 / }).first().click()
-    await expect(panel.getByText('已停止', { exact: true })).toBeVisible()
-    const tools = await waitForRunEvents((event) => event.event === 'tool.call_completed' && event.conversation_id === cid, 3)
-    expect(['workspace_start_service', 'workspace_service_status', 'workspace_service_logs'].every((name) => tools.some((event) => event.tool_name === name))).toBe(true)
+    await expect(panel.getByText('就绪', { exact: true })).toHaveCount(0)
     const serialized = JSON.stringify(await readRunEvents())
     expect([proof, script, checkScript, root].every((value) => !serialized.includes(value))).toBe(true)
   } catch {
+    failedStage = stage
+  } finally {
+    try {
+      if (cid !== null) {
+        await api(`/api/conversations/${cid}/stop`, 'POST')
+        const rows = (await api(`/api/conversations/${cid}/processes`)).items
+        for (const row of rows) if (!['stopped', 'exited', 'failed', 'rejected', 'expired', 'interrupted'].includes(row.state)) {
+          const result = await api(`/api/conversations/${cid}/processes/${row.id}/stop`, 'POST')
+          if (!['stopped', 'expired', 'rejected'].includes(result.state)) throw new Error('正常回收未确认')
+        }
+        const remaining = (await api(`/api/conversations/${cid}/processes`)).items
+        if (remaining.some((row: { state: string }) => !['stopped', 'exited', 'failed', 'rejected', 'expired', 'interrupted'].includes(row.state))) throw new Error('本轮资源未收口')
+        await expect.poll(() => page.request.get(`http://127.0.0.1:${port}`, { timeout: 1000 }).then(() => false).catch(() => true)).toBe(true)
+      }
+      normalCleanup = true
+    } catch { normalCleanup = false }
+    await preview.close().catch(() => undefined)
     await page.goto('about:blank').catch(() => undefined)
-    throw new Error(`真实后台服务验收失败：${stage}`)
+    const reportPath = testInfo.outputPath('tool-path-observation.json')
+    await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
+      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: 'not_implemented_in_G', native_diff: 'not_implemented_in_G',
+      emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
+    await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })
   }
+  if (failedStage || !normalCleanup) throw new Error(`真实两轮验收失败：${failedStage ?? '正常回收'}；正常回收=${normalCleanup}`)
 })

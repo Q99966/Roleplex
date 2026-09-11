@@ -15,6 +15,7 @@ from ..db import SessionLocal
 from ..models import (
     AgentExecution,
     Conversation,
+    ConversationMember,
     ExecutionWorkspace,
     Generation,
     Role,
@@ -29,14 +30,14 @@ from .commands import WorkspaceCommandError, WorkspaceCommandService
 WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 5
+WORKSPACE_TOOL_POLICY_VERSION = 6
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
-    "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件，并取得 sha256 供后续安全更新。",
-    "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新；同工作区有未结束服务时，此原生写工具暂不可用。这不构成文件写入隔离。",
+    "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件；每段结果的 sha256 都是本次读取的全文件 hash，供后续安全更新。跨段 hash 改变时重新读取，不拼接不同版本。",
+    "workspace_write": "普通源码创建或整文件替换优先使用本工具，更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
-    "workspace_run_shell": "请求执行 Shell 脚本，必须等待 Owner 对本次脚本批准；只接受 script，不允许 cwd、环境或审批参数。工作区有运行中的服务时仍可申请，继续受权限、配额与清理门槛约束；脚本可能修改文件或影响服务，不是只读能力。",
-    'workspace_start_service': '请求 Owner 批准前台 HTTP 开发服务；必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。',
+    "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
+    'workspace_start_service': '请求 Owner 批准实际脚本并托管前台 HTTP 开发服务；可包含必要准备操作，但普通源码编辑优先原生文件工具，不仅为减少调用次数塞进启动脚本。必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。脚本可修改文件、访问网络，未采集文件 diff；启动失败或回收成功不代表副作用回滚。独立逐次审批，不移用 Shell 批准，不自动换入口规避拒绝。',
     'workspace_service_status': '查询当前会话已登记服务的真实状态；不扫描全机，不占进程名额。',
     'workspace_service_logs': '读取当前会话服务的有界私有双流日志及游标缺口，内容会发给当前模型。',
     'workspace_stop_service': '停止当前会话指定的托管实例并确认回收，不按 PID 或端口杀进程。',
@@ -262,8 +263,19 @@ async def _authorized_service(
             WorkspaceBinding.created_by == triggered_by_user_id,
             WorkspaceBinding.active.is_(True),
         ))
+        # 工具可跨多个 await 存续；创建时的成员检查不能替代每次调用和审批后的实时复核。
+        owner_member = await session.scalar(select(ConversationMember.id).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.member_type == 'user', ConversationMember.member_id == triggered_by_user_id,
+        ))
+        role_member = await session.scalar(select(ConversationMember.id).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.member_type == 'role', ConversationMember.member_id == role_id,
+        ))
         if (
             execution is None
+            or owner_member is None
+            or role_member is None
             or conversation is None
             or conversation.type != "single"
             or conversation.deleted_at is not None
