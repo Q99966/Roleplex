@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-11 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -17,7 +17,7 @@
 
 ## 通用约定
 
-W1d 增量（实施中，迁移 `0009_runtime_services`）：instance_settings/workspace_bindings/conversations
+W1d 增量（已实现，迁移 `0009_runtime_services`）：instance_settings/workspace_bindings/conversations
 分别新增 process_limit（20/5/3）和 process_limit_version；工作区新增默认 false 的 services_enabled。
 runtime_gate 单行保存短事务序列和关闭门槛；runtime_entries 保存顶层运行实例 ID、稳定排序号、来源
 Owner/会话/工作区/execution/chain/角色/调用身份、kind/state/revision、日志进程身份、PID/出生身份、声明与租用
@@ -25,6 +25,16 @@ Owner/会话/工作区/execution/chain/角色/调用身份、kind/state/revision
 (execution_id,tool_call_id) 唯一。来源身份为不可变快照，不因会话/工作区删除而抹掉历史回收证据。
 runtime_cleanup_operations 保存 scope/scope_id、原因/触发者、进程身份、冻结数量及操作状态/时间；
 runtime_cleanup_items 保存操作与实例关系、固定 ordinal、逐项状态/结果/错误及起止时间，每操作每实例唯一。
+迁移 `0011_cleanup_failure_links` 为 runtime_cleanup_operations 增加 error_code（可空固定失败原因）和
+superseded_by_id（可空后续核查批次身份）；旧数据保持空，不猜测历史原因。机器日志写失败时仍在原批次保留失败状态，
+成功重试保留旧条目事实并关联新批次，不把原失败改写为原时刻成功。
+迁移 `0012_runtime_boot_identity` 增加 runtime_entries.host_boot_id（可空内核启动 UUID）；仅实际登记时读取，
+旧数据不回填。主机启动身份已改变可以证明旧内核中的实例不再存活；单纯墙钟变化或后端进程重启不是此证明。
+迁移 `0013_runtime_recovery_receipts` 增加 runtime_entries.recovery_token_hash（可空一次性回收令牌 SHA-256）。
+监管器通过独立管道接收随机令牌，确认后代回收后原子写入当前 World 的 `.runtime-receipts/` 私有凭据；
+内容只含运行身份、PID/出生身份、退出码和证明令牌，不含脚本/输出，也不进入日志或 API。终态落库后清理匹配凭据。
+兼容数据库模式按连接配置不可逆标识隔离目录；旧数据无证明时不回填，不把根 PID 消失当作服务后代已回收。
+新 Linux birth 使用 `linux:<内核 starttime tick>`，不受墙钟调整影响；读取旧 epoch 字符串时保持兼容并保守核查。
 所有查询仍按当前 World 与当前资源权限鉴权，来源快照不授予访问已删除资源的权利；日志尾部另行到期清除。
 迁移 `0010_runtime_conversation_ref` 增加 conversation_ref_id（可空，引用 conversations.id，ON DELETE SET NULL）：
 当前 API/模型授权与列表以该引用为准；conversation_id 仅保留历史来源。物理删除后即便整数 ID 被复用也不会
@@ -55,10 +65,10 @@ runtime_cleanup_items 保存操作与实例关系、固定 ordinal、逐项状�
 | `agent_executions` | Agent 执行身份、generation 一对一关系及后续父子树 | E0 已实现 |
 | `workspace_bindings` | 当前 World Owner 从前端登记的绝对根工作目录 | W1a 已实现 |
 | `execution_workspaces` | execution 对 managed directory 的租用与路径快照 | W1a 已实现 |
-| `runtime_gate` | 当前 World 的短事务配额序列及关闭门槛 | W1d 实施中 |
-| `runtime_entries` | 顶层命令/后台服务、来源与独立生命周期 | W1d 实施中 |
-| `runtime_cleanup_operations` | 范围冻结与回收批次对账 | W1d 实施中 |
-| `runtime_cleanup_items` | 固定回收顺序和逐项结果 | W1d 实施中 |
+| `runtime_gate` | 当前 World 的短事务配额序列及关闭门槛 | W1d 已实现 |
+| `runtime_entries` | 顶层命令/后台服务、来源与独立生命周期 | W1d 已实现 |
+| `runtime_cleanup_operations` | 范围冻结与回收批次对账 | W1d 已实现 |
+| `runtime_cleanup_items` | 固定回收顺序和逐项结果 | W1d 已实现 |
 | `event_log` | 持久化事件流，断线恢复的唯一可靠来源 | 已实现 |
 | `queue_jobs` | 会话串行队列的持久化任务 | M4a 已实现 |
 | `invites` | 邀请码与使用次数 | 预留 |

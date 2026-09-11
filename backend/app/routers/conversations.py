@@ -193,9 +193,11 @@ async def update_conversation_workspace(
         member = await require_member(session, conversation_id, owner_id)
         return await response(session, current, member)
     if changed:
-        async with manager.cleanup_scope('conversation', conversation_id, 'workspace_rebind', owner_id):
+        async with manager.cleanup_scope('conversation', conversation_id, 'workspace_rebind', owner_id,
+            resource_revision=payload.expected_revision, confirmation=payload.confirm_cleanup):
             return await apply_binding()
-    return await apply_binding()
+    async with manager.cleanup_lock:
+        return await apply_binding()
 
 
 @router.put("/{conversation_id}/members", response_model=ConversationResponse)
@@ -334,7 +336,7 @@ async def delete_conversation(conversation_id: int, user: Annotated[User, Depend
             raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
         owner_id = user.id
         await session.rollback()
-        async with manager.cleanup_scope('conversation', conversation_id, 'conversation_delete', owner_id):
+        async with manager.cleanup_scope('conversation', conversation_id, 'conversation_delete', owner_id, confirmation=confirm_cleanup):
             conversation = await _owned_conversation(session, conversation_id, owner_id)
             conversation.deleted_at = datetime.now(timezone.utc)
             await session.commit()

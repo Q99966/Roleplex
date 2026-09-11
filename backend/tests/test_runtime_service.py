@@ -1,11 +1,14 @@
 """真实前台 HTTP 进程经审批成为独立服务；不使用 Docker 或未知宿主文件。"""
 import asyncio
 import socket
+import sys
 
 import httpx
 import pytest
 from test_workspace_commands import command_conversation, command_root, isolated_command_database, send_command
 from test_shell_approvals import pending
+
+pytestmark = pytest.mark.skipif(sys.platform != 'linux', reason='受托管服务当前仅在 Linux 开放')
 
 
 @pytest.mark.anyio

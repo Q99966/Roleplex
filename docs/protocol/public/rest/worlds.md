@@ -8,7 +8,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/worlds/manager.py`、`backend/app/routers/worlds.py`、`backend/app/main.py` |
 | 关联测试 | `backend/tests/test_worlds.py`、`frontend/tests/world-switching.spec.ts` |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-11 |
 
 ## 世界与运行模式
 
@@ -62,9 +62,9 @@ Content-Type: application/json
 服务端只在包装器提供了受控切换文件时接受请求：先原子写入目标世界，再优雅退出；包装器读取目标并
 以新世界重启。前端轮询健康检查，观察到 `world_name` 变更后清除 Token 并要求重新登录。
 
-W1d 实施中增量：写入切换目标前关闭当前 World 新进程入口，并按
+W1d 增量：写入切换目标前关闭当前 World 新进程入口，并按
 [运行实例协议](../messaging/runtime-services.md)逐项回收已登记命令/服务；未确认回收返回 409，不能假装已切换。
-本轮尚未完成全部 World 操作竞争与备份衔接验收。
+收尾验证及人工步骤见[服务验证指南](../../../testing/runtime-services.md)。
 
 错误码：
 
@@ -74,6 +74,22 @@ W1d 实施中增量：写入切换目标前关闭当前 World 新进程入口，
 - `409 WORLD_SWITCH_REQUIRES_WRAPPER`：当前后端不是由世界包装器启动。
 
 ## 隔离与兼容
+
+### W1d 当前 World 协调备份
+
+`POST /api/worlds/backup` 仅当前 World Owner 可调用，body 为 `{"confirm_cleanup":true}`；未确认返回
+409 RUNTIME_CLEANUP_CONFIRM_REQUIRED，兼容数据库模式返回 409 WORLD_OPERATION_REQUIRES_MANAGED。
+与切换共用互斥入口；先冻结并回收全部登记实例，在保持启动门槛期间生成 SQLite 一致性备份，再释放门槛。
+返回 ZIP 附件及 Cache-Control: no-store，包含世界数据库、附件与密钥；必须视为敏感备份，不能分享给 Guest。
+不备份外部工作区目录，不自动重启已停止服务。临时导出文件在响应结束后清理，失败只返回稳定错误码。
+切换一旦接受后不得被另一目标覆盖（409 WORLD_OPERATION_IN_PROGRESS）；控制文件写失败返回
+503 WORLD_OPERATION_FAILED，保留失败回收门槛，允许 Owner 显式重试。目标版本不兼容必须在停止当前世界前拒绝。
+
+离线 CLI 备份/删除在整个准备期取得 World 租约，未确认回收记录会阻止操作。删除先原子移出原世界名称再清理文件，
+防止另一后端打开逐文件删除中的世界；文件清理失败可能留下 `.deleted-*` 残片，不能将其解释为完整可恢复备份。
+删除运行中的 World 仍须先通过切换或正常关闭回收；不新增跨 World Token 远程删除或按 PID 强杀其他后端的能力。
+租约的检查、过期文件回收与创建由 `.lease-locks/` 中的 OS 文件锁串行化，查询不删除租约；损坏租约保守拒绝，
+不能把无法识别的租约当作无人使用。释放同时核对 PID 与出生身份，锁不是业务数据库写锁。
 
 - 不允许把 Token 带到新世界继续使用；世界 JWT 密钥不同，服务端也会拒绝旧 Token。
 - 世界版本不高于软件时由 Alembic 自动升级；数据库记录未知的新 revision 时，启动失败必须翻译为

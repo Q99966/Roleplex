@@ -181,7 +181,7 @@ provider_streaming_c02814a1.json
 {"event":"process.stopped","process_instance_id":"a813f021","process_seq":927,"reason":"world_switch"}
 ```
 
-`reason` 允许：`normal`、`world_switch`、`keyboard_interrupt`、`service_stop`。进程崩溃时可能没有
+`reason` 允许：`normal`、`world_switch`、`keyboard_interrupt`、`service_stop`、`wrapper_shutdown`、`wrapper_lost`。进程崩溃时可能没有
 `process.stopped`，这是异常退出的判断依据，不补写伪造终态。
 
 当前部署约束仍是单进程单 worker。若以后允许多 worker，必须先增加跨进程文件锁或集中日志消费者，
@@ -316,6 +316,10 @@ log.retention_skipped
 `provider.completed`、`model.call_done`、`llm.finished` 等多套表达。现有实现迁移到 v2 时需要提供旧→新
 事件映射测试，不能静默遗漏监控消费者。
 
+运行回收清单已持久化后，机器审计写失败不得跳过剩余目标；继续回收并把批次记录为失败，阻止尚未提交的后续资源变更。
+请求取消同样不能截断冻结清单。无法保存某项结果时保留原待处理记录，后续重试核查，不伪造完成或成功日志。
+最终记录失败不回滚已提交资源；批次保留失败原因及后续核查身份，不能把错误响应当作“操作从未发生”的证明。
+
 W1c 审批事件只使用 approval_id、request_digest 和既有 execution/chain/tool_call 关联字段；
 requested 不填终态，resolved 以 status=success/rejected/cancelled 和 approval_status=approved/rejected/expired
 表达决定，reason 区分 owner_decision/expired/cancelled/restart。脚本只进入加密业务审批记录，不进入日志。
@@ -324,6 +328,7 @@ W1d 运行/回收事件使用 runtime_id、cleanup_id、target_ordinal、scope/s
 runtime_state、PID/出生身份以及既有 conversation/workspace/execution/chain/tool_call 关联；不得记录进程对象 repr、
 命令行、根路径、脚本或 stdout/stderr。配额审计保留 old_limit/new_limit。回收条目记录动作/验证/耗时/退出结果，
 批次汇总引用完整条目及未确认目标，不以发出信号代替退出证明。具体过程见 W1d 计划第六节。
+现场/持久回收证明的随机令牌及凭据正文不得进入日志、共享事件或测试报告；日志只记录核查结果与既有运行身份。
 
 ### 6.2 status、reason 与 error_code
 

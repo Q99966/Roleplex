@@ -6,6 +6,32 @@ from test_workspace_commands import command_conversation, command_root, isolated
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize('same_call', [False, True])
+async def test_port_and_call_identity_reserve_only_once(command_root, isolated_command_database, same_call):
+    """并发端口竞争或重复调用只占一个名额；拒绝不创建第二份资源。
+
+    Args:
+        command_root：本轮目录。
+        isolated_command_database：新库。
+        same_call：是否模拟同一执行调用重复到达。
+    """
+    from app.runtime import registry
+    async with command_conversation(command_root) as (_client, _headers, cid, rid, wid):
+        async def claim(index):
+            """Args:
+                index：竞争请求序号。
+            """
+            return await registry.reserve(owner_id=1, conversation_id=cid, workspace_id=wid,
+                execution_id='identity-fixture', role_id=rid, tool_call_id='same' if same_call else str(index),
+                tool_name='workspace_start_service', kind='service', port=45678)
+        results = await asyncio.gather(claim(0), claim(1), return_exceptions=True)
+        assert sum(not isinstance(result, Exception) for result in results) == 1
+        assert [result.code for result in results if isinstance(result, registry.RuntimeRejected)] == [
+            'RUNTIME_REQUEST_CONFLICT' if same_call else 'RUNTIME_PORT_BUSY']
+        assert (await registry.quota_view('conversation', cid))['used'] == 1
+
+
+@pytest.mark.anyio
 async def test_runtime_owner_boundary_and_invalid_limits(command_root, isolated_command_database):
     """Guest 不能查配置、日志或停止，Owner 非法配置与旧版本明确拒绝。
 

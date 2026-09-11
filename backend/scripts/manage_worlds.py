@@ -45,7 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """执行世界管理命令并返回退出码。"""
+    """执行世界管理命令并返回退出码。
+
+    Args:
+        argv：显式命令行参数；省略时使用进程参数。
+    """
     args = build_parser().parse_args(argv)
     manager = WorldManager(args.worlds_dir)
     try:
@@ -70,9 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.yes:
                 print("拒绝删除：必须显式传入 --yes", file=sys.stderr)
                 return 2
-            if settings.world_managed and args.name == settings.world_name:
-                print("拒绝删除当前正在使用的世界", file=sys.stderr)
-                return 2
+            # 配置中的默认名不是运行证明；真实租约与未回收登记由管理器原子复核。
             manager.delete(args.name)
             print(f"已删除世界：{args.name}")
             return 0

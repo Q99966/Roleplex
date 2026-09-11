@@ -7,6 +7,7 @@ import secrets
 import shutil
 import sqlite3
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import psutil
 
 from .compatibility import WorldRequiresNewerRoleplex
+from ..workspaces.process_identity import birth_identity, same_birth
 
 
 WORLD_FORMAT_VERSION = 1
@@ -189,8 +191,38 @@ class WorldManager:
     def backup(self, name: str, destination: str | Path) -> Path:
         """把一致性数据库快照、密钥、元数据和附件打成 ZIP。"""
         world = self.get(name)
-        if self.is_active(name) or self._has_unfinished_runtime(world.database_path):
-            raise WorldActiveError('备份前请正常关闭该世界后端并确认进程已回收；不能在服务可能写入时备份。')
+        self.acquire(name)
+        try:
+            if self._has_unfinished_runtime(world.database_path):
+                raise WorldActiveError('备份前请正常关闭该世界后端并确认进程已回收；不能在服务可能写入时备份。')
+            return self._archive_world(name, destination)
+        finally:
+            self.release(name)
+
+    def backup_owned(self, name: str, destination: str | Path) -> Path:
+        """当前后端在持有 World 租约及回收门槛期间导出，不授权其他进程绕过租约。
+
+        Args:
+            name：当前后端经认证的 World。
+            destination：宿主创建的独占临时导出目录。
+        """
+        world = self.get(name)
+        try:
+            lease = json.loads(self._lease_path(name).read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            raise WorldActiveError('当前进程未持有世界租约') from None
+        if lease.get('pid') != os.getpid() or not same_birth(os.getpid(), lease.get('birth')) or self._has_unfinished_runtime(world.database_path):
+            raise WorldActiveError('世界租约不属于当前后端或仍有未回收实例')
+        return self._archive_world(name, destination)
+
+    def _archive_world(self, name: str, destination: str | Path) -> Path:
+        """生成归档；调用者负责持有租约/运行门槛并验证归属。
+
+        Args:
+            name：已验证世界。
+            destination：目标目录，不来自未授权模型输入。
+        """
+        world = self.get(name)
         output_dir = Path(destination)
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
@@ -241,9 +273,17 @@ class WorldManager:
     def delete(self, name: str) -> None:
         """删除一个已验证的世界目录；调用方必须先完成显式确认。"""
         world = self.get(name)
-        if self.is_active(name) or self._has_unfinished_runtime(world.database_path):
-            raise WorldActiveError(f"世界正在使用，不能删除：{world.name}")
-        shutil.rmtree(world.path)
+        self.acquire(name)
+        try:
+            if self._has_unfinished_runtime(world.database_path):
+                raise WorldActiveError(f"世界仍有未确认回收的实例，不能删除：{world.name}")
+            # 先原子移出可启动名称，再清理文件；不能在逐文件删除租约后允许新后端打开半个世界。
+            retired = world.path.with_name(f'.deleted-{secrets.token_hex(16)}')
+            world.path.rename(retired)
+        except BaseException:
+            self.release(name)
+            raise
+        shutil.rmtree(retired)
 
     @staticmethod
     def _has_unfinished_runtime(database: Path) -> bool:
@@ -270,7 +310,7 @@ class WorldManager:
         return self.world_path(name) / _ACTIVE_LEASE
 
     def is_active(self, name: str) -> bool:
-        """判断租约对应进程是否仍存活；过期或损坏租约按不活跃处理。"""
+        """只读检查租约；损坏租约保守阻止操作，过期租约只由持锁的 acquire 清理。"""
         lease = self._lease_path(name)
         if not lease.is_file():
             return False
@@ -278,21 +318,66 @@ class WorldManager:
             payload = json.loads(lease.read_text(encoding="utf-8"))
             pid = int(payload["pid"])
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            lease.unlink(missing_ok=True)
-            return False
+            return True
+        if pid <= 0:
+            return True
         if psutil.pid_exists(pid):
             return True
-        lease.unlink(missing_ok=True)
         return False
+
+    @contextmanager
+    def _lease_lock(self, name: str):
+        """用 OS 文件锁保护租约的检查/回收/创建，不把它用作业务数据库写锁。
+
+        Args:
+            name：已验证的世界名；锁文件位于世界目录之外，删除/换名不会丢锁。
+        """
+        normalized = validate_world_name(name)
+        directory = self.root / '.lease-locks'
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / f'{normalized}.lock').open('a+b') as stream:
+            if os.name == 'nt':
+                import msvcrt
+                if stream.tell() == 0:
+                    stream.write(b'\0')
+                    stream.flush()
+                stream.seek(0)
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    raise WorldActiveError('世界租约正在被其他操作修改') from None
+                try:
+                    yield
+                finally:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise WorldActiveError('世界租约正在被其他操作修改') from None
+                try:
+                    yield
+                finally:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def acquire(self, name: str) -> None:
         """为当前后端进程原子取得世界活动租约。"""
+        with self._lease_lock(name):
+            self._acquire_locked(name)
+
+    def _acquire_locked(self, name: str) -> None:
+        """Args:
+            name：调用者持有该世界租约文件锁。
+        """
         world = self.get(name)
         lease = self._lease_path(name)
         if self.is_active(name):
             raise WorldActiveError(f"世界已被其他进程使用：{world.name}")
         lease.unlink(missing_ok=True)
-        payload = json.dumps({"pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat()})
+        payload = json.dumps({"pid": os.getpid(), "birth": birth_identity(os.getpid()),
+            "started_at": datetime.now(timezone.utc).isoformat()})
         try:
             descriptor = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
@@ -302,12 +387,19 @@ class WorldManager:
 
     def release(self, name: str) -> None:
         """仅释放属于当前进程的活动租约。"""
+        with self._lease_lock(name):
+            self._release_locked(name)
+
+    def _release_locked(self, name: str) -> None:
+        """Args:
+            name：调用者持有该世界租约文件锁。
+        """
         lease = self._lease_path(name)
         try:
             payload = json.loads(lease.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             return
-        if payload.get("pid") == os.getpid():
+        if payload.get("pid") == os.getpid() and same_birth(os.getpid(), payload.get('birth')):
             lease.unlink(missing_ok=True)
 
     def request_switch(self, name: str, control_file: str | Path) -> None:

@@ -3,10 +3,10 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 客户端；内部 Agent 与运行时 |
-| 状态 | 原型（W1d 实施中，尚未完整验收） |
+| 状态 | 已实现（Linux 首版，已人工验收） |
 | 协议版本 | 1 |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-11 |
 | 事实来源 | `app/runtime/`、`routers/runtime.py`、`models.py`、运行时迁移与测试 |
 
 ## 身份、状态和配额
@@ -15,12 +15,13 @@
 World 默认 20、Workspace 默认 5、Conversation 默认 3；正整数上限可调整，存储上限为标准有符号 32 位整数。
 预留、启动、运行、停止及未确认回收都占名额；子进程、查询和停止不另计名额。三层同时满足才能预留。
 配额变更采用版本比较；降低上限不杀已有进程，尚未启动的请求必须在批准与启动时重查。
+停用配置的版本在冻结回收清单的同一事务中再次比较；过期请求不能先停止服务再报告版本冲突。
 
 状态为 pending/starting/waiting_ready/ready/unhealthy/running/stopping/cleanup_required，以及终态
 stopped/exited/failed/rejected/expired/interrupted。ready 只用于已验证 listener 身份及 HTTP 状态的服务。
 stop 不是 kill 已发出，只有实际退出和回收验证后才能释放名额；不能按裸 PID 或端口停止。
 
-## Owner API（候选契约，随实现同步）
+## Owner API
 
 - `GET /api/runtime/config?scope=world|workspace|conversation&scope_id=<id>`：limit、revision、used；world ID 为 0。
 - `PUT /api/runtime/config`：scope、scope_id、limit、expected_revision，workspace 还可修改 services_enabled。
@@ -33,6 +34,8 @@ stop 不是 kill 已发出，只有实际退出和回收验证后才能释放名
 有效 Owner Token 和资源归属必须在服务端复核；Guest 403、不存在或跨会话 404，响应 no-store。
 原脚本、root、日志仅在这些受保护接口中返回，不进入消息历史/共享 WS、正式日志或前端持久缓存。
 `runtime_changed` 只广播 runtime_id、revision、state；Owner 收到通知及重连就绪后重新读取登记。
+实例创建/状态更新与对应 runtime_changed 在同一数据库事务提交；事件写入失败必须回滚状态，提交后才广播。
+网络广播中断不撤销已提交事实，重连按 event_seq 回放或由快照后的登记读取恢复。
 服务日志在内存环形保留 1 MiB，终态尾部按 World 用途隔离密钥加密保存；7 天或 World 16 MiB 超额时清除旧尾部，
 不删除来源/回收审计身份。输出持续排空，绝不逐输出块写数据库。
 日志 availability 区分 available、not_recorded、expired、evicted 与 unavailable；到期与预算淘汰不能伪装成空输出。
@@ -40,15 +43,18 @@ stop 不是 kill 已发出，只有实际退出和回收验证后才能释放名
 
 ## 模型工具与启动移交
 
-拟提供 `workspace_start_service(script,port,health_path="/",lifetime_seconds=7200)`、
+提供 `workspace_start_service(script,port,health_path="/",lifetime_seconds=7200)`、
 `workspace_service_status(runtime_id)`、`workspace_service_logs(runtime_id,after=0)`、`workspace_stop_service(runtime_id)`。
 这些工具在 Owner single 和工作区/角色显式启用时使用。start 参数仅表达脚本及受限探针/寿命，不能传 argv、cwd、
 环境、审批结果或调用身份。启动批准必须绑定后台服务操作、runtime ID、脚本、目录、解释器、端口、探针和限制；
 W1c 普通脚本批准不能消费为服务启动。
+同工作区运行服务时，Owner 仍可申请 workspace_run_shell 的逐次审批；审批视图提示共享文件和服务影响，Shell 继续占配额。
+原生 workspace_write 的服务占用限制暂保留，但不构成对 Shell 或服务脚本写文件的隔离；清理门槛及未确认回收仍阻止 Shell。
 
 后台实例只由独立宿主任务写状态；启动工具等待真实 ready 后移交，随后 generation 可以完成。
 移交前取消要收口，移交后停止生成不停止服务。回复、页面、socket 不是服务所有者。
 probe 固定 127.0.0.1 的批准端口与相对路径，无 DNS/代理/认证头、不跟重定向、响应体有界且不落日志。
+服务寿命以单调时钟执行，UTC 到期时间仅用于展示；墙钟回退不能延长已批准寿命，到期进入 expired。
 listener 必须属于监管器后代，不能把陌生进程的 200 当成功；监听偏离声明范围时失败并清理。
 
 ## 删除、退出与恢复
@@ -56,11 +62,24 @@ listener 必须属于监管器后代，不能把陌生进程的 200 当成功；
 会话/工作区变更前先持久化回收门槛和冻结清单，逆启动顺序逐项回收。回收条目持久记录来源、选择原因、
 实际动作、身份复核、耗时和结果，单项失败继续其他项。重复/重叠操作不得重复实际停止，结束按完整清单对账。
 有未确认项时拒绝删除/换绑/切 World。配置降低配额不是回收授权。
+交互删除/停用/换绑的确认与会话资源版本在冻结清单事务中复核；预览后新增实例不能绕过明确确认，旧版本不能先停再报冲突。
 应用退出关闭新启动入口，先逐项回收再关闭调度器、DB/日志。包装器不得用固定短超时截断整批回收。
 POSIX 包装器通过独占控制管道通知后端退出；包装器被强制终止时管道 EOF 同样触发后端正常关闭。
 重复终止信号不得重复打断正在执行的回收；该管道属于内部生命周期控制，不是公开 API。
 硬退出由监管器控制通道 EOF 触发子进程收口；重启不重放或盲目接管，PID/出生身份不符不得误杀。
 未完成回收清单与旧进程实例关联恢复，不能补造上次已完成终态。
+回收清单持久化成功后，请求取消不能中断后续目标；宿主继续逐项处理，结束后才向调用者报告取消。
+机器审计或某项结果保存失败也应继续尝试其余目标；变更提交前已知故障必须阻止提交，并记录失败批次。
+资源已提交后才发生的最终记录故障不能撤销已停止服务或已完成变更；返回错误不表示从未执行，客户端应重新读取实际状态。
+停止请求共用每实例的宿主任务；单项等待预算为 12 秒，超时返回 RUNTIME_CLEANUP_UNCONFIRMED 并继续下一项。
+超时或客户端取消不撤销正在进行的回收，也不释放仍活动的登记；后续请求复用该任务而不是再次发起停止。
+正常宿主以独立控制管道接收监管器的后代回收证明，不把脚本退出码或日志正文当成证明。
+监管器也写入与本次启动身份绑定的私有持久凭据；后端硬退出后，只有凭据有效且原根已退出，或已证明主机重启，
+才释放旧服务占用。同启动期内缺少凭据的旧服务保留 cleanup_required，不单凭根 PID 消失推测成功。
+监管器未送达证明、输出管道未收口或进程仍存活时不算已确认回收；脚本自行返回 125 等退出码不会冒充监管失败。
+已进入 cleanup_required 的实例，重启或再次停止时不能仅凭根 PID 消失释放占用；需要保留诊断与未确认状态。
+若登记时保存的内核启动 UUID 与当前有效 UUID 不同，可确认旧主机启动期的实例已退出；不向同号的新进程发送信号。
+旧数据缺少该身份时不推测。单纯重启后端不能替代主机重启证明。
 
 W1d 首先仅开放已验证的 Linux 后台服务运行器；Windows 在原生进程/Job/UTF-8/宿主消失测试通过前不开放该能力。
 不接管 Docker 或其他 daemon 资源，不保证阻止恶意脚本提权或杀监管器，仍非 OS 沙箱。

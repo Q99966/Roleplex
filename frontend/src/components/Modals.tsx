@@ -6,6 +6,7 @@ import { useAppStore } from '../store/app'
 import { type Conversation, type Role } from '../api/client'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 import { RuntimeLimit } from './RuntimeLimit'
+import { WorldBackup } from './WorldBackup'
 
 export interface ModalProps {
   onClose: () => void
@@ -300,6 +301,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
             >
               {/* 当前运行状态卡片 */}
               <RuntimeLimit scope="world" id={0} />
+              <WorldBackup />
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -351,7 +353,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
                     disabled={!user?.is_owner || !worldSwitchingSupported || Boolean(switchingWorld)}
                     onChange={(event) => {
                       const target = event.target.value
-                      if (target !== worldName && confirm(`切换到世界“${target}”并重新登录吗？`)) {
+                      if (target !== worldName && confirm(`切换到世界“${target}”会逐项回收当前世界的全部托管进程，并要求重新登录；服务不会自动重启。继续吗？`)) {
                         void switchWorld(target)
                       }
                     }}

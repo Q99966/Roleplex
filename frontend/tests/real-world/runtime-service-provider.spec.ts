@@ -49,9 +49,10 @@ test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后�
       const seed = roles.find((role: { model_config_id: number | null; deleted_at: string | null }) => role.model_config_id && !role.deleted_at)
       const workspace = await request('/api/workspaces', { display_name: title, root_path: root, acknowledge_existing_content: true })
       await request('/api/runtime/config', { scope: 'workspace', scope_id: workspace.id, limit: 5, expected_revision: 0, services_enabled: true }, 'PUT')
+      await request(`/api/workspaces/${workspace.id}`, { shell_enabled: true }, 'PATCH')
       const role = await request('/api/roles', { name: `服务助手 ${stamp}`, system_prompt: '精确执行用户限定的服务启动脚本。启动完成后必须使用服务状态和日志工具，依据真实日志回答验证值。不猜测，不使用其他脚本或端口。',
         model_config_id: seed.model_config_id, model_name: seed.model_name, params: { max_tokens: 2048 },
-        builtin_tools: ['workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service'] })
+        builtin_tools: ['workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
       return (await request('/api/conversations', { title, type: 'single', role_ids: [role.id], workspace_binding_id: workspace.id })).id as number
     }, { base, root, title, stamp })
     await page.reload()
@@ -75,12 +76,35 @@ test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后�
       return !state.generating && state.messages.some((item) => item.sender_type === 'role' && item.status === 'done' && item.parts_json.some((part) => part.type === 'text' && part.text?.includes(proof)))
     }, proof), { timeout: 90000 }).toBe(true)
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
+    stage = '服务存活期间的真实 Shell 审批与 HTTP 检查'
+    const checkScript = `curl --fail --silent --show-error --max-time 5 http://127.0.0.1:${port}/`
+    await page.getByLabel('消息输入框').fill(`保留刚才的服务。现在只调用 workspace_run_shell，script 精确为：${checkScript}。等待 Owner 批准后执行。成功后简短确认 HTTP 检查完成，不要停止服务，不要启动其他服务。`)
+    await page.getByLabel('发送消息').click()
+    await expect(page.getByRole('button', { name: '批准本次 Shell', exact: true })).toBeVisible({ timeout: 90000 })
+    const checkValid = await page.evaluate(async ({ base, cid, checkScript }) => {
+      const rows = await (await fetch(`${base}/api/conversations/${cid}/tool-approvals`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` },
+      })).json()
+      return rows.length === 1 && rows[0].tool_name === 'workspace_run_shell' && rows[0].script.trim() === checkScript && rows[0].active_service_count === 1
+    }, { base, cid, checkScript })
+    if (!checkValid) {
+      await page.getByRole('button', { name: '拒绝本次 Shell', exact: true }).click()
+      throw new Error('Model Shell outside smoke approval')
+    }
+    await expect(page.getByRole('note')).toContainText('该工作区有 1 个未结束的服务实例')
+    await page.getByRole('button', { name: '批准本次 Shell', exact: true }).click()
+    await expect.poll(() => page.evaluate(async () => {
+      const state = (await import('/src/store/chat.ts')).useChatStore.getState()
+      return !state.generating && state.messages.some((message) => message.parts_json.some((part) =>
+        part.type === 'tool_call' && part.tool_name === 'workspace_run_shell' && part.status === 'success' && part.exit_code === 0))
+    }), { timeout: 90000 }).toBe(true)
+    expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
     await page.reload()
     await page.getByLabel('消息输入框').fill('/ps')
     await page.getByLabel('消息输入框').press('Enter')
     const panel = page.getByRole('dialog', { name: '会话进程与详情' })
     await expect(panel.getByText('就绪', { exact: true })).toBeVisible()
-    await panel.getByRole('button', { name: /^查看日志 / }).first().click()
+    await panel.getByRole('article').filter({ hasText: 'workspace_start_service' }).getByRole('button', { name: /^查看日志 / }).click()
     expect(await panel.getByRole('region', { name: '服务日志' }).evaluate((node, proof) => node.textContent?.includes(proof), proof)).toBe(true)
     stage = '停止及日志隔离'
     await panel.getByRole('button', { name: /^停止 / }).first().click()
@@ -88,7 +112,7 @@ test('真实模型启动 npm HelloWorld 服务，查询状态日志，回答后�
     const tools = await waitForRunEvents((event) => event.event === 'tool.call_completed' && event.conversation_id === cid, 3)
     expect(['workspace_start_service', 'workspace_service_status', 'workspace_service_logs'].every((name) => tools.some((event) => event.tool_name === name))).toBe(true)
     const serialized = JSON.stringify(await readRunEvents())
-    expect([proof, script, root].every((value) => !serialized.includes(value))).toBe(true)
+    expect([proof, script, checkScript, root].every((value) => !serialized.includes(value))).toBe(true)
   } catch {
     await page.goto('about:blank').catch(() => undefined)
     throw new Error(`真实后台服务验收失败：${stage}`)

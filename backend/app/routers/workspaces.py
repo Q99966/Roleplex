@@ -227,7 +227,7 @@ async def update_workspace(
         await session.commit()
         return await _response(session, binding)
     if payload.active is False:
-        async with manager.cleanup_scope('workspace', workspace_id, 'workspace_disabled', owner_id):
+        async with manager.cleanup_scope('workspace', workspace_id, 'workspace_disabled', owner_id, confirmation=payload.confirm_cleanup):
             return await apply_update()
     async with manager.cleanup_lock:
         return await apply_update()
@@ -248,7 +248,7 @@ async def delete_workspace(
     if (await quota_view('workspace', workspace_id))['used'] and not confirm_cleanup:
         raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
     await session.rollback()
-    async with manager.cleanup_scope('workspace', workspace_id, 'workspace_delete', owner_id):
+    async with manager.cleanup_scope('workspace', workspace_id, 'workspace_delete', owner_id, confirmation=confirm_cleanup):
         active_lease = await session.scalar(select(ExecutionWorkspace.id).where(
             ExecutionWorkspace.workspace_binding_id == workspace_id, ExecutionWorkspace.status == 'ready'))
         if active_lease is not None:

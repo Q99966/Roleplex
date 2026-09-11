@@ -90,6 +90,7 @@ export function ProcessPanel({ conversationId, onClose }: { conversationId: numb
         <p className="mt-1 text-slate-400">来源角色 {row.role_id} · execution {row.execution_id.slice(0, 8)}</p>
         <p className="mt-1 text-slate-400">开始：{row.started_at ? new Date(row.started_at).toLocaleString('zh-CN') : '尚未启动'} · 到期：{row.expires_at ? new Date(row.expires_at).toLocaleString('zh-CN') : '不适用'}</p>
         {row.error_code && <p className="text-red-300">{row.error_code}</p>}
+        {row.state === 'cleanup_required' && <p className="mt-2 text-amber-300">缺少完整回收证明，此项继续占用名额。可查看来源与后端日志并重试核查；不能仅凭根 PID 消失认定后代已结束。</p>}
         <div className="mt-3 flex gap-3">
           {!TERMINAL.includes(row.state) && <button type="button" onClick={() => void stop(row)} className="rounded bg-red-950 px-3 py-2 text-red-200">停止 {row.id.slice(0, 8)}</button>}
           <button type="button" onClick={() => void readDetail(row)} className="rounded bg-slate-800 px-3 py-2">查看详情 {row.id.slice(0, 8)}</button>

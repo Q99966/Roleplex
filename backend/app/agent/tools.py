@@ -227,6 +227,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
     from ..workspaces.command_worker import WORKER_ERRORS
     if result.get('error_code') in WORKER_ERRORS | {'COMMAND_TIMEOUT', 'COMMAND_NOT_SUPPORTED',
         'SHELL_REJECTED', 'SHELL_APPROVAL_EXPIRED', 'SHELL_APPROVAL_MISMATCH', 'SHELL_ARGUMENT_INVALID',
-        'SHELL_NOT_SUPPORTED', 'SHELL_REQUEST_CONFLICT', 'WORKSPACE_TOOL_NOT_AVAILABLE'}:
+        'SHELL_NOT_SUPPORTED', 'SHELL_REQUEST_CONFLICT', 'WORKSPACE_TOOL_NOT_AVAILABLE',
+        'RUNTIME_WORLD_LIMIT', 'RUNTIME_WORKSPACE_LIMIT', 'RUNTIME_CONVERSATION_LIMIT', 'RUNTIME_SCOPE_CLOSING'}:
         summary['error_code'] = result['error_code']
     return summary

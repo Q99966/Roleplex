@@ -92,7 +92,8 @@ async def put_config(payload: RuntimeConfiguration, response: Response, user: An
     if payload.services_enabled is False and before.get('services_enabled'):
         if not payload.confirm_cleanup:
             raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
-        async with manager.cleanup_scope(payload.scope, payload.scope_id, 'service_capability_disabled', owner_id):
+        async with manager.cleanup_scope(payload.scope, payload.scope_id, 'service_capability_disabled', owner_id,
+                                         expected_revision=payload.expected_revision):
             return {**await registry.configure(payload.scope, payload.scope_id, **arguments), 'services_supported': supported()}
     async with manager.cleanup_lock:
         return {**await registry.configure(payload.scope, payload.scope_id, **arguments), 'services_supported': supported()}

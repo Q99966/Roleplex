@@ -2,18 +2,47 @@
 from datetime import datetime, timezone
 import logging
 import uuid
+from pathlib import Path
 
 from sqlalchemy import func, or_, select, update
 
 from ..config.logging import current_logging_session
 from ..db import SessionLocal, with_locked_retry
 from ..models import AgentExecution, Conversation, InstanceSettings, WorkspaceBinding
+from ..realtime import store as event_store
 from ..workspaces.commands import WorkspaceCommandError
 from .models import CleanupItem, CleanupOperation, RuntimeEntry, RuntimeGate
 
 ACTIVE = ('pending', 'starting', 'waiting_ready', 'ready', 'unhealthy', 'running', 'stopping', 'cleanup_required')
 TERMINAL = ('stopped', 'exited', 'failed', 'rejected', 'expired', 'interrupted')
 logger = logging.getLogger('roleplex.runtime')
+
+
+def audit(event: str, **fields) -> bool:
+    """回收审计故障返回明确失败，不能使已冻结清单跳过后续目标。
+
+    Args:
+        event：目录中登记的固定事件名。
+        fields：调用方显式选择的安全摘要，禁止脚本与输出。
+    """
+    try:
+        logger.info(event, extra=fields)
+        return True
+    except Exception:
+        return False
+
+
+async def _append_event(session, row):
+    """在状态所属事务内保存刷新事件；已物理删除的会话不重新关联。
+
+    Args:
+        session：状态写入的短事务。
+        row：已刷新版本的运行实例。
+    """
+    if row.conversation_ref_id is None:
+        return None
+    return await event_store.append_event(session, row.conversation_ref_id, 'runtime_changed',
+        {'runtime_id': row.id, 'revision': row.revision, 'state': row.state}, revision=row.revision)
 
 
 class RuntimeRejected(WorkspaceCommandError):
@@ -30,6 +59,14 @@ def instance_id() -> str:
     """沿用日志进程身份，不建立另一套业务 Trace。"""
     session = current_logging_session()
     return session.process_instance_id if session else 'uninitialized'
+
+
+def boot_identity() -> str | None:
+    """读取 Linux 内核启动 UUID；不使用会随墙钟调整的时间戳推测主机重启。"""
+    try:
+        return str(uuid.UUID(Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip()))
+    except (OSError, ValueError):
+        return None
 
 
 async def gate(session) -> int:
@@ -134,7 +171,8 @@ async def _admission(session, cid: int, wid: int, *, adding: bool):
         wid：目标工作区。
         adding：预留前加一，已有实例启动复核不重复占位。
     """
-    closing = await session.scalar(select(RuntimeGate.closing).where(RuntimeGate.id == 1))
+    from .manager import manager
+    closing = manager.switch_target is not None or await session.scalar(select(RuntimeGate.closing).where(RuntimeGate.id == 1))
     blocked = await session.scalar(select(CleanupOperation.id).where(CleanupOperation.state.in_(('running', 'prepared', 'failed')),
         or_(CleanupOperation.scope == 'world', (CleanupOperation.scope == 'conversation') & (CleanupOperation.scope_id == cid),
             (CleanupOperation.scope == 'workspace') & (CleanupOperation.scope_id == wid))).limit(1))
@@ -182,11 +220,16 @@ async def reserve(*, owner_id: int, conversation_id: int, workspace_id: int, exe
                 conversation_id=conversation_id, conversation_ref_id=conversation_id, workspace_id=workspace_id, execution_id=execution_id,
                 chain_id=execution.chain_id if execution else None, role_id=role_id, tool_call_id=tool_call_id,
                 tool_name=tool_name, kind=kind, state='pending', process_instance_id=instance_id(),
+                host_boot_id=boot_identity(),
                 port=port, leased_port=port, created_at=datetime.now(timezone.utc))
             session.add(row)
+            await session.flush()
+            event = await _append_event(session, row)
             await session.commit()
-            return row
-    row = await with_locked_retry(write)
+            return row, event
+    row, event = await with_locked_retry(write)
+    if event is not None:
+        await event_store.publish_events(event)
     logger.info('runtime.reserved', extra=links(row))
     return row
 
@@ -199,7 +242,8 @@ def links(row: RuntimeEntry) -> dict:
     """
     return {'runtime_id': row.id, 'conversation_id': row.conversation_id, 'workspace_binding_id': row.workspace_id,
         'execution_id': row.execution_id, 'chain_id': row.chain_id, 'role_id': row.role_id,
-        'tool_call_id': row.tool_call_id, 'runtime_state': row.state, 'pid': row.pid, 'process_birth': row.birth}
+        'tool_call_id': row.tool_call_id, 'runtime_state': row.state, 'pid': row.pid, 'process_birth': row.birth,
+        'error_code': row.error_code, 'exit_code': row.exit_code}
 
 
 async def get(runtime_id: str) -> RuntimeEntry | None:
@@ -242,15 +286,18 @@ async def change(runtime_id: str, **values) -> RuntimeEntry:
             if row is None:
                 raise RuntimeRejected('RUNTIME_NOT_FOUND')
             if row.state in TERMINAL:
-                return row
+                return row, None
             result = await session.execute(update(RuntimeEntry).where(RuntimeEntry.id == runtime_id, RuntimeEntry.revision == row.revision)
                 .values(**values, revision=row.revision + 1).execution_options(synchronize_session=False))
             if not result.rowcount:
                 raise RuntimeRejected('RUNTIME_REVISION_CONFLICT')
-            await session.commit()
             await session.refresh(row)
-            return row
-    row = await with_locked_retry(write)
+            event = await _append_event(session, row)
+            await session.commit()
+            return row, event
+    row, event = await with_locked_retry(write)
+    if event is not None:
+        await event_store.publish_events(event)
     if 'state' in values:
         logger.info('runtime.state_changed', extra=links(row))
     return row
@@ -271,7 +318,8 @@ async def finish(runtime_id: str, state: str, *, verified: bool = False, **value
     return await change(runtime_id, state=state, leased_port=None, ended_at=datetime.now(timezone.utc), **values)
 
 
-async def begin_cleanup(scope: str, scope_id: int, *, reason: str, actor_id: int | None):
+async def begin_cleanup(scope: str, scope_id: int, *, reason: str, actor_id: int | None, expected_revision: int | None = None,
+                        resource_revision: int | None = None, confirmation: bool | None = None):
     """冻结精确范围，逐条持久化完整目标，后续停止不能漏掉启动交接。
 
     Args:
@@ -279,15 +327,28 @@ async def begin_cleanup(scope: str, scope_id: int, *, reason: str, actor_id: int
         scope_id：范围身份。
         reason：已登记生命周期原因。
         actor_id：触发 Owner，系统退出为空。
+        expected_revision：配置停用时复核的版本；必须与冻结清单处于同一事务。
+        resource_revision：会话换绑的资源版本，与进程配额版本不同。
+        confirmation：显式删除/换绑确认；系统清理为空，不要求交互。
     """
     async def write():
         """配额预留和关闭门槛使用同一个数据库串行化点。"""
         async with SessionLocal() as session:
             await gate(session)
+            if expected_revision is not None:
+                config = await _config(session, scope, scope_id)
+                if config.process_limit_version != expected_revision:
+                    raise RuntimeRejected('RUNTIME_REVISION_CONFLICT')
+            if resource_revision is not None:
+                conversation = await session.get(Conversation, scope_id)
+                if scope != 'conversation' or conversation is None or conversation.revision != resource_revision:
+                    raise RuntimeRejected('CONVERSATION_REVISION_CONFLICT')
             operation = CleanupOperation(id=uuid.uuid4().hex, scope=scope, scope_id=scope_id, reason=reason,
                 actor_id=actor_id, process_instance_id=instance_id(), state='running', target_count=0, created_at=datetime.now(timezone.utc))
             rows = list((await session.scalars(select(RuntimeEntry).where(scope_filter(scope, scope_id), RuntimeEntry.state.in_(ACTIVE))
                 .order_by(RuntimeEntry.sequence.desc(), RuntimeEntry.id))).all())
+            if rows and confirmation is False:
+                raise RuntimeRejected('RUNTIME_CLEANUP_CONFIRM_REQUIRED')
             operation.target_count = len(rows)
             session.add(operation)
             items = [CleanupItem(operation_id=operation.id, runtime_id=row.id, ordinal=i, state='pending') for i, row in enumerate(rows)]
@@ -295,26 +356,21 @@ async def begin_cleanup(scope: str, scope_id: int, *, reason: str, actor_id: int
             await session.commit()
             return operation, items, rows
     operation, items, rows = await with_locked_retry(write)
-    try:
-        logger.info('runtime.cleanup_started', extra={'cleanup_id': operation.id, 'scope': scope, 'scope_id': scope_id,
-            'reason': reason, 'actor_id': actor_id, 'target_count': len(items)})
-        for item, row in zip(items, rows):
-            logger.info('runtime.cleanup_target_selected', extra={**links(row), 'cleanup_id': operation.id,
-                'target_ordinal': item.ordinal, 'scope': scope, 'scope_id': scope_id, 'reason': reason})
-    except Exception:
-        async with SessionLocal() as session:
-            await session.execute(update(CleanupOperation).where(CleanupOperation.id == operation.id).values(state='failed'))
-            await session.commit()
-        raise RuntimeRejected('RUNTIME_AUDIT_UNAVAILABLE') from None
+    operation.audit_failed = not audit('runtime.cleanup_started', cleanup_id=operation.id, scope=scope, scope_id=scope_id,
+        reason=reason, actor_id=actor_id, target_count=len(items))
+    for item, row in zip(items, rows):
+        operation.audit_failed |= not audit('runtime.cleanup_target_selected', **links(row), cleanup_id=operation.id,
+            target_ordinal=item.ordinal, scope=scope, scope_id=scope_id, reason=reason)
     return operation, items
 
 
-async def end_cleanup(operation_id: str, *, success: bool) -> None:
+async def end_cleanup(operation_id: str, *, success: bool, error_code: str | None = None) -> None:
     """记录批次终态；失败门槛继续封闭，不能当作已释放。
 
     Args:
         operation_id：已冻结的操作身份。
         success：清单对账与资源变更是否均成功。
+        error_code：固定失败原因；旧调用方省略时使用清理待确认。
     """
     async def write():
         """只修改对应批次，不覆盖其他范围的回收。"""
@@ -328,13 +384,26 @@ async def end_cleanup(operation_id: str, *, success: bool) -> None:
                     CleanupOperation.id != operation_id, CleanupOperation.state == 'failed'))).all())
                 for row in previous:
                     row.state = 'superseded'
+                    row.superseded_by_id = operation_id
                     reconciled.append(row.id)
             await session.execute(update(CleanupOperation).where(CleanupOperation.id == operation_id)
-                .values(state='complete' if success else 'failed', ended_at=datetime.now(timezone.utc)))
+                .values(state='complete' if success else 'failed', ended_at=datetime.now(timezone.utc),
+                    error_code=None if success else error_code or 'RUNTIME_CLEANUP_UNCONFIRMED'))
             await session.commit()
             return reconciled
     reconciled = await with_locked_retry(write)
+    recorded = True
     for previous in reconciled:
-        logger.info('runtime.cleanup_reconciled', extra={'cleanup_id': previous, 'superseded_by': operation_id, 'previous_state': 'failed', 'status': 'success'})
-    logger.info('runtime.cleanup_completed' if success else 'runtime.cleanup_failed',
-        extra={'cleanup_id': operation_id, 'status': 'success' if success else 'failed'})
+        recorded &= audit('runtime.cleanup_reconciled', cleanup_id=previous, superseded_by=operation_id, previous_state='failed', status='success')
+    recorded &= audit('runtime.cleanup_completed' if success else 'runtime.cleanup_failed',
+        cleanup_id=operation_id, status='success' if success else 'failed',
+        **({'error_code': error_code or 'RUNTIME_CLEANUP_UNCONFIRMED'} if not success else {}))
+    if not recorded:
+        async def retain_failure():
+            """即使机器日志不可用，也在原批次记录明确失败，不删除已保存的条目结果。"""
+            async with SessionLocal() as session:
+                await session.execute(update(CleanupOperation).where(CleanupOperation.id == operation_id)
+                    .values(state='failed', error_code='RUNTIME_AUDIT_UNAVAILABLE'))
+                await session.commit()
+        await with_locked_retry(retain_failure)
+        raise RuntimeRejected('RUNTIME_AUDIT_UNAVAILABLE')

@@ -46,6 +46,7 @@ export type ShellApproval = {
   workspace_name: string; world_name: string; root_path: string; script: string; shell_kind: string;
   timeout_seconds: number; output_bytes: number; request_digest: string; status: string;
   requested_at: string; expires_at: string
+  active_service_count?: number
   runtime_id?: string; port?: number; health_path?: string; lifetime_seconds?: number; ready_timeout_seconds?: number
 }
 export type ToolDetails = {
@@ -180,8 +181,9 @@ export function getPasswordResetRequired() {
  * 执行 JSON API 请求，并将公开错误信封映射为 ApiError。
  * @param path 相对于后端地址的 API 路径。
  * @param init Fetch 配置，包括请求方法和可选请求体。
+ * @param format 成功响应格式；敏感备份只在调用方内存中短暂持有 Blob。
  */
-export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}, format: 'json' | 'blob' = 'json'): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -194,6 +196,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw error
   }
   if (response.status === 204) return undefined as T
+  if (format === 'blob') return response.blob() as Promise<T>
   return response.json() as Promise<T>
 }
 
@@ -209,6 +212,9 @@ export const api = {
 
   // 世界存档：列表仅 Owner 可读，切换必须由包装器托管后端。
   worlds: () => request<WorldList>('/api/worlds'),
+  backupWorld: (signal?: AbortSignal) => request<Blob>('/api/worlds/backup', {
+    method: 'POST', body: JSON.stringify({ confirm_cleanup: true }), cache: 'no-store', signal,
+  }, 'blob'),
   switchWorld: (name: string) => request<{ target: string; restarting: boolean }>('/api/worlds/switch', {
     method: 'POST', body: JSON.stringify({ name }),
   }),
@@ -240,7 +246,7 @@ export const api = {
   restoreConversation: (id: number) => request<Conversation>(`/api/conversations/${id}/restore`, { method: 'POST' }),
   createConversation: (body: { type: 'single' | 'group'; title: string; role_ids: number[]; orchestrator_enabled?: boolean; orchestrator_role_id?: number | null; workspace_binding_id?: number | null }) => request<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify(body) }),
   updateConversationMembers: (id: number, body: { role_ids: number[]; expected_revision: number }) => request<Conversation>(`/api/conversations/${id}/members`, { method: 'PUT', body: JSON.stringify(body) }),
-  updateConversationWorkspace: (id: number, body: { workspace_binding_id: number | null; expected_revision: number }) => request<Conversation>(`/api/conversations/${id}/workspace`, { method: 'PUT', body: JSON.stringify(body) }),
+  updateConversationWorkspace: (id: number, body: { workspace_binding_id: number | null; expected_revision: number; confirm_cleanup?: boolean }) => request<Conversation>(`/api/conversations/${id}/workspace`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteConversation: (id: number, confirmed = false) => request<void>(`/api/conversations/${id}?confirm_cleanup=${confirmed}`, { method: 'DELETE' }),
   updateConversationPreferences: (id: number, pinned?: boolean, archived?: boolean) => {
     const params = new URLSearchParams()

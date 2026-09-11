@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import hashlib
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
@@ -21,13 +22,13 @@ from sqlalchemy import select, update
 
 from ..config import settings
 from ..db import SessionLocal, with_locked_retry
-from ..realtime import store as event_store
-from ..models import Conversation
 from ..workspaces.commands import command_environment, WorkspaceCommandError
-from . import logs, registry
+from ..workspaces.process_identity import birth_identity, same_birth
+from . import logs, registry, receipts
 from .models import CleanupItem, CleanupOperation, RuntimeEntry, RuntimeGate
 
 current_runtime: ContextVar[str | None] = ContextVar('current_runtime', default=None)
+STOP_BUDGET_SECONDS = 12
 
 
 def supported() -> bool:
@@ -66,6 +67,9 @@ class Host:
     ring: logs.LogRing = field(default_factory=logs.LogRing)
     reason: str = 'owner_stop'
     cleanup_id: str | None = None
+    verified_gone: bool = False
+    final_state: str = 'stopped'
+    error_code: str | None = None
 
 
 class RuntimeManager:
@@ -78,16 +82,36 @@ class RuntimeManager:
         self.command_births: dict[str, str] = {}
         self.command_stopping: set[str] = set()
         self.cleanup_lock = asyncio.Lock()
+        self.world_operation_lock = asyncio.Lock()
+        self.switch_target: str | None = None
+        self.stop_jobs: dict[str, asyncio.Task] = {}
 
     async def initialize(self):
         """启动核查旧实例；旧 PID 不符时不发送信号，不重放服务。"""
         self.cleanup_lock = asyncio.Lock()
+        self.world_operation_lock = asyncio.Lock()
+        self.switch_target = None
         await logs.maintain()
         async with SessionLocal() as session:
             rows = list((await session.scalars(select(RuntimeEntry).where(RuntimeEntry.state.in_(registry.ACTIVE)))).all())
+        boot = registry.boot_identity()
+        recovery_deadline = time.monotonic() + 2
         for row in rows:
-            gone = row.pid is None or not self.alive(row.pid)
-            if not gone and self.same_process(row.pid, row.birth):
+            rebooted = bool(boot and row.host_boot_id and boot != row.host_boot_id)
+            gone = rebooted or row.pid is None or not self.alive(row.pid)
+            if row.state == 'cleanup_required' and row.pid is not None and not rebooted:
+                # 上次明确缺少回收证明时，根 PID 消失并不能证明脱离进程组的后代已退出。
+                gone = False
+            if row.kind == 'service' and row.pid is not None and not rebooted:
+                gone = False
+                while row.recovery_token_hash:
+                    if receipts.read(row) is not None and receipts.old_root_gone(row):
+                        gone = True
+                        break
+                    if time.monotonic() >= recovery_deadline:
+                        break
+                    await asyncio.sleep(.02)
+            if row.kind != 'service' and row.state != 'cleanup_required' and not gone and self.same_process(row.pid, row.birth):
                 # 正常宿主消失后 guardian 会通过 EOF 收口；只等候，不能以旧记录盲目接管。
                 for _ in range(100):
                     if not self.alive(row.pid):
@@ -95,10 +119,21 @@ class RuntimeManager:
                         break
                     await asyncio.sleep(.02)
             if gone:
-                await registry.finish(row.id, 'interrupted', verified=True, error_code='EXECUTION_INTERRUPTED')
+                row = await registry.finish(row.id, 'interrupted', verified=True, error_code='EXECUTION_INTERRUPTED')
+                receipts.discard(row)
             else:
-                await registry.change(row.id, state='cleanup_required', error_code='RUNTIME_CLEANUP_UNCONFIRMED')
-            registry.logger.info('runtime.recovery_checked', extra={**registry.links(row), 'verified_gone': gone})
+                row = await registry.change(row.id, state='cleanup_required', error_code='RUNTIME_CLEANUP_UNCONFIRMED')
+            registry.logger.info('runtime.recovery_checked', extra={**registry.links(row), 'verified_gone': gone,
+                'reason': 'host_reboot' if rebooted else ('receipt_verified' if gone else 'receipt_unconfirmed')
+                    if row.kind == 'service' and row.pid is not None else 'pid_checked'})
+        try:
+            for runtime_id in receipts.recorded_ids():
+                row = await registry.get(runtime_id)
+                if row and row.state in registry.TERMINAL and not receipts.discard(row):
+                    registry.audit('runtime.recovery_checked', runtime_id=runtime_id, reason='receipt_cleanup_failed',
+                        status='failed', error_code='RUNTIME_STATE_UNAVAILABLE')
+        except OSError:
+            registry.audit('runtime.recovery_checked', reason='receipt_scan_failed', status='failed', error_code='RUNTIME_STATE_UNAVAILABLE')
         async with SessionLocal() as session:
             await registry.gate(session)
             await session.execute(update(RuntimeGate).where(RuntimeGate.id == 1).values(closing=False))
@@ -122,6 +157,8 @@ class RuntimeManager:
             return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
         except psutil.NoSuchProcess:
             return False
+        except psutil.AccessDenied:
+            return True
 
     @staticmethod
     def same_process(pid: int, birth: str | None) -> bool:
@@ -133,23 +170,17 @@ class RuntimeManager:
         """
         try:
             process = psutil.Process(pid)
-            return str(process.create_time()) == birth and process.status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
+            return same_birth(pid, birth) and process.status() != psutil.STATUS_ZOMBIE
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
     async def notify(self, row: RuntimeEntry):
-        """只广播安全的刷新通知，不包含日志/脚本。
+        """保留宿主调用点；事件由 registry 与状态原子保存后广播，不再另开事务。
 
         Args:
             row：已经提交的实例状态。
         """
-        async with SessionLocal() as session:
-            if row.conversation_ref_id is None or await session.get(Conversation, row.conversation_ref_id) is None:
-                return
-            event = await event_store.append_event(session, row.conversation_id, 'runtime_changed',
-                {'runtime_id': row.id, 'revision': row.revision, 'state': row.state})
-            await session.commit()
-        await event_store.publish_events(event)
+        return row
 
     @asynccontextmanager
     async def command(self, **identity):
@@ -203,7 +234,7 @@ class RuntimeManager:
         if runtime_id is None:
             return
         self.commands[runtime_id] = process
-        birth = str(psutil.Process(process.pid).create_time())
+        birth = birth_identity(process.pid)
         self.command_births[runtime_id] = birth
         await registry.check_start(runtime_id)
         await self.notify(await registry.change(runtime_id, state='running', pid=process.pid, birth=birth, started_at=datetime.now(timezone.utc)))
@@ -242,6 +273,8 @@ class RuntimeManager:
                 await host.task
                 raise registry.RuntimeRejected('RUNTIME_START_FAILED')
             result = host.ready.result()
+            if result is None:
+                raise registry.RuntimeRejected('RUNTIME_STATE_UNAVAILABLE')
             if result.state != 'ready':
                 raise registry.RuntimeRejected(result.error_code or 'RUNTIME_START_FAILED')
             return {'runtime_id': runtime_id, 'state': result.state, 'port': port, 'health_code': result.health_code}
@@ -311,7 +344,10 @@ class RuntimeManager:
             request：审批后重新验证的冻结上下文。
         """
         readers = []
+        spawning = None
         read_fd = None
+        proof_reader = proof_writer = None
+        token_reader = None
         final_state, error_code = 'stopped', None
         try:
             # 预检不抢占端口；真正 ready 还必须确认 listener 的进程归属。
@@ -321,19 +357,33 @@ class RuntimeManager:
                     probe.bind(('127.0.0.1', request['port']))
             except OSError:
                 raise registry.RuntimeRejected('RUNTIME_PORT_BUSY') from None
-            await self.notify(await registry.change(host.id, state='starting'))
+            receipt_path, receipt_token = receipts.prepare(host.id)
+            await self.notify(await registry.change(host.id, state='starting', recovery_token_hash=hashlib.sha256(receipt_token).hexdigest()))
+            token_reader, token_writer = os.pipe()
+            try:
+                os.write(token_writer, receipt_token)
+            finally:
+                os.close(token_writer)
             read_fd, host.control_fd = os.pipe()
+            proof_reader, proof_writer = os.pipe()
+            os.set_blocking(proof_reader, False)
             argv = (sys.executable, '-I', '-X', 'utf8', str(Path(__file__).resolve().parents[1] / 'workspaces' / 'shell_supervisor.py'),
-                '--parent-fd', str(read_fd), '--runtime-id', host.id, *request['argv'])
+                '--parent-fd', str(read_fd), '--runtime-id', host.id, '--result-fd', str(proof_writer),
+                '--receipt-path', str(receipt_path), '--receipt-token-fd', str(token_reader), *request['argv'])
             spawning = asyncio.create_task(asyncio.create_subprocess_exec(*argv, cwd=request['root_path'], env=command_environment(),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                start_new_session=True, pass_fds=(read_fd,)), context=copy_context())
+                start_new_session=True, pass_fds=(read_fd, proof_writer, token_reader)), context=copy_context())
             host.process = await asyncio.shield(spawning)
             os.close(read_fd)
             read_fd = None
-            host.birth = str(psutil.Process(host.process.pid).create_time())
+            os.close(proof_writer)
+            proof_writer = None
+            os.close(token_reader)
+            token_reader = None
+            host.birth = birth_identity(host.process.pid)
             now = datetime.now(timezone.utc)
             expires = now + timedelta(seconds=request['lifetime_seconds'])
+            lifetime_deadline = time.monotonic() + request['lifetime_seconds']
             await registry.check_start(host.id)
             await self.notify(await registry.change(host.id, state='waiting_ready', pid=host.process.pid, birth=host.birth,
                 started_at=now, expires_at=expires, approval_id=request['approval_id']))
@@ -359,8 +409,9 @@ class RuntimeManager:
                     final_state = 'exited' if ready else 'failed'
                     error_code = None if ready else 'RUNTIME_START_FAILED'
                     break
-                if datetime.now(timezone.utc) >= expires:
+                if time.monotonic() >= lifetime_deadline:
                     host.reason = 'lifetime_expired'
+                    final_state = 'expired'
                     break
                 healthy, code = await self._probe(host, request['port'], request['health_path'])
                 if host.stop.is_set():
@@ -381,9 +432,11 @@ class RuntimeManager:
                         ready = True
                         host.ready.set_result(row)
                 try:
-                    await asyncio.wait_for(host.stop.wait(), min(2 if ready else .1, max(.001, (expires - datetime.now(timezone.utc)).total_seconds())))
+                    await asyncio.wait_for(host.stop.wait(), min(2 if ready else .1, max(.001, lifetime_deadline - time.monotonic())))
                 except TimeoutError:
                     pass
+        except asyncio.CancelledError:
+            final_state, error_code = 'failed', 'RUNTIME_START_CANCELLED'
         except (registry.RuntimeRejected, WorkspaceCommandError) as exc:
             final_state, error_code = 'failed', exc.code
         except (OSError, psutil.Error):
@@ -391,33 +444,48 @@ class RuntimeManager:
         except Exception:
             final_state, error_code = 'failed', 'RUNTIME_STATE_UNAVAILABLE'
         finally:
+            if spawning is not None and host.process is None:
+                try:
+                    host.process = await settled(spawning)
+                except asyncio.CancelledError:
+                    host.process = spawning.result()
+                except OSError:
+                    pass
             if read_fd is not None:
                 os.close(read_fd)
+            if token_reader is not None:
+                os.close(token_reader)
+            if proof_writer is not None:
+                os.close(proof_writer)
             # 即使后续数据库或日志失败，也先通知监管器回收；不能让审计故障遗留服务。
             if host.control_fd is not None:
                 os.close(host.control_fd)
                 host.control_fd = None
             if host.process is not None:
                 try:
-                    await self.notify(await registry.change(host.id, state='stopping'))
+                    await self.notify(await registry.change(host.id, state='stopping', pid=host.process.pid, birth=host.birth))
                 except Exception:
                     error_code = 'RUNTIME_STATE_UNAVAILABLE'
-                row = await registry.get(host.id)
-                registry.logger.info('runtime.stop_dispatched', extra={**registry.links(row), 'reason': host.reason, 'cleanup_id': host.cleanup_id})
-                if host.control_fd is not None:
-                    os.close(host.control_fd)
-                    host.control_fd = None
+                if not registry.audit('runtime.stop_dispatched', runtime_id=host.id, pid=host.process.pid,
+                    process_birth=host.birth, reason=host.reason, cleanup_id=host.cleanup_id):
+                    error_code = 'RUNTIME_AUDIT_UNAVAILABLE'
                 try:
                     async with asyncio.timeout(8):
                         await host.process.wait()
                 except TimeoutError:
-                    if self.same_process(host.process.pid, host.birth):
-                        registry.logger.warning('runtime.force_requested', extra=registry.links(row))
-                        os.killpg(host.process.pid, signal.SIGKILL)
+                    try:
+                        if host.process.returncode is None and self.same_process(host.process.pid, host.birth):
+                            if not registry.audit('runtime.force_requested', runtime_id=host.id, pid=host.process.pid, process_birth=host.birth):
+                                error_code = 'RUNTIME_AUDIT_UNAVAILABLE'
+                            os.killpg(host.process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except (OSError, psutil.Error):
+                        final_state, error_code = 'cleanup_required', 'RUNTIME_CLEANUP_UNCONFIRMED'
                     try:
                         async with asyncio.timeout(2):
                             await host.process.wait()
-                    except TimeoutError:
+                    except (TimeoutError, OSError):
                         final_state, error_code = 'cleanup_required', 'RUNTIME_CLEANUP_UNCONFIRMED'
                 if readers:
                     try:
@@ -425,19 +493,68 @@ class RuntimeManager:
                             await asyncio.gather(*readers)
                     except TimeoutError:
                         final_state, error_code = 'cleanup_required', 'RUNTIME_CLEANUP_UNCONFIRMED'
+            proof = False
+            if proof_reader is not None:
+                try:
+                    proof = os.read(proof_reader, 1) == b'1'
+                except BlockingIOError:
+                    pass
+                finally:
+                    os.close(proof_reader)
+            if host.process is not None and (host.process.returncode is None or not proof):
+                final_state, error_code = 'cleanup_required', 'RUNTIME_CLEANUP_UNCONFIRMED'
+            host.verified_gone = final_state != 'cleanup_required' and (host.process is None or host.process.returncode is not None)
+            host.final_state = final_state
+            error_code = error_code or host.error_code
             try:
                 await logs.save(host.id, host.ring)
             except Exception:
-                error_code = 'RUNTIME_LOG_UNAVAILABLE'
-            values = {'error_code': error_code, 'exit_code': host.process.returncode if host.process else None}
-            row = (await registry.change(host.id, state=final_state, **values) if final_state == 'cleanup_required'
-                else await registry.finish(host.id, final_state, verified=True, **values))
-            await self.notify(row)
-            if not host.ready.done():
-                host.ready.set_result(row)
-            self.hosts.pop(host.id, None)
+                error_code = error_code or 'RUNTIME_LOG_UNAVAILABLE'
+            host.error_code = error_code
+            try:
+                values = {'error_code': error_code, 'exit_code': host.process.returncode if host.process else None}
+                row = (await registry.change(host.id, state=final_state, **values) if final_state == 'cleanup_required'
+                    else await registry.finish(host.id, final_state, verified=host.verified_gone, **values))
+                if not host.ready.done():
+                    host.ready.set_result(row)
+                if host.verified_gone:
+                    if not receipts.discard(row):
+                        registry.audit('runtime.recovery_checked', runtime_id=host.id, reason='receipt_cleanup_failed',
+                            verified_gone=True, status='failed', error_code='RUNTIME_STATE_UNAVAILABLE')
+                    self.hosts.pop(host.id, None)
+            except Exception:
+                # 保留实际句柄与已完成回收的证据，数据库恢复后可重试终态，不重放脚本。
+                host.error_code = 'RUNTIME_STATE_UNAVAILABLE'
+                if not host.ready.done():
+                    host.ready.set_result(None)
 
     async def stop_one(self, runtime_id: str, reason: str = 'owner_stop', cleanup_id: str | None = None) -> RuntimeEntry:
+        """共用独立停止任务，单请求超时或取消不重复打断已在进行的回收。
+
+        Args:
+            runtime_id：已授权的运行实例。
+            reason：可信停止原因。
+            cleanup_id：冻结批次身份或空。
+        """
+        task = self.stop_jobs.get(runtime_id)
+        if task is None:
+            task = asyncio.create_task(self._stop_one(runtime_id, reason, cleanup_id), context=copy_context())
+            self.stop_jobs[runtime_id] = task
+            def finished(done):
+                """Args:
+                    done：实际结束的停止任务；消费异常但不抹掉数据库失败事实。
+                """
+                if self.stop_jobs.get(runtime_id) is done:
+                    self.stop_jobs.pop(runtime_id, None)
+                if not done.cancelled():
+                    done.exception()
+            task.add_done_callback(finished)
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), STOP_BUDGET_SECONDS)
+        except TimeoutError:
+            raise registry.RuntimeRejected('RUNTIME_CLEANUP_UNCONFIRMED') from None
+
+    async def _stop_one(self, runtime_id: str, reason: str, cleanup_id: str | None) -> RuntimeEntry:
         """幂等通知唯一宿主停止，绝不扫描并杀死全机同端口/PID 进程。
 
         Args:
@@ -445,36 +562,115 @@ class RuntimeManager:
             reason：已登记停止原因。
             cleanup_id：批量操作的资源身份；独立停止为空。
         """
-        row = await registry.get(runtime_id)
+        host = self.hosts.get(runtime_id)
+        try:
+            row = await registry.get(runtime_id)
+        except Exception:
+            if host:
+                host.reason, host.cleanup_id = reason, cleanup_id
+                host.stop.set()
+                await self._wait_host(host)
+            raise registry.RuntimeRejected('RUNTIME_STATE_UNAVAILABLE') from None
         if row is None:
             raise registry.RuntimeRejected('RUNTIME_NOT_FOUND')
+        boot = registry.boot_identity()
+        rebooted = bool(row.host_boot_id and boot and row.host_boot_id != boot)
         if row.state in registry.TERMINAL:
+            if host and host.task.done():
+                self.hosts.pop(runtime_id, None)
             return row
-        host = self.hosts.get(runtime_id)
         if host:
+            if host.task.done() and not host.verified_gone and receipts.read(row) is not None and receipts.old_root_gone(row):
+                host.verified_gone, host.final_state, host.error_code = True, 'interrupted', 'EXECUTION_INTERRUPTED'
+            if host.task.done() and host.verified_gone:
+                await logs.save(host.id, host.ring)
+                row = await registry.finish(host.id, host.final_state, verified=True,
+                    exit_code=host.process.returncode if host.process else None,
+                    error_code=None if host.error_code == 'RUNTIME_STATE_UNAVAILABLE' else host.error_code)
+                self.hosts.pop(host.id, None)
+                receipts.discard(row)
+                return row
             if not host.stop.is_set():
-                registry.logger.info('runtime.stop_requested', extra={**registry.links(row), 'reason': reason, 'cleanup_id': cleanup_id})
+                if not registry.audit('runtime.stop_requested', **registry.links(row), reason=reason, cleanup_id=cleanup_id):
+                    host.error_code = 'RUNTIME_AUDIT_UNAVAILABLE'
                 host.reason, host.cleanup_id = reason, cleanup_id
                 host.stop.set()
             await self._wait_host(host)
         elif runtime_id in self.waiting:
             task = self.waiting[runtime_id]
+            recorded = True
             if runtime_id not in self.command_stopping:
-                registry.logger.info('runtime.stop_requested', extra={**registry.links(row), 'reason': reason, 'cleanup_id': cleanup_id})
+                recorded = registry.audit('runtime.stop_requested', **registry.links(row), reason=reason, cleanup_id=cleanup_id)
                 self.command_stopping.add(runtime_id)
                 task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-        elif row.pid is None or not self.alive(row.pid):
+            if not recorded:
+                raise registry.RuntimeRejected('RUNTIME_AUDIT_UNAVAILABLE')
+        elif row.pid is None or rebooted or (row.kind == 'service' and receipts.read(row) is not None and receipts.old_root_gone(row)) or (row.kind != 'service' and row.state != 'cleanup_required' and not self.alive(row.pid)):
             await registry.finish(runtime_id, 'interrupted', verified=True)
+            receipts.discard(row)
         else:
             await registry.change(runtime_id, state='cleanup_required', error_code='RUNTIME_CLEANUP_UNCONFIRMED')
         return await registry.get(runtime_id)
 
+    async def _drain_cleanup(self, operation, targets) -> bool:
+        """逆序尝试完整清单；停止、审计或结果持久化单项失败都不短路。
+
+        Args:
+            operation：已持久化的范围与批次身份。
+            targets：已冻结且稳定排序的目标清单。
+        """
+        failed = getattr(operation, 'audit_failed', False)
+        for item in targets:
+            started = datetime.now(timezone.utc)
+            started_clock = time.monotonic()
+            if not registry.audit('runtime.cleanup_target_started', cleanup_id=operation.id,
+                runtime_id=item.runtime_id, target_ordinal=item.ordinal):
+                failed, operation.error_code = True, 'RUNTIME_AUDIT_UNAVAILABLE'
+            try:
+                try:
+                    before = await registry.get(item.runtime_id)
+                except Exception:
+                    before = None
+                result = await self.stop_one(item.runtime_id, operation.reason, operation.id)
+                success = result.state in registry.TERMINAL
+                if result.error_code in {'RUNTIME_AUDIT_UNAVAILABLE', 'RUNTIME_STATE_UNAVAILABLE'}:
+                    failed, operation.error_code = True, result.error_code
+                outcome = ('already_terminal' if before and before.state in registry.TERMINAL else 'no_registered_process'
+                    if result.pid is None else 'verified_exited') if success else 'unconfirmed'
+            except Exception as exc:
+                success, outcome = False, 'unconfirmed'
+                operation.error_code = exc.code if isinstance(exc, WorkspaceCommandError) else 'RUNTIME_STATE_UNAVAILABLE'
+            ended = datetime.now(timezone.utc)
+            async def persist():
+                """逐项幂等保存结果；不在进程停止期间持有事务。"""
+                async with SessionLocal() as session:
+                    await session.execute(update(CleanupItem).where(CleanupItem.id == item.id).values(
+                        state='complete' if success else 'failed', outcome=outcome,
+                        error_code=None if success else 'RUNTIME_CLEANUP_UNCONFIRMED', started_at=started, ended_at=ended))
+                    await session.commit()
+            try:
+                await with_locked_retry(persist)
+            except Exception:
+                failed, operation.error_code = True, 'RUNTIME_STATE_UNAVAILABLE'
+            failed |= not success
+            recorded = registry.audit('runtime.cleanup_target_completed', cleanup_id=operation.id,
+                runtime_id=item.runtime_id, target_ordinal=item.ordinal, outcome=outcome,
+                status='success' if success else 'failed', duration_ms=int((time.monotonic() - started_clock) * 1000))
+            if not recorded:
+                failed, operation.error_code = True, 'RUNTIME_AUDIT_UNAVAILABLE'
+        async with SessionLocal() as session:
+            remaining = await session.scalar(select(RuntimeEntry.id).where(registry.scope_filter(operation.scope, operation.scope_id),
+                RuntimeEntry.state.in_(registry.ACTIVE)).limit(1))
+        return not failed and remaining is None
+
     @asynccontextmanager
-    async def cleanup_scope(self, scope: str, scope_id: int, reason: str, actor_id: int | None = None):
+    async def cleanup_scope(self, scope: str, scope_id: int, reason: str, actor_id: int | None = None,
+                            *, expected_revision: int | None = None, resource_revision: int | None = None,
+                            confirmation: bool | None = None):
         """冻结后逆序逐项回收，失败继续；资源变更提交前保持门槛。
 
         Args:
@@ -482,42 +678,38 @@ class RuntimeManager:
             scope_id：范围身份。
             reason：删除、换绑、退出等已登记原因。
             actor_id：Owner 或系统。
+            expected_revision：配置停用的预期版本，冻结前原子复核。
+            resource_revision：会话换绑时的资源版本。
+            confirmation：交互操作的范围回收确认，系统清理为空。
         """
         async with self.cleanup_lock:
-            operation, targets = await registry.begin_cleanup(scope, scope_id, reason=reason, actor_id=actor_id)
-            failed = False
+            async def prepare():
+                """冻结与处理放在同一宿主任务，取消不会遗失刚提交的清单身份。"""
+                operation, targets = await registry.begin_cleanup(scope, scope_id, reason=reason,
+                    actor_id=actor_id, expected_revision=expected_revision, resource_revision=resource_revision,
+                    confirmation=confirmation)
+                try:
+                    complete = await self._drain_cleanup(operation, targets)
+                except BaseException as exc:
+                    await registry.end_cleanup(operation.id, success=False,
+                        error_code=operation.error_code or (exc.code if isinstance(exc, WorkspaceCommandError) else 'RUNTIME_STATE_UNAVAILABLE'))
+                    raise
+                return operation, complete
+            preparing = asyncio.create_task(prepare(), context=copy_context())
             try:
-                for item in targets:
-                    started = datetime.now(timezone.utc)
-                    registry.logger.info('runtime.cleanup_target_started', extra={'cleanup_id': operation.id, 'runtime_id': item.runtime_id, 'target_ordinal': item.ordinal})
-                    try:
-                        before = await registry.get(item.runtime_id)
-                        result = await self.stop_one(item.runtime_id, reason, operation.id)
-                        success = result.state in registry.TERMINAL
-                        outcome = ('already_terminal' if before.state in registry.TERMINAL else 'no_registered_process'
-                            if result.pid is None else 'verified_exited') if success else 'unconfirmed'
-                    except Exception:
-                        success = False
-                        outcome = 'unconfirmed'
-                    ended = datetime.now(timezone.utc)
-                    async with SessionLocal() as session:
-                        await session.execute(update(CleanupItem).where(CleanupItem.id == item.id).values(
-                            state='complete' if success else 'failed', outcome=outcome,
-                            error_code=None if success else 'RUNTIME_CLEANUP_UNCONFIRMED', started_at=started, ended_at=ended))
-                        await session.commit()
-                    failed |= not success
-                    registry.logger.info('runtime.cleanup_target_completed', extra={'cleanup_id': operation.id, 'runtime_id': item.runtime_id,
-                        'target_ordinal': item.ordinal, 'outcome': outcome, 'status': 'success' if success else 'failed', 'duration_ms': int((ended - started).total_seconds() * 1000)})
-                async with SessionLocal() as session:
-                    remaining = await session.scalar(select(RuntimeEntry.id).where(registry.scope_filter(scope, scope_id), RuntimeEntry.state.in_(registry.ACTIVE)).limit(1))
-                if failed or remaining is not None:
+                operation, complete = await settled(preparing)
+                if not complete:
                     raise registry.RuntimeRejected('RUNTIME_CLEANUP_UNCONFIRMED')
                 yield operation.id
-            except BaseException:
-                await registry.end_cleanup(operation.id, success=False)
+            except BaseException as exc:
+                if preparing.done() and not preparing.cancelled() and preparing.exception() is None:
+                    operation, _complete = preparing.result()
+                    await settled(asyncio.create_task(registry.end_cleanup(operation.id, success=False,
+                        error_code=operation.error_code or (exc.code if isinstance(exc, WorkspaceCommandError) else None)
+                        or ('RUNTIME_AUDIT_UNAVAILABLE' if getattr(operation, 'audit_failed', False) else None)), context=copy_context()))
                 raise
             else:
-                await registry.end_cleanup(operation.id, success=True)
+                await settled(asyncio.create_task(registry.end_cleanup(operation.id, success=True), context=copy_context()))
 
     async def shutdown(self, reason: str = 'application_shutdown'):
         """先关闭新预留，再逐项清理；由 lifespan 在关闭 DB/日志之前调用。
@@ -525,11 +717,11 @@ class RuntimeManager:
         Args:
             reason：可信调用方提供的应用退出或 World 切换原因。
         """
-        async with SessionLocal() as session:
-            await registry.gate(session)
-            await session.execute(update(RuntimeGate).where(RuntimeGate.id == 1).values(closing=True))
-            await session.commit()
         try:
+            async with SessionLocal() as session:
+                await registry.gate(session)
+                await session.execute(update(RuntimeGate).where(RuntimeGate.id == 1).values(closing=True))
+                await session.commit()
             async with self.cleanup_scope('world', 0, reason):
                 pass
         except Exception:

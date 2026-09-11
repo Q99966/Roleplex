@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ..config import settings
@@ -303,10 +303,15 @@ async def pending_payload(row: ToolApprovalRequest) -> dict:
     request = decrypt_request(row)
     async with SessionLocal() as session:
         binding = await session.get(WorkspaceBinding, row.workspace_binding_id)
+        from ..runtime.models import RuntimeEntry
+        from ..runtime.registry import ACTIVE
+        active_service_count = await session.scalar(select(func.count()).select_from(RuntimeEntry).where(
+            RuntimeEntry.workspace_id == row.workspace_binding_id, RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(ACTIVE)))
     return {key: request[key] for key in ('execution_id', 'tool_call_id', 'tool_name', 'workspace_binding_id',
         'root_path', 'script', 'shell_kind', 'timeout_seconds', 'output_bytes')} | {
         'id': row.id, 'request_digest': row.request_digest, 'status': row.status,
         'requested_at': _utc(row.requested_at).isoformat(), 'expires_at': _utc(row.expires_at).isoformat(),
         'world_name': settings.world_name, 'workspace_name': binding.display_name if binding else '不可用工作区',
+        'active_service_count': active_service_count,
         **{key: request[key] for key in ('runtime_id', 'port', 'health_path', 'lifetime_seconds', 'ready_timeout_seconds') if key in request},
     }

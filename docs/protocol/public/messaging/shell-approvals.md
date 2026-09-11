@@ -8,7 +8,7 @@
 | 维护者 | Roleplex |
 | 事实来源 | `workspaces/approvals.py`、`workspaces/shell.py`、`routers/approvals.py`、`components/ShellApprovals.tsx` |
 | 关联测试 | `tests/test_shell_approvals.py`、Shell fake/real managed-world E2E |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-11 |
 
 ## 工具与执行边界
 
@@ -16,6 +16,9 @@
 调用身份由 Agent 防腐层绑定，不接受模型传入 cwd、环境、工具调用 ID、审批 ID 或 shell 可执行文件。
 仅 Owner 触发的 single、active role 显式启用工具、active workspace.shell_enabled、running execution/generation
 且未停止、ready lease 及规范根匹配时可用；Shell 永远 dangerous，safe override 不适用。
+同工作区有正常运行的服务不再直接拒绝 Shell；继续逐次审批并计入三级进程配额。批量清理门槛或服务回收未确认
+仍会阻止调用。该能力不是只读 Shell，批准的脚本可能修改文件或影响服务；不承诺与服务并发写入的一致性。
+命令卡安全摘要保留三层 RUNTIME_*_LIMIT 和 RUNTIME_SCOPE_CLOSING 固定错误码，区分配额/清理拒绝与审批拒绝，不复制脚本或输出。
 
 部署 `WORKSPACE_SHELL_KIND=auto|bash|powershell`，auto 在 POSIX 选 Bash、Windows 选 PowerShell。
 无可执行文件时不开放能力。Bash 使用 `--noprofile --norc -s`，PowerShell 使用 `-NoProfile -NonInteractive -Command -`；
@@ -35,6 +38,8 @@ Linux 使用独立的 subreaper 监管进程收养并清理脱离进程组的后
 - `GET /api/conversations/{id}/tool-approvals`：仅返回未过期 pending 列表。
   每项含 id、execution_id、tool_call_id、tool_name、workspace_binding_id、workspace_name、world_name、root_path、
   script、shell_kind、timeout_seconds、output_bytes、request_digest、status、requested_at、expires_at。
+  兼容新增 active_service_count：读取时同工作区未结束服务实例数，含待审批/回收中及其他会话实例。
+  该字段仅供风险提示，不包含服务脚本/日志，不是冻结授权或配额豁免，也不参与 request_digest；客户端必须提示数量可能变化。
 - `POST /api/conversations/{id}/tool-approvals/{approval_id}/decision`：
   `{decision:"approve"|"reject",request_digest:"<64 位摘要>"}`。返回 id/status；不能编辑脚本或执行参数。
   摘要不匹配 409 SHELL_APPROVAL_MISMATCH；批准前复核 execution/权限/根和配置，失效返回 409 WORKSPACE_TOOL_NOT_AVAILABLE。

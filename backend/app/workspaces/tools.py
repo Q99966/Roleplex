@@ -29,13 +29,13 @@ from .commands import WorkspaceCommandError, WorkspaceCommandService
 WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 4
+WORKSPACE_TOOL_POLICY_VERSION = 5
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件，并取得 sha256 供后续安全更新。",
-    "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新。",
+    "workspace_write": "在工作区新建 UTF-8 文件，或携带 workspace_read 返回的 expected_sha256 原子更新；同工作区有未结束服务时，此原生写工具暂不可用。这不构成文件写入隔离。",
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
-    "workspace_run_shell": "请求执行 Shell 脚本，必须等待 Owner 对本次脚本批准；只接受 script，不允许 cwd、环境或审批参数。",
+    "workspace_run_shell": "请求执行 Shell 脚本，必须等待 Owner 对本次脚本批准；只接受 script，不允许 cwd、环境或审批参数。工作区有运行中的服务时仍可申请，继续受权限、配额与清理门槛约束；脚本可能修改文件或影响服务，不是只读能力。",
     'workspace_start_service': '请求 Owner 批准前台 HTTP 开发服务；必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。',
     'workspace_service_status': '查询当前会话已登记服务的真实状态；不扫描全机，不占进程名额。',
     'workspace_service_logs': '读取当前会话服务的有界私有双流日志及游标缺口，内容会发给当前模型。',
@@ -288,8 +288,11 @@ async def _authorized_service(
         if tool_name in {'workspace_write', 'workspace_run_shell'}:
             from ..runtime.models import RuntimeEntry
             from ..runtime.registry import ACTIVE
+            # 运行中的服务不替代 Shell 的逐次审批；仅未确认回收仍阻止新的任意脚本。
+            # 原生写工具暂保留占用限制，不将其宣传为对 Shell/服务自身写文件的隔离。
+            blocked = ACTIVE if tool_name == 'workspace_write' else ('cleanup_required',)
             if await session.scalar(select(RuntimeEntry.id).where(RuntimeEntry.workspace_id == workspace_binding_id,
-                RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(ACTIVE)).limit(1)):
+                RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(blocked)).limit(1)):
                 return None
         from ..runtime.models import RuntimeGate, CleanupOperation
         from sqlalchemy import or_

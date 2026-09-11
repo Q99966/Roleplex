@@ -116,13 +116,26 @@ async def lifespan(_app: FastAPI):
         finally:
             try:
                 await conversation_scheduler.shutdown()
+                if runtime_manager.stop_jobs:
+                    await asyncio.gather(*list(runtime_manager.stop_jobs.values()), return_exceptions=True)
+            except BaseException as exc:
+                process_status = 'failed'
+                shutdown_error = shutdown_error or exc
             finally:
+                events.hub = None
+                try:
+                    await close_db()
+                except BaseException as exc:
+                    process_status = 'failed'
+                    shutdown_error = shutdown_error or exc
+                try:
+                    if world_manager is not None:
+                        world_manager.release(settings.world_name)
+                except BaseException as exc:
+                    process_status = 'failed'
+                    shutdown_error = shutdown_error or exc
                 lifecycle_logger.info('process.stopped', extra={'status': process_status, 'reason': process_stop_reason(),
                     **({'error_code': 'RUNTIME_CLEANUP_UNCONFIRMED'} if shutdown_error else {})})
-                events.hub = None
-                await close_db()
-                if world_manager is not None:
-                    world_manager.release(settings.world_name)
         if shutdown_error:
             raise shutdown_error
 
@@ -139,7 +152,7 @@ async def runtime_error_handler(request, exc: RuntimeRejected):
         request：当前 HTTP 请求。
         exc：固定错误码。
     """
-    status = 404 if exc.code == 'RUNTIME_NOT_FOUND' else 422 if exc.code in {'RUNTIME_SCOPE_INVALID', 'RUNTIME_LIMIT_INVALID', 'RUNTIME_ARGUMENT_INVALID'} else 409
+    status = 503 if exc.code == 'WORLD_OPERATION_FAILED' else 404 if exc.code == 'RUNTIME_NOT_FOUND' else 422 if exc.code in {'RUNTIME_SCOPE_INVALID', 'RUNTIME_LIMIT_INVALID', 'RUNTIME_ARGUMENT_INVALID'} else 409
     return await http_error_handler(request, StarletteHTTPException(status_code=status, detail=exc.code))
 
 
