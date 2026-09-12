@@ -1,4 +1,4 @@
-"""W1a/W1b 工作区工具适配、独立能力开关与每次调用二次授权。"""
+"""工作区文件/命令工具适配、能力开关与逐次/逐项授权。"""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,13 +27,14 @@ from .catalog import WORKSPACE_FILE_TOOLS, WORKSPACE_MUTATION_TOOLS
 from .paths import WorkspacePathError
 from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
+from .batch_read import ReadItemInput
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 7
+WORKSPACE_TOOL_POLICY_VERSION = 9
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
-    "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件；每段结果的 sha256 都是本次读取的全文件 hash，供后续安全更新。跨段 hash 改变时重新读取，不拼接不同版本。",
+    'workspace_read': '读取绑定工作区的 UTF-8 文件，优先使用 items 数组：一项是单文件，多项是批量，最多8项，每项默认4096字节，max_bytes 合计最多32768字节；输入 JSON 最多16 KiB，输出 JSON 最多64 KiB。各项独立授权、结果、全文件 sha256 与 next_offset；output_limited 表示正文为输出预算缩短。跨段 hash 改变时重新读取，不拼接不同版本。兼容旧 path/offset_bytes/max_bytes 单文件形式（默认65536字节、返回原五字段），但与 items 严格互斥，不能同时传入。重复读取是新的观察，不保证相同版本，不写文件。',
     "workspace_write": "普通源码创建或整文件替换优先使用本工具，更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
     'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；两片段合计最多 64 KiB。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
@@ -130,11 +131,28 @@ class WorkspaceListInput(BaseModel):
 
 
 class WorkspaceReadInput(BaseModel):
-    """UTF-8 文件分块读取工具输入。"""
+    """统一单文件/批量读取；旧路径参数兼容，items 不与顶层单项字段混用。"""
 
-    path: str = Field(min_length=1, max_length=1024)
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    path: str | None = Field(default=None, min_length=1, max_length=1024)
     offset_bytes: int = Field(default=0, ge=0)
     max_bytes: int = Field(default=65_536, ge=1, le=65_536)
+    items: list[ReadItemInput] | None = Field(default=None, min_length=1, max_length=8)
+
+    @model_validator(mode='before')
+    @classmethod
+    def exclusive_mode(cls, value):
+        """Args:
+            value：原始工具参数；按键是否出现校验，不能用 null/默认值规避互斥。
+        """
+        if not isinstance(value, dict):
+            raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        if 'items' in value:
+            if value['items'] is None or any(key in value for key in ('path', 'offset_bytes', 'max_bytes')):
+                raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        elif value.get('path') is None:
+            raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        return value
 
 
 class WorkspaceWriteInput(BaseModel):
@@ -341,7 +359,7 @@ def _error_result(code: str, *, rejected: bool = False) -> str:
 
     Args:
         code：固定错误码。
-        rejected：E1 的预期输入/匹配拒绝；默认保持旧工具响应语义。
+        rejected：原生文件工具的预期输入/匹配拒绝；默认保持旧工具响应语义。
     """
     body = json.dumps({"ok": False, "error_code": code}, separators=(",", ":"))
     return f"{REJECTED_OUTPUT_PREFIX if rejected else FAILED_OUTPUT_PREFIX} {body}"
@@ -422,8 +440,17 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             return _error_result(exc.code)
 
-    async def workspace_read(path: str, offset_bytes: int = 0, max_bytes: int = 65_536) -> str:
-        """读取绑定工作区内 UTF-8 普通文件的一段并返回全文件 hash。"""
+    async def workspace_read(path: str | None = None, offset_bytes: int = 0, max_bytes: int = 65_536, items: list | None = None) -> str:
+        """统一读取入口，保留旧调用的结果格式。
+
+        Args:
+            path：旧形式的单文件相对路径，与 items 互斥。
+            offset_bytes：旧形式的字节游标。
+            max_bytes：旧形式的读取上限。
+            items：新形式的逐文件参数，含一项也保持批量结果契约。
+        """
+        if items is not None:
+            return await read_items(items)
         authorized = await service("workspace_read")
         if authorized is None:
             return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
@@ -467,6 +494,24 @@ async def create_workspace_tools(
         finally:
             if receipt:
                 receipt.release()
+
+    async def read_items(items: list) -> str:
+        """Args:
+            items：模型逐文件请求，批次身份与权限从当前宿主取得。
+        """
+        from .batch_read import validate_items, ReadBatchReceipt, read_many
+        from ..agent.write_capture import write_capture_scope
+        from ..agent.tool_context import tool_call_id
+        try:
+            values = validate_items(items)
+            scope, call_id = write_capture_scope.get(), tool_call_id.get()
+            receipt = scope.begin_read_batch(call_id, values) if scope and call_id else None
+            receipt = receipt or ReadBatchReceipt(values)
+            result = await read_many(values, authorize=lambda: service('workspace_read'), receipt=receipt)
+            status = receipt.value['status']
+            return result if status == 'success' else f'{REJECTED_OUTPUT_PREFIX if status == "rejected" else FAILED_OUTPUT_PREFIX} {result}'
+        except WorkspaceFileError as exc:
+            return _error_result(exc.code, rejected=True)
 
     async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
         """新建或整文件替换。
@@ -617,6 +662,7 @@ async def create_workspace_tools(
             name="workspace_read",
             description=WORKSPACE_TOOL_DESCRIPTIONS["workspace_read"],
             args_schema=WorkspaceReadInput,
+            handle_validation_error=lambda _error: _error_result('WORKSPACE_READ_ARGUMENT_INVALID', rejected=True),
         ),
         "workspace_write": StructuredTool.from_function(
             coroutine=workspace_write,

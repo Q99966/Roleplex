@@ -150,7 +150,9 @@ class WorkspaceFileService:
             raise WorkspaceFileError("WORKSPACE_FILE_NOT_TEXT")
         if target.stat().st_size > MAX_FILE_BYTES:
             raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
-        data = target.read_bytes()
+        # stat 后外部程序可能扩写；读取本身也必须有界，批量调用不能放大瞬时分配。
+        with target.open('rb') as stream:
+            data = stream.read(MAX_FILE_BYTES + 1)
         if len(data) > MAX_FILE_BYTES:
             raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
         try:

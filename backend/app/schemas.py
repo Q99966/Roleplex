@@ -272,6 +272,37 @@ class ToolCaptureView(BaseModel):
     truncated: bool
 
 
+class BatchReadResultView(BaseModel):
+    """一项实际读取的版本与有界片段，不代表统一快照。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    text: str = Field(max_length=65536)
+    bytes: int = Field(ge=0, le=65536)
+    eof: bool
+    next_offset: int = Field(ge=0, le=2**63 - 1)
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class BatchReadItemView(BaseModel):
+    """本次调用中的稳定文件节点，失败/未开始没有伪造读取结果。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    id: str = Field(pattern=r'^item-[0-7]$')
+    operation: Literal['read']
+    path: str = Field(max_length=1024)
+    status: Literal['pending', 'running', 'success', 'failed', 'rejected', 'cancelled', 'not_executed']
+    error_code: str | None = Field(max_length=80)
+    output_limited: bool
+    result: BatchReadResultView | None
+
+
+class BatchReadDetailView(BaseModel):
+    """Owner 读取批次；父身份仍是外层原始 message/call，不新增 execution。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    version: Literal[1]
+    status: Literal['running', 'success', 'partial', 'failed', 'cancelled', 'rejected']
+    error_code: str | None = Field(max_length=80)
+    items: list[BatchReadItemView] = Field(min_length=1, max_length=8)
+
+
 class FileDiffLineView(BaseModel):
     """私有差异的一行；不适用的行号显式为 null。"""
     model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')

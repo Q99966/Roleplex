@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -88,6 +88,10 @@ async def update_detail(
         try:
             row.output_encrypted = _encrypt(message_id, call_id, private_output)
         except Exception:
+            if tool_name == 'workspace_read' and private_output.get('format') == 'read-batch-v1':
+                # 读取结果保存失败只降级详情，不泄漏明文、不重读或把模型成功结果改成失败。
+                row.output_encrypted = None
+                return True
             if tool_name not in WORKSPACE_MUTATION_TOOLS or private_output.get('format') != 'write-v1':
                 raise
             # 差异保存失败不能将已成功写入伪装成模型工具失败；仅保留有界提交元数据。
@@ -116,6 +120,22 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     try:
         output = _decrypt(row, row.output_encrypted)
         payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
+        # 原单文件详情仍返回原 input/output；模式只决定展示，不由输入猜测执行结果。
+        batch_mode = row.tool_name == 'workspace_read_many' or bool(output and output.get('format') == 'read-batch-v1')
+        if row.tool_name == 'workspace_read' and payload['input']:
+            try:
+                parameters = json.loads(payload['input']['text'])
+                batch_mode = batch_mode or (isinstance(parameters, dict) and isinstance(parameters.get('items'), list))
+            except (ValueError, KeyError, TypeError):
+                pass
+        if batch_mode:
+            payload['output'] = None
+            payload['read_batch'] = None
+            if output and output.get('format') == 'read-batch-v1':
+                value = BatchReadDetailView.model_validate(output['batch']).model_dump()
+                if len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > 65536:
+                    raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                payload['read_batch'] = value
         if row.tool_name in WORKSPACE_MUTATION_TOOLS:
             if output and output.get('format') == 'write-v1':
                 value = WriteDetailView.model_validate(output['write']).model_dump()

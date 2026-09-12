@@ -8,7 +8,7 @@ from typing import Any
 CAPTURE_LIMIT = 65_536
 _FIELDS = {
     'workspace_list': ('path', 'after_name', 'limit'),
-    'workspace_read': ('path', 'offset_bytes', 'max_bytes'),
+    'workspace_read': ('path', 'offset_bytes', 'max_bytes', 'items'),
     'workspace_write': ('path', 'content', 'expected_sha256'),
     'workspace_edit': ('path', 'old_text', 'new_text', 'expected_sha256'),
     'workspace_run_command': ('command', 'args'),
@@ -42,7 +42,12 @@ def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
     selected = {}
     for key in _FIELDS[tool_name]:
         item = value.get(key)
-        if key == 'args' and isinstance(item, dict):
+        if key == 'items' and isinstance(item, list) and len(item) <= 8:
+            # 只选取已批准的读取字段；不把嵌套未知对象或未来写入参数带入持久记录。
+            selected[key] = [{name: value for name, value in row.items()
+                if name in {'path', 'offset_bytes', 'max_bytes'} and (isinstance(value, str) or type(value) is int)}
+                for row in item if isinstance(row, dict)]
+        elif key == 'args' and isinstance(item, dict):
             selected[key] = {'path': item['path']} if isinstance(item.get('path'), str) else {}
         elif item is None or isinstance(item, (str, bool)) or (type(item) is int and abs(item) < 2**63):
             if key in value:

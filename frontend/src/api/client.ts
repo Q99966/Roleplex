@@ -63,11 +63,19 @@ export type ShellApproval = {
   active_service_count?: number
   runtime_id?: string; port?: number; health_path?: string; lifetime_seconds?: number; ready_timeout_seconds?: number
 }
+export type ReadBatchDetails = {
+  version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'rejected'; error_code: string | null
+  items: Array<{ id: string; operation: 'read'; path: string;
+    status: 'pending' | 'running' | 'success' | 'failed' | 'rejected' | 'cancelled' | 'not_executed';
+    error_code: string | null; output_limited: boolean;
+    result: { text: string; bytes: number; eof: boolean; next_offset: number; sha256: string } | null }>
+}
 export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
   input: ToolCapture | null; output: ToolCapture | null
   write?: WriteDetails | null
+  read_batch?: ReadBatchDetails | null
   shell?: {
     script: ToolCapture | null; approval_status: 'pending' | 'approved' | 'rejected' | 'expired' | null;
     approval_wait_ms: number | null; execution_duration_ms: number | null;

@@ -390,6 +390,8 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 
 D 复用既有 output_encrypted 存储 write-v1 私有记录，包含原始有界结果和独立有界 write 差异对象；
 不新增字段，详情读取时拆分为原 output 与兼容 write 扩展。差异生命周期与原记录相同，具体结构以工具详情协议为准。
+E2 多文件读取复用 output_encrypted 的 read-batch-v1 格式，保存本调用的有界逐项结果；接口拆出 read_batch，
+不复制到共享消息，不新增子项执行表。崩溃前未落库的结果不补造，生命周期仍以工具详情协议为准。
 
 Owner 专属的有界执行内容，与共享消息和机器审计分开。具体接口、权限、截断和保留语义见
 [工具执行详情](../public/messaging/tool-details.md)，迁移为 `0007_tool_execution_details`。

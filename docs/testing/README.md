@@ -48,6 +48,16 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+E2 批量读取切片：`pytest tests/test_workspace_read_many.py -q` 验证逐项失败、全文件 hash/续读、JSON 转义后预算、
+最大文件批次、严格参数、权限撤销、两批准入/每批两项、取消收尾、路径/敏感文件/链接、重复观察、
+加密失败降级和崩溃结果缺口。`npm run test:e2e:commands -- read-many.spec.ts` 验证一次调用的多文件节点、
+独立展开、部分失败、刷新仍看原版本及 Guest 不请求私有详情；目录为命令类别/本轮时间戳/default/read-many。
+真实入口仍复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，包含多文件读取目标并记录实际工具选择，
+触发批量读取时核验详情结构；不为取得该路径重复计费。该切片不覆盖尚未实现的批量写入/编辑及其重放语义。
+入口已统一为 workspace_read(items=...)；同一专项同时验证旧 path 形式的五字段响应、混合参数拒绝、原 read 权限撤销
+与实验名不再暴露。浏览器同时展开两种形式，确保单项旧记录不会被误显示为批量未记录；真实观察按私有 read_batch
+判定是否触发 items，不将所有 workspace_read 调用都算成批量。历史测试文件名保留，不代表仍暴露实验工具。
+
 E2 探索归组切片：`npm run test:e2e -- exploration-grouping.spec.ts` 验证顺序、边界、旧版/未知版本、
 重复身份与异常摘要；`npm run test:e2e:commands -- exploration.spec.ts` 使用真实前后端和确定性文件工具，
 验证连续 Read/List、重复读取计数、缺失文件、流式折叠选择、断线/刷新、正文与跨轮边界、Owner/Guest 详情隔离，

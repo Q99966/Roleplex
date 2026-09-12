@@ -24,7 +24,7 @@ from ..agent.tools import guard_tools
 from ..realtime import store as event_store
 from ..workspaces.tools import create_workspace_tools, retain_execution_workspace
 from .tool_details import update_detail
-from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
+from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
 
 logger = logging.getLogger("roleplex.chat")
 
@@ -772,7 +772,7 @@ async def run_scheduled_generation(
                 command_summary={'command_status': 'cancelled', 'exit_code': None},
                 accumulated_text=accumulated,
                 execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
-                private_output=write_captures.take(call_id) if started_event.tool_name in WORKSPACE_MUTATION_TOOLS else None,
+                private_output=write_captures.take(call_id) if started_event.tool_name in WORKSPACE_CAPTURE_TOOLS else None,
             )
             logger.info('tool.call_completed', extra={
                 'tool_call_id': call_id, 'tool_name': started_event.tool_name,

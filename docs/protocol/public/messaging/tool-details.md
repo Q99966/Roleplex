@@ -3,8 +3,8 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | D/E1 与 E2 探索展示归组已人工验收 |
-| 协议版本 | 3（兼容新增 write 私有差异） |
+| 状态 | D/E1、E2 探索归组与批量读取节点已人工验收 |
+| 协议版本 | 4（兼容新增 read_batch 私有文件节点） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
 | 复核日期 | 2026-09-12 |
@@ -113,3 +113,19 @@ E1 workspace_edit（已人工验收）复用上述 write-v1 加密格式及公�
 各调用保留真实名称、身份、状态、耗时及详情入口。组默认展开，用户折叠后流式追加/完成不重置选择；
 刷新重新默认展开，调用顺序及既有阅读锚点可恢复，折叠隐藏锚点回退至组标题。
 归组不主动预取路径、参数或文件内容，Owner 按需读取原详情端点，Guest 不请求私有详情；权限及保留期限不变。
+
+### E2 批量读取详情（已人工验收）
+
+同一 Owner 端点兼容增加 read_batch（可空）；workspace_read 的 items 形式使用，旧 path 形式仍返回原 input/output，
+不增加 read_batch 字段。字段等同该工具已校验的
+version/status/error_code/items，逐项结果、字节预算、续读与取消语义以[工作区工具契约](../rest/workspaces.md)为准。
+items 形式 output=null，不重复传输第二份大 JSON；input 仅采集 items 的 path/offset_bytes/max_bytes，未知嵌套字段不保存。
+无批次输出时仅用已保存输入识别展示模式，不由输入推断执行结果；旧实验 workspace_read_many 历史记录继续只读兼容。
+执行处在既有 generation 文件采集作用域保留结果，由原消息所有者加密保存 read-batch-v1 到 output_encrypted，
+不新增数据表、Trace 或子调用。详情读取校验 schema 与紧凑 UTF-8 JSON 64 KiB 上限；密文保存失败降级 read_batch=null，
+不保存明文、不重新读取。重启前未落库的子项状态不从输入推断；read_batch=null 显示逐项结果未记录或仍等待结束。
+
+批量读取卡仍由 Owner 主动展开，展开后显示按输入顺序的文件节点，每项可独立展开文本/hash/续读游标；
+items 形式不显示原始输入/输出 JSON；可按 workspace_read 的连续只读规则参与探索归组，仍保留每个调用的文件节点，
+也不把多次观察当成文件净变化。部分失败在外层标“部分完成”，
+保留所有成功与失败节点。Guest 不获取文件清单/正文，七天保留、密文身份绑定、历史不重建规则不变。

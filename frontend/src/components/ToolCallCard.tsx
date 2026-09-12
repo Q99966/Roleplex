@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, Terminal } from 'lucide-react'
 import { api, type Part, type ToolCapture, type ToolDetails } from '../api/client'
 import { useChatStore } from '../store/chat'
 import { visibleScript } from './ShellApprovals'
+import { ReadBatch } from './ReadBatch'
 
 const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).WriteDiff }))
 
@@ -101,7 +102,8 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
     }).catch(() => { if (active) setFailed(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false; controller.abort() }
   }, [open, isOwner, conversationId, messageId, callId, part.status, canLoad, approvalVersion, fileWrite, seen])
-  const status = part.error_code === 'EXECUTION_INTERRUPTED' ? '已中断' : STATUS[part.status ?? ''] ?? '状态未知'
+  const status = part.error_code === 'WORKSPACE_BATCH_PARTIAL' ? '部分完成'
+    : part.error_code === 'EXECUTION_INTERRUPTED' ? '已中断' : STATUS[part.status ?? ''] ?? '状态未知'
   return <div ref={cardRef} data-testid="tool-call-card" className="my-3 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/60 text-xs">
     <button type="button" aria-expanded={open} aria-controls={controlId}
       aria-label={`执行详情：${part.tool_name ?? '工具'}${part.command ? ` · ${part.command}` : ''}`}
@@ -130,7 +132,9 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
         {detail?.availability === 'available' && <>
           <p>开始：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
           <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
-          {fileWrite ? (detail.write
+          {'read_batch' in detail ? (detail.read_batch
+            ? <ReadBatch value={detail.read_batch} />
+            : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : fileWrite ? (detail.write
             ? <Suspense fallback={<p role="status">正在加载差异视图…</p>}><WriteDiff value={detail.write} /></Suspense>
             : <p className="mt-2">此调用未记录文件差异，无法补回。</p>) : detail.shell ? <ShellDetails value={detail.shell} /> : <>
             <CaptureText title="工具输入" capture={detail.input} />

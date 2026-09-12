@@ -3,7 +3,7 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | W1a/W1b/W1c 已验收；E1 单文件编辑已人工验收；群聊绑定与聊天标题区摘要属于 W2a |
+| 状态 | W1a/W1b/W1c/E1 与 E2 统一读取已验收；群聊绑定与聊天标题区摘要属于 W2a |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
@@ -124,7 +124,7 @@ PUT /api/conversations/{conversation_id}/workspace
 | 工具 | 输入 | 结果 |
 |---|---|---|
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
-| `workspace_read` | `path`、`offset_bytes>=0`、`max_bytes=1..65536` | `text/bytes/eof/next_offset/sha256`；只读最大 1 MiB 的 UTF-8 普通文件且不拆坏字符 |
+| `workspace_read` | 旧 `path/offset_bytes/max_bytes`，或新 `items`，两种互斥 | 旧形式保留 `text/bytes/eof/next_offset/sha256`；items 形式返回下述逐项结果，含一项也不改变结果形态 |
 | `workspace_write` | `path/content/expected_sha256?` | `created/bytes/sha256`；新建要求目标不存在，更新要求 hash 完全匹配 |
 | `workspace_edit` | `path/old_text/new_text/expected_sha256`，均必填 | `created=false/bytes/sha256`；仅对已有 UTF-8 文件做一次唯一字面替换（E1 已实现） |
 
@@ -139,6 +139,34 @@ schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/
 版本冲突只能重新读取/确认后重试，不自动覆盖。运行中服务对 edit 的限制与 write 相同；不隐含停服授权。
 差异采集、预算、取消和 Owner 展示复用[工具详情](../messaging/tool-details.md)的 write 对象，不新增独立 diff 协议。
 大文件小修改允许执行，但超过 D 的前后合计计算预算时 diff 仍明确降级，不在 E1 偷偷提高预算。
+
+### E2 多文件读取（已人工验收，内部工具契约）
+
+workspace_read 同时支持旧单文件形式和新 items 形式，共用原角色 read 权限、工作区 file_tools_enabled 和 Owner single lease。
+旧形式 path 必填，offset_bytes 默认 0，max_bytes 默认 65536，范围及原五字段响应不变；items 即使仅一项也返回批次结果。
+items 与任何顶层 path/offset_bytes/max_bytes 键严格互斥（包含 null/默认值），缺失模式、items=null、未知字段或非法类型
+返回 WORKSPACE_READ_ARGUMENT_INVALID；嵌套 items 严格整数。旧实验 workspace_read_many 不再暴露/执行，旧角色如仅勾选
+实验工具需手动开启 workspace_read，不静默转换权限。历史工具身份不改写，Owner 仍可读取已保存实验记录。
+items 长度 1..8，每项 path 长度 1..1024、offset_bytes 默认 0 且 0..2^63-1、max_bytes 默认 4096 且 1..32768；
+整数不接受 bool/字符串，未知参数拒绝。标准化输入紧凑 UTF-8 JSON 最大 16384 字节，max_bytes 合计最大 32768。
+宿主同时最多 2 批，每批最多 2 项进入授权/读取，不设批次等待队列；其余拒绝 WORKSPACE_BATCH_BUSY。
+每项复用完整的路径/敏感文件/链接/UTF-8/1 MiB 文件限制；stat 后实际读取也有 1 MiB+1 字节硬上限。
+读取原语不使用新线程池，不承诺磁盘并行加速；逻辑在途读取最多 4 个 1 MiB 文件，保留结果每批最大 64 KiB，
+Python 编码对象和临时 JSON 另有开销，不把逻辑字节预算宣传为进程 RSS 上限。
+
+结果为紧凑 JSON：version=1、status、error_code（可空）、items。子项按输入顺序，含 id=item-0..item-7、
+operation=read、path、status、error_code、output_limited、result（失败/未执行为 null；成功为单项 read 的五字段）。
+子状态 pending/running/success/failed/rejected/cancelled/not_executed；父状态 running/success/partial/failed/cancelled/rejected。
+失败与部分完成用既有工具失败前缀，准入/形态拒绝用拒绝前缀；共享工具卡只取得固定顶层错误码，不含逐文件清单。
+每项进入读取前重新授权，一项失败继续其他项。输出 JSON 总量不超过 65536 UTF-8 字节，按项等分扣除信封后的预算；
+仅当转义后超额时缩短 text，按实际 UTF-8 字节重算 bytes/next_offset、eof=false，output_limited=true，sha256 不变。
+不能用截断 JSON 的方式丢失 hash 或游标；单字节预算必要时沿用单文件最多补齐 3 字节的字符边界规则。
+
+取消等待已启动任务收尾，保留已观察成功/失败，未开始为 not_executed、已开始但未返回为 cancelled。
+私有逐项结果复用 generation 文件采集作用域，在工具结束或正常取消收尾时由消息所有者加密落库。
+进程崩溃时未落库的逐项事实不补造，显示中断和逐项结果未记录；不自动重启 generation 或重读文件补历史。
+重复路径/请求允许新的独立观察，hash 可能变化，不是同一时刻快照或历史幂等缓存；只读重试不会写文件，
+不得把这种重试方式用于尚未实现的批量写入。Owner 展示契约见[工具详情](../messaging/tool-details.md)。
 
 路径只接受 UTF-8 相对路径；拒绝绝对路径、空字节、`..`、盘符、UNC、环境变量、glob、符号链接逃逸、
 `.git`、真实 `.env`、私钥和实例密钥路径。目录名、文件正文、写入内容和绝对路径不得进入正式日志、审计

@@ -144,6 +144,9 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
         command = args.get('command')
         return json.dumps({'command': command} if command in ('pwd', 'list', 'read', 'count') else {})
     if tool_name in WORKSPACE_FILE_TOOLS:
+        if tool_name == 'workspace_read' and 'items' in args:
+            items = args.get('items')
+            return json.dumps({'item_count': len(items)} if isinstance(items, list) else {})
         path = args.get("path")
         summary: dict[str, int | str | bool] = {}
         if isinstance(path, str):
@@ -195,13 +198,13 @@ def summarize_tool_output(output: Any) -> str:
 
 
 def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
-    """从命令或原生编辑结果提取公开允许字段，不复制任何输出原文。
+    """从命令或原生文件结果提取公开允许字段，不复制任何输出原文。
 
     Args:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_edit'}:
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_edit', 'workspace_read'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -216,6 +219,11 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         return {}
     if not isinstance(result, dict):
         return {}
+    if tool_name == 'workspace_read':
+        code = result.get('error_code')
+        allowed = {'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_BATCH_BUSY',
+            'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE', 'WORKSPACE_READ_ARGUMENT_INVALID'}
+        return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     if tool_name == 'workspace_edit':
         allowed = {'WORKSPACE_EDIT_ARGUMENT_INVALID', 'WORKSPACE_EDIT_INPUT_TOO_LARGE',
             'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_FILE_REVISION_CONFLICT',

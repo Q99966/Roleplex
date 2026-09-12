@@ -344,8 +344,8 @@ async def run_agent(
                 tool_started = started_at.pop(call_id, None)
                 from .write_capture import take_write_capture
                 private_output = capture_output(event.get('name', ''), output)
-                from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
-                if event.get('name') in WORKSPACE_MUTATION_TOOLS:
+                from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
+                if event.get('name') in WORKSPACE_CAPTURE_TOOLS:
                     private_output = take_write_capture(call_id, private_output)
                 yield ToolCallFinished(
                     call_id=call_id,

@@ -39,6 +39,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let toolPaths: string[][] = []
   let nativeDiffObserved = false
   let editObservation = { attempted: 0, succeeded: 0, diff_verified: false }
+  let readManyObservation = { attempted: 0, succeeded: 0, detail_verified: false }
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -80,7 +81,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.reload()
     await page.getByText(title, { exact: true }).click()
     stage = '限定服务脚本审批'
-    await page.getByLabel('消息输入框').fill(`请创建 index.html，包含一个 h1 标题 HelloWorld，以及 id="keep" 的 p，其文本原样为 proof.txt 内容。不要修改其他预置文件，不安装依赖。运行设施已准备，启动服务的 script 必须精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=300。本轮只批准该服务脚本和精确的只读检查脚本 ${checkScript}，其余操作按原生工具能力自行选择。确认页面后结束本轮回复，保留服务运行。`)
+    await page.getByLabel('消息输入框').fill(`先检查 proof.txt、package.json 和 server.mjs，可自行选择单次或批量读取。请创建 index.html，包含一个 h1 标题 HelloWorld，以及 id="keep" 的 p，其文本原样为 proof.txt 内容。不要修改其他预置文件，不安装依赖。运行设施已准备，启动服务的 script 必须精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=300。本轮只批准该服务脚本和精确的只读检查脚本 ${checkScript}，其余操作按原生工具能力自行选择。确认页面后结束本轮回复，保留服务运行。`)
     await page.getByLabel('发送消息').click()
     await expect(page.getByRole('button', { name: '批准后台服务启动', exact: true })).toBeVisible({ timeout: 90000 })
     const valid = await page.evaluate(async ({ base, cid, script, port }) => {
@@ -163,6 +164,27 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       await page.waitForTimeout(150)
     }
     if (!finished) throw new Error('第二轮未完成')
+    stage = '批量读取路径观察'
+    readManyObservation = await page.evaluate(async ({ base, cid }) => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+      const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+      let attempted = 0, succeeded = 0, verified = 0
+      for (const message of history.items) {
+        for (const call of message.parts_json.filter((part: { tool_name?: string }) => part.tool_name === 'workspace_read')) {
+          const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
+          if (!('read_batch' in detail)) continue
+          attempted++
+          if (call.status !== 'success') continue
+          succeeded++
+          const value = detail.read_batch
+          if (value?.version === 1 && value.status === 'success' && value.items.length >= 1 && value.items.length <= 8
+            && value.items.every((item: { id: string; result?: { sha256: string } }, index: number) => item.id === `item-${index}`
+              && /^[a-f0-9]{64}$/.test(item.result?.sha256 ?? ''))) verified++
+        }
+      }
+      return { attempted, succeeded, detail_verified: succeeded > 0 && verified === succeeded }
+    }, { base, cid })
+    if (readManyObservation.succeeded && !readManyObservation.detail_verified) throw new Error('已触发批量读取但详情不完整')
     const updated = await readFile(path.join(root, 'index.html'), 'utf8')
     stage = '独立文件与第二轮页面核对'
     if (!isExpectedHeadingEdit(initial, updated)) throw new Error('修改或保留内容不符')
@@ -227,7 +249,8 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.goto('about:blank').catch(() => undefined)
     const reportPath = testInfo.outputPath('tool-path-observation.json')
     await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
-      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
+      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, workspace_read_items: readManyObservation,
+      native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })
   }

@@ -139,6 +139,13 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             }]),
             ScriptedTurn(text='处理完成。'),
         ], delay=delay)
+    if '[READ_MANY_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[ScriptedTurn(text='批量读取受控文件。', tool_calls=[{
+            'name': 'workspace_read', 'args': {'items': [
+                {'path': 'first.txt'}, {'path': 'missing.txt'}, {'path': 'second.txt'},
+            ]}, 'id': 'read_many'}]), ScriptedTurn(text='再检查单文件兼容形式。', tool_calls=[{
+                'name': 'workspace_read', 'args': {'path': 'second.txt'}, 'id': 'read_legacy'}]),
+            ScriptedTurn(text='批量读取验收完成。')], delay=delay)
     if '[EXPLORE_FAKE]' in prompt:
         # 连续只读、缺失文件和正文断点，走真实工具与消息事件以验证纯展示归组。
         return ScriptedChatModel(turns=[

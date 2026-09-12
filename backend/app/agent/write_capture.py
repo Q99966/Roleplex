@@ -1,9 +1,15 @@
-"""执行作用域内的私有写入凭据，不经过模型结果或框架事件 payload。"""
+"""执行作用域内的私有文件凭据，复用写入采集的生命周期，不创建另一套执行身份。"""
+from __future__ import annotations
+
 import asyncio
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
 from .tool_capture import bounded_text
 from .tool_context import tool_call_id
+
+if TYPE_CHECKING:
+    from ..workspaces.batch_read import ReadBatchReceipt
 
 
 class WriteReceipt:
@@ -66,13 +72,31 @@ class WriteReceipt:
         if self.ticket is not None:
             self.ticket.release()
 
+    def export(self, output: dict | None) -> dict:
+        """Args:
+            output：防腐层观察到的普通工具结果，取消时可为空。
+        """
+        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value}
+
 
 class WriteCaptureScope:
     """一个 generation 的采集所有者；框架子任务只继承同一受控对象。"""
 
     def __init__(self):
         """创建仅由当前 generation 持有的空凭据集合。"""
-        self.receipts: dict[str, WriteReceipt] = {}
+        self.receipts: dict[str, WriteReceipt | ReadBatchReceipt] = {}
+
+    def begin_read_batch(self, call_id: str, items: list[dict]) -> ReadBatchReceipt | None:
+        """Args:
+            call_id：已有真实工具身份，不从模型参数取得。
+            items：已通过整批限额校验的输入。
+        """
+        from ..workspaces.batch_read import ReadBatchReceipt
+        if call_id in self.receipts or len(self.receipts) >= 32:
+            return None
+        receipt = ReadBatchReceipt(items)
+        self.receipts[call_id] = receipt
+        return receipt
 
     def begin(self, call_id: str, path: str) -> WriteReceipt | None:
         """限定未消费的凭据数量，未知/重复身份不创建第二份采集。
@@ -98,7 +122,7 @@ class WriteCaptureScope:
         if receipt is None:
             return output
         receipt.release()
-        return {'format': 'write-v1', 'result': output or receipt.output, 'write': receipt.value}
+        return receipt.export(output)
 
     def clear(self) -> None:
         """终止执行时释放未消费的有界凭据。"""
