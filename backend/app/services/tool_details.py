@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -88,6 +88,18 @@ async def update_detail(
         try:
             row.output_encrypted = _encrypt(message_id, call_id, private_output)
         except Exception:
+            if tool_name in WORKSPACE_MUTATION_TOOLS and private_output.get('format') == 'write-batch-v1':
+                # 尽力保存提交证明，整批差异保存失败不能重写文件或改变模型侧结果。
+                value = private_output['batch']
+                fallback = {**private_output, 'batch': {**value, 'items': [{**node,
+                    'write': {**node['write'], 'availability': 'unavailable', 'reason': 'capture_failed',
+                        'files': [{**file, 'hunks': [], 'added': None, 'removed': None} for file in node['write']['files']]}
+                    if node.get('write') else None} for node in value['items']]}}
+                try:
+                    row.output_encrypted = _encrypt(message_id, call_id, fallback)
+                except Exception:
+                    row.output_encrypted = None
+                return True
             if tool_name == 'workspace_read' and private_output.get('format') == 'read-batch-v1':
                 # 读取结果保存失败只降级详情，不泄漏明文、不重读或把模型成功结果改成失败。
                 row.output_encrypted = None
@@ -137,7 +149,23 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                     raise ValueError('TOOL_DETAILS_UNAVAILABLE')
                 payload['read_batch'] = value
         if row.tool_name in WORKSPACE_MUTATION_TOOLS:
-            if output and output.get('format') == 'write-v1':
+            mutation_batch = bool(output and output.get('format') == 'write-batch-v1')
+            if payload['input']:
+                try:
+                    parameters = json.loads(payload['input']['text'])
+                    mutation_batch = mutation_batch or (isinstance(parameters, dict) and isinstance(parameters.get('items'), list))
+                except (ValueError, KeyError, TypeError):
+                    pass
+            if mutation_batch:
+                payload.update(output=None, write_batch=None)
+                if output and output.get('format') == 'write-batch-v1':
+                    value = BatchMutationDetailView.model_validate(output['batch']).model_dump()
+                    if len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > 65536 or sum(
+                        len(hunk['lines']) for node in value['items'] if node['write']
+                        for file in node['write']['files'] for hunk in file['hunks']) > 1000:
+                        raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                    payload['write_batch'] = value
+            elif output and output.get('format') == 'write-v1':
                 value = WriteDetailView.model_validate(output['write']).model_dump()
                 if len(json.dumps(value, ensure_ascii=False).encode()) > 65536 or sum(
                     len(hunk['lines']) for file in value['files'] for hunk in file['hunks']) > 1000:

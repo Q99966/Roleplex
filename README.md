@@ -45,7 +45,7 @@ W1b 已完成并通过人工验收；当前工具时间线与展开详情优化�
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
 W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；W1d Linux 首版与 M 多行输入已完成人工验收，
-[代码 diff 阶段 D 与 E1 局部编辑](docs/plan/code-diff-multiline-v1.md)已通过人工验收，后续为 E2 批量文件操作，再继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
+[代码 diff 阶段 D、E1 局部编辑与 E2 批量文件操作](docs/plan/code-diff-multiline-v1.md)已通过人工验收，后续继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 
@@ -69,7 +69,9 @@ E2 探索归组已通过人工验收：连续原生读取/列目录在原位置�
 E2 统一读取已通过人工验收：角色使用原 `workspace_read` 开关，通过 `items` 一次可读取最多 8 个文件，
 Owner 展开工具卡可分别查看各文件结果、hash 与续读游标；部分失败不隐藏其他结果，整个 JSON 输出仍限 64 KiB。
 旧 `path` 单文件参数和响应保持兼容，两种形式不能混传；不再提供独立批量读取工具开关。
-批量写入/编辑尚未实施，后续分别扩展原 write/edit 工具，范围见[实施计划](docs/plan/code-diff-multiline-v1.md)。
+E2 批量写入/编辑已通过人工验收：原 `workspace_write`／`workspace_edit` 支持 `items`，无需新工具开关，
+写前预检全批、逐项提交，失败即停，不自动回滚或整批重试；Owner 可按文件折叠 diff，未确认结果明确提示先核查。
+旧单文件参数和展示兼容，范围与验收见[实施计划](docs/plan/code-diff-multiline-v1.md)。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 

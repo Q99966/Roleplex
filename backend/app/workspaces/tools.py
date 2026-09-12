@@ -28,10 +28,11 @@ from .paths import WorkspacePathError
 from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
 from .batch_read import ReadItemInput
+from .batch_mutation import WriteItemInput, EditItemInput
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 9
+WORKSPACE_TOOL_POLICY_VERSION = 10
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件，优先使用 items 数组：一项是单文件，多项是批量，最多8项，每项默认4096字节，max_bytes 合计最多32768字节；输入 JSON 最多16 KiB，输出 JSON 最多64 KiB。各项独立授权、结果、全文件 sha256 与 next_offset；output_limited 表示正文为输出预算缩短。跨段 hash 改变时重新读取，不拼接不同版本。兼容旧 path/offset_bytes/max_bytes 单文件形式（默认65536字节、返回原五字段），但与 items 严格互斥，不能同时传入。重复读取是新的观察，不保证相同版本，不写文件。',
@@ -58,6 +59,10 @@ def _tool_description(name: str, *, edit_available: bool = False) -> str:
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
     if name == 'workspace_write' and edit_available:
         description += ' 局部修改可优先使用本轮已启用的 workspace_edit，避免重传整份文件。'
+    if name in WORKSPACE_MUTATION_TOOLS:
+        description += (' 支持 items 数组（1..8项），与顶层单文件参数严格互斥；沿用本工具单项字段，整批 JSON 输入最多256 KiB。'
+            '先检查全批目标/版本再顺序执行，任何执行失败停止后续项，不自动回滚。重复目标拒绝，结果逐项区分成功、失败、未执行或未确认。'
+            '只重试失败/未执行项并重新读取 hash，未确认项先核查；不整批盲目重放，不承诺跨文件事务或跨调用 exactly-once。')
     if name == 'workspace_run_shell':
         from .shell import shell_configuration
         try:
@@ -156,20 +161,59 @@ class WorkspaceReadInput(BaseModel):
 
 
 class WorkspaceWriteInput(BaseModel):
-    """UTF-8 文件乐观写入工具输入。"""
+    """单文件或批量创建/替换，两种参数形式互斥。"""
 
-    path: str = Field(min_length=1, max_length=1024)
-    content: str
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    path: str | None = Field(default=None, min_length=1, max_length=1024)
+    content: str | None = None
     expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    items: list[WriteItemInput] | None = Field(default=None, min_length=1, max_length=8)
+
+    @model_validator(mode='before')
+    @classmethod
+    def exclusive_mode(cls, value):
+        """Args:
+            value：按原始键存在性拒绝混合模式，包含 null 和默认值。
+        """
+        _mutation_mode(value, ('path', 'content', 'expected_sha256'), ('path', 'content'))
+        return value
 
 
 class WorkspaceEditInput(BaseModel):
     """单文件精确替换输入；字节合计在文件执行层复核，不接受额外参数。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    path: str = Field(min_length=1, max_length=1024)
-    old_text: str = Field(min_length=1, max_length=MAX_EDIT_BYTES)
-    new_text: str = Field(max_length=MAX_EDIT_BYTES)
-    expected_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    path: str | None = Field(default=None, min_length=1, max_length=1024)
+    old_text: str | None = Field(default=None, min_length=1, max_length=MAX_EDIT_BYTES)
+    new_text: str | None = Field(default=None, max_length=MAX_EDIT_BYTES)
+    expected_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    items: list[EditItemInput] | None = Field(default=None, min_length=1, max_length=8)
+
+    @model_validator(mode='before')
+    @classmethod
+    def exclusive_mode(cls, value):
+        """Args:
+            value：原始编辑参数，items 与全部旧字段互斥。
+        """
+        fields = ('path', 'old_text', 'new_text', 'expected_sha256')
+        _mutation_mode(value, fields, fields)
+        return value
+
+
+def _mutation_mode(value: dict, fields: tuple, required: tuple) -> None:
+    """统一写/编辑的输入形式判断，不改变各字段的具体校验规则。
+
+    Args:
+        value：原始模型参数。
+        fields：全部旧单文件字段。
+        required：旧形式必填且不可为 null 的字段。
+    """
+    if not isinstance(value, dict):
+        raise ValueError('Invalid mutation shape')
+    if 'items' in value:
+        if value['items'] is None or any(field in value for field in fields):
+            raise ValueError('Mixed mutation modes')
+    elif any(value.get(field) is None for field in required):
+        raise ValueError('Missing mutation fields')
 
 
 async def _create_lease(
@@ -513,17 +557,42 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             return _error_result(exc.code, rejected=True)
 
-    async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
+    async def mutate_items(tool_name: str, items: list) -> str:
+        """Args:
+            tool_name：宿主绑定的原 write/edit 工具。
+            items：模型多文件参数，不接受调度/归属身份。
+        """
+        from .batch_mutation import validate_items, BatchMutationReceipt, mutate_many
+        from ..agent.write_capture import write_capture_scope
+        from ..agent.tool_context import tool_call_id
+        operation = 'write' if tool_name == 'workspace_write' else 'edit'
+        try:
+            values = validate_items(operation, items)
+            scope, call_id = write_capture_scope.get(), tool_call_id.get()
+            receipt = scope.begin_mutation_batch(call_id, operation, values) if scope and call_id else None
+            receipt = receipt or BatchMutationReceipt(operation, values)
+            result = await mutate_many(operation, values, authorize=lambda: service(tool_name),
+                lock=_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()), receipt=receipt)
+            status = receipt.value['status']
+            return result if status == 'success' else f'{REJECTED_OUTPUT_PREFIX if status == "rejected" else FAILED_OUTPUT_PREFIX} {result}'
+        except WorkspaceFileError as exc:
+            return _error_result(exc.code, rejected=True)
+
+    async def workspace_write(path: str | None = None, content: str | None = None, expected_sha256: str | None = None, items: list | None = None) -> str:
         """新建或整文件替换。
 
         Args:
             path：工作区相对路径。
             content：完整新内容。
             expected_sha256：更新所需的完整旧 hash。
+            items：批次形式，与所有顶层单项参数互斥。
         """
+        if items is not None:
+            return await mutate_items('workspace_write', items)
         return await mutate_file('workspace_write', path, {'content': content, 'expected_sha256': expected_sha256})
 
-    async def workspace_edit(path: str, old_text: str, new_text: str, expected_sha256: str) -> str:
+    async def workspace_edit(path: str | None = None, old_text: str | None = None, new_text: str | None = None,
+                             expected_sha256: str | None = None, items: list | None = None) -> str:
         """对已有文件做一次唯一字面替换。
 
         Args:
@@ -531,7 +600,10 @@ async def create_workspace_tools(
             old_text：唯一旧片段。
             new_text：替换片段。
             expected_sha256：读取取得的完整文件 hash。
+            items：逐文件编辑参数，与旧形式严格互斥。
         """
+        if items is not None:
+            return await mutate_items('workspace_edit', items)
         return await mutate_file('workspace_edit', path, {'old_text': old_text, 'new_text': new_text, 'expected_sha256': expected_sha256})
 
     async def workspace_run_command(command: str, args: dict | None = None) -> str:
@@ -669,9 +741,10 @@ async def create_workspace_tools(
             name="workspace_write",
             description=_tool_description('workspace_write', edit_available='workspace_edit' in _enabled_tools(role, _binding)),
             args_schema=WorkspaceWriteInput,
+            handle_validation_error=lambda _error: _error_result('WORKSPACE_WRITE_ARGUMENT_INVALID', rejected=True),
         ),
         'workspace_edit': StructuredTool.from_function(
-            coroutine=workspace_edit, name='workspace_edit', description=WORKSPACE_TOOL_DESCRIPTIONS['workspace_edit'],
+            coroutine=workspace_edit, name='workspace_edit', description=_tool_description('workspace_edit'),
             args_schema=WorkspaceEditInput,
             handle_validation_error=lambda _error: _error_result('WORKSPACE_EDIT_ARGUMENT_INVALID', rejected=True),
         ),

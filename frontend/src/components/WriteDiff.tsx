@@ -22,8 +22,9 @@ function visible(text: string): string {
 
 /** 项目差异行适配为只读渲染器输入，不使用 patch 解析器推断事实。
  * @param file Owner 接口返回的有界文件节点。
+ * @param showHeading 批量父节点已有文件标题时不重复显示。
  */
-function FileNode({ file }: { file: FileChange }) {
+function FileNode({ file, showHeading }: { file: FileChange; showHeading: boolean }) {
   const hunks = useMemo<HunkData[]>(() => file.hunks.map((hunk) => ({
     content: `@@ -${hunk.old_start},${hunk.old_lines} +${hunk.new_start},${hunk.new_lines} @@`,
     oldStart: hunk.old_start, oldLines: hunk.old_lines, newStart: hunk.new_start, newLines: hunk.new_lines,
@@ -36,10 +37,10 @@ function FileNode({ file }: { file: FileChange }) {
   })), [file])
   const operation = { created: '新建', modified: '修改', unchanged: '内容无变化' }[file.operation] ?? '文件变更'
   return <section className="mt-2 min-w-0 overflow-hidden border-t border-slate-700">
-    <h5 className="break-all py-2 text-slate-200">
+    {showHeading && <h5 className="break-all py-2 text-slate-200">
       {visible(file.path)} · {operation}
       {file.added !== null && file.removed !== null && <span className="ml-2 font-mono"><span className="text-emerald-300">+{file.added}</span> <span className="text-red-300">-{file.removed}</span></span>}
-    </h5>
+    </h5>}
     <div role="region" aria-label={`文件差异：${visible(file.path)}`} className="roleplex-write-diff max-h-80 overflow-auto border-t border-slate-800">
       {hunks.length ? <Diff viewType="unified" diffType={file.operation === 'created' ? 'add' : 'modify'} hunks={hunks}>
         {(items) => items.map((hunk, index) => <Hunk key={`${index}:${hunk.content}`} hunk={hunk} />)}
@@ -50,8 +51,9 @@ function FileNode({ file }: { file: FileChange }) {
 
 /** 显示本次调用的私有文件节点，不读取当前工作区，也不提供应用/回滚入口。
  * @param value 已授权、已限长的 write 私有详情。
+ * @param showFileHeading 单项保持原标题，多文件父节点可省去重复标题。
  */
-export function WriteDiff({ value }: { value: WriteDetails }) {
+export function WriteDiff({ value, showFileHeading = true }: { value: WriteDetails; showFileHeading?: boolean }) {
   if (value.version !== 1) return <p>当前版本不支持此差异格式。</p>
   const notices: Record<string, string> = {
     pending: '等待本次写入结束后采集差异。', not_recorded: '此调用未记录文件差异，无法补回。',
@@ -61,6 +63,6 @@ export function WriteDiff({ value }: { value: WriteDetails }) {
   return <section aria-label="本次文件变更" className="mt-3">
     {notices[value.availability] && <p className="text-amber-300">{notices[value.availability]}</p>}
     {value.availability === 'unavailable' && <p className="text-amber-300">{REASONS[value.reason ?? ''] ?? '差异不可用，不代表没有修改。'}</p>}
-    {value.files.map((file) => <FileNode key={file.id} file={file} />)}
+    {value.files.map((file) => <FileNode key={file.id} file={file} showHeading={showFileHeading} />)}
   </section>
 }

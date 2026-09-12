@@ -348,6 +348,36 @@ class WriteDetailView(BaseModel):
     files: list[FileChangeView] = Field(max_length=1)
 
 
+class BatchWriteResultView(BaseModel):
+    """已确认提交的精简结果，不包含原文或 diff。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    created: bool
+    bytes: int = Field(ge=0, le=1024 * 1024)
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class BatchMutationItemView(BaseModel):
+    """批次内的修改事实与原 D 差异对象，不建立独立 Agent execution。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    id: str = Field(pattern=r'^item-[0-7]$')
+    path: str = Field(max_length=1024)
+    operation: Literal['write', 'edit']
+    status: Literal['not_executed', 'running', 'success', 'failed', 'result_unconfirmed']
+    applied: bool | None
+    error_code: str | None = Field(max_length=80)
+    result: BatchWriteResultView | None
+    write: WriteDetailView | None
+
+
+class BatchMutationDetailView(BaseModel):
+    """Owner 私有修改批次：整批字节与行数在响应边界再次核验。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    version: Literal[1]
+    status: Literal['running', 'success', 'partial', 'failed', 'rejected', 'cancelled', 'result_unconfirmed']
+    error_code: str | None = Field(max_length=80)
+    items: list[BatchMutationItemView] = Field(min_length=1, max_length=8)
+
+
 class ShellDetailView(BaseModel):
     """Shell 详情 wire contract，未知执行信息保持 null，不从总耗时推算。"""
 

@@ -204,23 +204,9 @@ class WorkspaceFileService:
             expected_sha256：更新时必需的全文件旧 hash。
             capture_applied：内部私有观察器，只能同步预留，不能等待计算或执行额外写入。
         """
-        encoded = content.encode("utf-8")
-        if len(encoded) > MAX_FILE_BYTES:
-            raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
         async with self._lock:
-            try:
-                target = resolve_workspace_path(self.root, path, require_exists=False)
-            except WorkspacePathError as exc:
-                if exc.code == "WORKSPACE_FILE_NOT_FOUND":
-                    raise WorkspaceFileError("WORKSPACE_PARENT_NOT_FOUND") from None
-                raise _translate(exc) from None
-            parent = target.parent
-            if not parent.is_dir():
-                raise WorkspaceFileError("WORKSPACE_PARENT_NOT_FOUND")
-            exists = target.exists() or target.is_symlink()
-            if not exists:
-                if expected_sha256 is not None:
-                    raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT")
+            target, current, encoded = self._prepare_write(path, content, expected_sha256)
+            if current is None:
                 try:
                     with target.open("xb") as handle:
                         handle.write(encoded)
@@ -231,8 +217,32 @@ class WorkspaceFileService:
                 _capture_applied(capture_applied, None, encoded)
                 return WorkspaceWriteResult(created=True, bytes=len(encoded), sha256=_sha256(encoded))
 
-            current = self._read_update(path, expected_sha256)
             return self._replace_existing(path, current, encoded, capture_applied)
+
+    def _prepare_write(self, path: str, content: str, expected_sha256: str | None) -> tuple[Path, bytes | None, bytes]:
+        """单文件提交与批量预检共用写前规则，调用者持有文件锁。
+
+        Args:
+            path：工作区相对目标。
+            content：完整待写内容。
+            expected_sha256：创建为空、替换为旧版本。
+        """
+        encoded = content.encode('utf-8')
+        if len(encoded) > MAX_FILE_BYTES:
+            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
+        try:
+            target = resolve_workspace_path(self.root, path, require_exists=False)
+        except WorkspacePathError as exc:
+            if exc.code == 'WORKSPACE_FILE_NOT_FOUND':
+                raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND') from None
+            raise _translate(exc) from None
+        if not target.parent.is_dir():
+            raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND')
+        if not target.exists():
+            if expected_sha256 is not None:
+                raise WorkspaceFileError('WORKSPACE_FILE_REVISION_CONFLICT')
+            return target, None, encoded
+        return target, self._read_update(path, expected_sha256), encoded
 
     def _read_update(self, path: str, expected_sha256: str | None) -> bytes:
         """持锁读取待更新文件并校验完整版本；再次解析防止复用过期路径对象。
@@ -292,6 +302,19 @@ class WorkspaceFileService:
             expected_sha256：本次读取的完整文件 hash，必填。
             capture_applied：成功提交后共享 D 差异采集。
         """
+        async with self._lock:
+            current, encoded = self._prepare_edit(path, old_text, new_text, expected_sha256)
+            return self._replace_existing(path, current, encoded, capture_applied)
+
+    def _prepare_edit(self, path: str, old_text: str, new_text: str, expected_sha256: str) -> tuple[bytes, bytes]:
+        """单文件提交与批量预检共用精确替换规则，不把预检内容作为未来提交快照。
+
+        Args:
+            path：已有文件路径。
+            old_text：唯一旧片段。
+            new_text：新片段。
+            expected_sha256：完整旧版本。
+        """
         if not isinstance(old_text, str) or not old_text or not isinstance(new_text, str) or not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
             raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID')
         try:
@@ -300,20 +323,41 @@ class WorkspaceFileService:
             raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID') from None
         if size > MAX_EDIT_BYTES:
             raise WorkspaceFileError('WORKSPACE_EDIT_INPUT_TOO_LARGE')
+        current = self._read_update(path, expected_sha256)
+        try:
+            text = current.decode('utf-8')
+        except UnicodeDecodeError:
+            raise WorkspaceFileError('WORKSPACE_FILE_NOT_TEXT') from None
+        index = text.find(old_text)
+        if index < 0:
+            raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_NOT_FOUND')
+        # 从下一字符寻找第二处，以免 str.count 的非重叠语义漏掉 aaa 中两处 aa。
+        if text.find(old_text, index + 1) >= 0:
+            raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_AMBIGUOUS')
+        encoded = (text[:index] + new_text + text[index + len(old_text):]).encode('utf-8')
+        if len(encoded) > MAX_FILE_BYTES:
+            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
+        return current, encoded
+
+    async def preflight(self, operation: str, path: str, arguments: dict) -> tuple[str, tuple[int, int] | None]:
+        """无写入地验证一项并返回别名检测身份，提交时仍必须重做校验。
+
+        Args:
+            operation：宿主固定的 write/edit，不来自子项参数。
+            path：本项相对路径。
+            arguments：通过对应 schema 的内容与版本。
+        """
         async with self._lock:
-            current = self._read_update(path, expected_sha256)
-            try:
-                text = current.decode('utf-8')
-            except UnicodeDecodeError:
-                raise WorkspaceFileError('WORKSPACE_FILE_NOT_TEXT') from None
-            index = text.find(old_text)
-            if index < 0:
-                raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_NOT_FOUND')
-            # 从下一字符寻找第二处，以免 str.count 的非重叠语义漏掉 aaa 中两处 aa。
-            if text.find(old_text, index + 1) >= 0:
-                raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_AMBIGUOUS')
-            encoded = (text[:index] + new_text + text[index + len(old_text):]).encode('utf-8')
-            return self._replace_existing(path, current, encoded, capture_applied)
+            if operation == 'write':
+                target, _, _ = self._prepare_write(path, **arguments)
+            elif operation == 'edit':
+                self._prepare_edit(path, **arguments)
+                target = self._resolve(path)
+            else:
+                raise WorkspaceFileError('WORKSPACE_BATCH_ARGUMENT_INVALID')
+            stat = target.stat() if target.exists() else None
+            identity = (stat.st_dev, stat.st_ino) if stat and stat.st_ino else None
+            return os.path.normcase(str(target)), identity
 
     @staticmethod
     def json_result(result: object) -> str:

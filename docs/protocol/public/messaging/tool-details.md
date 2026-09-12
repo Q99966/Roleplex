@@ -3,8 +3,8 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | D/E1、E2 探索归组与批量读取节点已人工验收 |
-| 协议版本 | 4（兼容新增 read_batch 私有文件节点） |
+| 状态 | D/E1、E2 探索归组与批量文件节点已人工验收 |
+| 协议版本 | 5（兼容新增 write_batch 私有修改节点） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
 | 复核日期 | 2026-09-12 |
@@ -129,3 +129,21 @@ items 形式 output=null，不重复传输第二份大 JSON；input 仅采集 it
 items 形式不显示原始输入/输出 JSON；可按 workspace_read 的连续只读规则参与探索归组，仍保留每个调用的文件节点，
 也不把多次观察当成文件净变化。部分失败在外层标“部分完成”，
 保留所有成功与失败节点。Guest 不获取文件清单/正文，七天保留、密文身份绑定、历史不重建规则不变。
+
+### E2 批量修改详情（已人工验收）
+
+write/edit 的 items 形式兼容增加 write_batch（可空），不再返回 write/output 的重复副本；旧单文件 write-v1 不变。
+write_batch 是工具批次信封及逐项节点，每项另含 write（原 WriteDetailView 或 null），仍为一个父调用，无独立子 execution。
+节点 id 使用 item-0..item-7，嵌入的单文件差异仍为 file-0；身份组合为原 message/call/item，不伪造历史批次关系。
+具体执行状态及原结果字段见工作区工具契约。整批紧凑 JSON <=64 KiB、全部嵌入 diff 合计 <=1000 行，读取时再次校验。
+
+修改批次输入只加密保存 items 的 path/expected_sha256 和 content_bytes 或 old_text_bytes/new_text_bytes，
+不重复保存整批源码；共享审计只提取 item_count。执行结果复用 output_encrypted 的 write-batch-v1，
+由原消息所有者在结束/正常取消事务保存，沿用身份绑定、7 天保留和 Owner/成员归属鉴权。
+差异保存失败先尝试保存无差异正文的已确认提交元数据，标 capture_failed；加密整体不可用则不保存明文。
+write_batch=null 在 running 时表示等待；明确 rejected 时显示写前拒绝但逐项未记录，其余结束/中断显示逐项结果未确认，
+不从输入、当前文件或日志补造成功/未执行。已知 applied=false 的节点不显示“结果未确认”的差异状态。
+进程崩溃前未落库的内存事实不承诺恢复，不自动重放文件写入；模型成功结果不因详情不可用而改为写入失败。
+
+Owner 修改卡默认展开并沿用视口内加载；一个节点直接显示 diff，多节点默认展开、可逐文件折叠。
+不显示原始输入输出，不提供自动回滚按钮；失败/未执行/未确认节点始终保留。Guest 不请求私有节点。

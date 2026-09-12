@@ -192,11 +192,15 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_FILE_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 文件或待写内容超过 W1a 固定 1 MiB 上限 |
 | `WORKSPACE_FILE_REVISION_CONFLICT` | 已实现 | 工具 | — | rejected | yes | 目标已存在但未提供匹配 hash，或并发更新后 hash 已变化 |
 | `WORKSPACE_EDIT_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | edit 缺少/非法参数、空 old_text、超字符护栏或额外参数；不回显片段 |
-| `WORKSPACE_BATCH_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | 批量读取形态、数量、字段或整数类型非法；不回显原文 |
+| `WORKSPACE_BATCH_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | 批次形态、数量、字段或类型非法；不回显原文 |
 | `WORKSPACE_READ_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | 统一读取缺失参数、非法字段或混用 items 与顶层单文件字段（含 null/默认值） |
-| `WORKSPACE_BATCH_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 批量读取输入或请求读取字节合计超预算，缩小批次 |
-| `WORKSPACE_BATCH_BUSY` | 已实现 | 工具 | — | rejected | conditional | 批量读取宿主准入已满，本批未开始，无外部等待队列 |
-| `WORKSPACE_BATCH_PARTIAL` | 已实现 | 工具 | — | failed | conditional | 部分读取成功；保留逐项结果，可针对失败项重新观察 |
+| `WORKSPACE_WRITE_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | write 缺少/非法参数、混用 items 与顶层字段；不回显源码 |
+| `WORKSPACE_BATCH_TARGET_CONFLICT` | 已实现 | 工具 | — | rejected | conditional | 全批预检发现重复规范目标或硬链接别名，未写入任何项 |
+| `WORKSPACE_BATCH_WRITE_UNCONFIRMED` | 已实现 | 工具 | — | failed | conditional | 文件操作结果无法确认，可能已部分/全部落地；先核查，禁止盲目重放 |
+| `WORKSPACE_BATCH_PRECHECK_FAILED` | 已实现 | 工具 | — | rejected/failed | conditional | 写前校验或授权发生内部/I/O 故障；逐项状态区分已有成功，异常原文不公开 |
+| `WORKSPACE_BATCH_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 批次输入、请求读取字节或修改结果元数据预留超预算，缩小批次 |
+| `WORKSPACE_BATCH_BUSY` | 已实现 | 工具 | — | rejected/failed | conditional | 批次准入已满或等待原工作区命令锁超时，对应批次/子项未开始；先前提交以逐项结果为准 |
+| `WORKSPACE_BATCH_PARTIAL` | 已实现 | 工具 | — | failed | conditional | 部分读取/修改成功；保留逐项结果，修改批次停止后续项，不自动回滚 |
 | `WORKSPACE_BATCH_FAILED` | 已实现 | 工具 | — | failed | conditional | 本批没有成功读取；具体原因仅在 Owner/模型逐项结果中 |
 | `WORKSPACE_READ_FAILED` | 已实现 | 工具 | — | failed | conditional | 已授权读取遇到 I/O 或内部故障；不公开宿主异常原文 |
 | `WORKSPACE_EDIT_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | old_text 与 new_text 的 UTF-8 字节数合计超过 64 KiB |

@@ -111,10 +111,11 @@ test('real provider uses native tools inside an isolated managed-world workspace
       const part = calls[index]
       if (part.tool_name !== 'workspace_edit') continue
       const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${part.call_id}`, { headers })).json()
-      const file = detail.write?.files?.[0]
+      const write = detail.write_batch?.items.find((node: { path: string }) => node.path === 'provider-proof.txt')?.write ?? detail.write
+      const file = write?.files?.[0]
       if (file?.operation !== 'modified') continue
       const lines = file.hunks.flatMap((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines)
-      return { index, correct: detail.write.availability === 'recorded' && file.applied === true && file.added === 1 && file.removed === 1
+      return { index, correct: write.availability === 'recorded' && file.applied === true && file.added === 1 && file.removed === 1
         && lines.some((line: { kind: string; text: string }) => line.kind === 'delete' && line.text === firstContent)
         && lines.some((line: { kind: string; text: string }) => line.kind === 'insert' && line.text === finalContent) }
     }

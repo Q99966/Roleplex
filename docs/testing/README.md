@@ -48,6 +48,16 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+E2 批量写入/编辑：`pytest tests/test_workspace_batch_mutation.py -q`，覆盖整批预检、硬链接/重复目标、
+旧参数兼容及互斥、输入预算、顺序提交、部分成功、只重试失败项、未知 OS 写入、取消、重新授权、
+服务占用且不擅停、锁等待/两批准入、整批 diff 预算、采集/加密失败与崩溃结果缺口。
+`npm run test:e2e:commands -- batch-mutation.spec.ts` 覆盖实际文件/diff、逐文件折叠、预检失败不重写、
+刷新、Guest 隔离及 390px 窄屏；目录沿用命令类别/本轮时间戳/default/batch-mutation。
+真实入口仍为 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`，
+完整场景两轮创建/修改 index.html 与 note.txt，独立验证文件、页面和保留内容，并按实际私有 write_batch 观察采用路径。
+不强制 items；未触发的多文件编辑仍由确定性测试覆盖，真实报告分别列出实际路径，不为取得路径重跑计费。
+跨调用 exactly-once、自动回滚、未知结果自动重放不在本功能范围内。
+
 E2 批量读取切片：`pytest tests/test_workspace_read_many.py -q` 验证逐项失败、全文件 hash/续读、JSON 转义后预算、
 最大文件批次、严格参数、权限撤销、两批准入/每批两项、取消收尾、路径/敏感文件/链接、重复观察、
 加密失败降级和崩溃结果缺口。`npm run test:e2e:commands -- read-many.spec.ts` 验证一次调用的多文件节点、

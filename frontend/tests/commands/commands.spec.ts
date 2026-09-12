@@ -23,8 +23,10 @@ test('工作区命令的输出、失败、超时与停止均有真实工具卡',
   await page.getByLabel('工作区绝对路径').fill(process.env.ROLEPLEX_COMMAND_E2E_WORKSPACE!)
   await page.getByLabel(/我确认该目录的文件内容可能/).check()
   await page.getByRole('button', { name: '添加工作区', exact: true }).click()
-  await page.getByRole('button', { name: /结构化命令 · 关闭/ }).click()
-  await expect(page.getByRole('button', { name: /结构化命令 · 已开启/ })).toBeVisible()
+  // 等待本用例的新登记项，而非在 POST 完成前点击前一用例留下的同名能力按钮。
+  const workspace = page.getByRole('article').filter({ has: page.getByRole('heading', { name: '命令验收工作区', exact: true }) })
+  await workspace.getByRole('button', { name: /结构化命令 · 关闭/ }).click()
+  await expect(workspace.getByRole('button', { name: /结构化命令 · 已开启/ })).toBeVisible()
   await page.getByRole('button', { name: '关闭系统与环境设置' }).click()
   await page.evaluate(async () => {
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
@@ -44,6 +46,11 @@ test('工作区命令的输出、失败、超时与停止均有真实工具卡',
   const value = await select.locator('option').filter({ hasText: '命令验收工作区' }).getAttribute('value')
   await select.selectOption(value!)
   await page.getByRole('button', { name: '确认开启会话' }).click()
+  await expect(page.getByRole('heading', { name: 'W1b 命令验收', exact: true })).toBeVisible()
+  const conversationId = await page.evaluate(async () => {
+    const response = await fetch('/api/conversations', { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })
+    return (await response.json()).find((row: { title: string }) => row.title === 'W1b 命令验收').id as number
+  })
   for (const [marker, expected] of [
     ['[W1B_FAKE_E2E]', 'W1b 结构化命令流程结束。'],
     ['[W1B_OUTPUT]', '输出已截断'], ['[W1B_EXIT]', '退出码 7'],
@@ -68,12 +75,12 @@ test('工作区命令的输出、失败、超时与停止均有真实工具卡',
   await page.reload()
   await expect(page.getByText('已取消', { exact: true })).toBeVisible()
   await expect(page.getByText('命令超时，进程已回收', { exact: true })).toBeVisible()
-  const completed = await waitForRunEvents((event) => event.event === 'tool.call_completed', 9)
+  const completed = await waitForRunEvents((event) => event.event === 'tool.call_completed' && event.conversation_id === conversationId, 9)
   expect(completed.map((event) => event.status)).toEqual([
     'success', 'success', 'success', 'success', 'success', 'failed', 'timeout', 'rejected', 'cancelled',
   ])
   const events = await readRunEvents()
-  const starts = events.filter((event) => event.event === 'tool.call_started')
+  const starts = events.filter((event) => event.event === 'tool.call_started' && event.conversation_id === conversationId)
   expect(starts.map((event) => event.tool_call_id)).toEqual(completed.map((event) => event.tool_call_id))
   const serialized = JSON.stringify(events)
   for (const forbidden of [process.env.ROLEPLEX_COMMAND_E2E_WORKSPACE!, '受控测试文本', '测试输出', '受控诊断']) {

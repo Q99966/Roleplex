@@ -34,10 +34,10 @@ docs/protocol/
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
 | REST 会话管理与回收站 | 已实现（单聊与 M4a 群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
-| REST 当前 World 工作区 | E1 与 E2 统一读取已人工验收 | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
+| REST 当前 World 工作区 | E1 与 E2 统一文件操作已人工验收 | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（B 最近窗口与 M 多行输入均已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
-| 工具执行顺序与 Owner 详情 | D/E1、探索归组与 E2 批量读取节点已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
+| 工具执行顺序与 Owner 详情 | D/E1、E2 探索与批量文件节点已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
 | Shell 逐次审批 | W1c 已实现，已人工验收 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
 | 会话运行实例、服务与回收 | Linux W1d 与 G 授权复核补齐均已验收 | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与最近窗口快照） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |

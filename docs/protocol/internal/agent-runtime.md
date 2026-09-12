@@ -47,7 +47,10 @@ E1 编辑工具只提取 path_fingerprint、old_text_bytes、new_text_bytes、ha
 结果仅向共享工具卡增加显式白名单中的固定错误码。匹配/参数/版本拒绝是正常 rejected 终态，不记录片段、路径或异常原文。
 工作区策略版本随工具集合/说明升级；仅在实际暴露 workspace_edit 时向 write 的说明追加局部编辑建议。
 E2 workspace_read 的 items 形式参数审计只含 item_count，不提取私有路径/内容；共享结果只含固定读取/批量错误码。
-工具策略版本升级为 9，单文件与批量共用 read 开关，不增加写入权限。逐项读取及取消结果复用下述文件采集作用域，
+工具策略版本升级为 10，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
+批量修改参数审计仅 item_count；输入私有采集保留目标/版本/长度，差异和逐项状态通过 write-batch-v1 私有作用域交给消息所有者。
+批量修改先全批预检、逐项授权并提交，锁外等待 D 计算；非事务、不自动重放、不擅停服务，完整边界以工作区协议为准。
+逐项读取及取消结果复用下述文件采集作用域，
 由宿主 call_id 关联，不新建子项 Agent execution；仅模型工具结果和 Owner 加密详情可见逐项内容。
 
 D write 私有采集由 generation 所有者创建有界作用域，GuardedTool 的宿主 call_id 关联凭据，

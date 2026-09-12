@@ -159,6 +159,8 @@ def test_timeline_websocket_disconnect_replays_order_and_snapshot(command_root):
                 break
             time.sleep(.03)
         assert history['items'][1]['status'] == 'done'
+        # 历史页先读水位再读正文，正文可能已是更高 revision；终态后重新取得涵盖完成事件的水位。
+        history = client.get(f'/api/conversations/{conversation}/messages', headers=headers).json()
         latest = history['event_seq']
         with client.websocket_connect('/api/ws') as ws:
             _authenticate(ws, token)
@@ -166,7 +168,10 @@ def test_timeline_websocket_disconnect_replays_order_and_snapshot(command_root):
             assert ws.receive_json()['type'] == 'subscribed'
             replay = [ws.receive_json() for _ in range(latest - cut)]
         assert [frame['event_seq'] for frame in replay] == list(range(cut + 1, latest + 1))
-        assert replay[-1]['payload']['message']['parts_json'] == history['items'][1]['parts_json']
+        # runtime_changed 等合法帧未必含完整 message，不能把任意尾帧当成消息终态。
+        completed = [frame for frame in replay if frame['type'] == 'message_done']
+        assert len(completed) == 1
+        assert completed[0]['payload']['message']['parts_json'] == history['items'][1]['parts_json']
         assert [part['type'] for part in history['items'][1]['parts_json']] == ['text', 'tool_call', 'text', 'tool_call', 'text']
         assert 'ws-private-placeholder' not in str(replay)
         with client.websocket_connect('/api/ws') as ws:

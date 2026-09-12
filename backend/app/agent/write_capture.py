@@ -10,6 +10,7 @@ from .tool_context import tool_call_id
 
 if TYPE_CHECKING:
     from ..workspaces.batch_read import ReadBatchReceipt
+    from ..workspaces.batch_mutation import BatchMutationReceipt
 
 
 class WriteReceipt:
@@ -84,7 +85,20 @@ class WriteCaptureScope:
 
     def __init__(self):
         """创建仅由当前 generation 持有的空凭据集合。"""
-        self.receipts: dict[str, WriteReceipt | ReadBatchReceipt] = {}
+        self.receipts: dict[str, WriteReceipt | ReadBatchReceipt | BatchMutationReceipt] = {}
+
+    def begin_mutation_batch(self, call_id: str, operation: str, items: list[dict]) -> BatchMutationReceipt | None:
+        """Args:
+            call_id：真实宿主调用身份。
+            operation：固定 write/edit 类型。
+            items：已通过整批校验的输入。
+        """
+        from ..workspaces.batch_mutation import BatchMutationReceipt
+        if call_id in self.receipts or len(self.receipts) >= 32:
+            return None
+        receipt = BatchMutationReceipt(operation, items)
+        self.receipts[call_id] = receipt
+        return receipt
 
     def begin_read_batch(self, call_id: str, items: list[dict]) -> ReadBatchReceipt | None:
         """Args:

@@ -3,7 +3,7 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | W1a/W1b/W1c/E1 与 E2 统一读取已验收；群聊绑定与聊天标题区摘要属于 W2a |
+| 状态 | W1a/W1b/W1c/E1 与 E2 统一文件操作已验收；群聊绑定与聊天标题区摘要属于 W2a |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
@@ -125,8 +125,8 @@ PUT /api/conversations/{conversation_id}/workspace
 |---|---|---|
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
 | `workspace_read` | 旧 `path/offset_bytes/max_bytes`，或新 `items`，两种互斥 | 旧形式保留 `text/bytes/eof/next_offset/sha256`；items 形式返回下述逐项结果，含一项也不改变结果形态 |
-| `workspace_write` | `path/content/expected_sha256?` | `created/bytes/sha256`；新建要求目标不存在，更新要求 hash 完全匹配 |
-| `workspace_edit` | `path/old_text/new_text/expected_sha256`，均必填 | `created=false/bytes/sha256`；仅对已有 UTF-8 文件做一次唯一字面替换（E1 已实现） |
+| `workspace_write` | 旧 `path/content/expected_sha256?` 或新 `items` | 旧形式保留 `created/bytes/sha256`；批次结果见下文；新建要求不存在，更新要求旧 hash |
+| `workspace_edit` | 旧 `path/old_text/new_text/expected_sha256` 或新 `items` | 旧形式保留 `created=false/bytes/sha256`；批次结果见下文；唯一字面替换已有 UTF-8 文件 |
 
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
 临时文件、flush/fsync 与 atomic replace 完成。`expected_sha256` 为空不表示允许覆盖。
@@ -166,7 +166,38 @@ operation=read、path、status、error_code、output_limited、result（失败/�
 私有逐项结果复用 generation 文件采集作用域，在工具结束或正常取消收尾时由消息所有者加密落库。
 进程崩溃时未落库的逐项事实不补造，显示中断和逐项结果未记录；不自动重启 generation 或重读文件补历史。
 重复路径/请求允许新的独立观察，hash 可能变化，不是同一时刻快照或历史幂等缓存；只读重试不会写文件，
-不得把这种重试方式用于尚未实现的批量写入。Owner 展示契约见[工具详情](../messaging/tool-details.md)。
+不得把这种重试方式用于批量写入。Owner 展示契约见[工具详情](../messaging/tool-details.md)。
+
+### E2 多文件写入/编辑（已人工验收，内部工具契约）
+
+原 write/edit 各自增加 items=1..8，严格互斥于该工具所有旧顶层字段（含 null/默认值），不新增角色开关。
+items 内分别使用原 write/edit 单项字段；不允许逐项指定操作、工作区、执行身份或额外参数。
+旧合法单文件响应不变；items 即使只有一项也返回批次信封。write 形态错误为 WORKSPACE_WRITE_ARGUMENT_INVALID，
+edit 沿用 WORKSPACE_EDIT_ARGUMENT_INVALID；内部整批校验另使用 WORKSPACE_BATCH_ARGUMENT_INVALID。
+创建 expected_sha256 为空；已有目标必须匹配最近读取的 hash。每个 edit 的片段仍限 64 KiB，最终文件仍限 1 MiB。
+整批紧凑 UTF-8 输入最多 256 KiB；元数据预留按每项 1536 + 2×JSON 路径字节数计算，合计不得超过 32 KiB，
+超额写前拒绝 WORKSPACE_BATCH_INPUT_TOO_LARGE。预留只为结果身份/diff 元数据，不是文件源码限额放宽。
+
+宿主最多 2 批（write/edit 共用），无外部批次队列；复用工作区命令锁，每次等待该锁最多 5 秒，超时为 WORKSPACE_BATCH_BUSY。
+全批逐项授权并复用单文件准备校验：大小、待写内容及 edit 目标的 UTF-8、敏感路径/链接、父目录、hash、唯一匹配与最终文件大小；
+预检阶段无文件写入。规范目标或已有硬链接身份重复拒绝 WORKSPACE_BATCH_TARGET_CONFLICT。
+执行按输入顺序，每项重新授权/校验，包括服务占用；每项锁外计算 D diff。全批不是事务，预检不隔离外部文件变化。
+首个执行失败停止后续项，无自动回滚或重试；只重试明确失败/未执行项且重新取得版本，未确认项必须先核查。
+没有持久请求键或跨调用 exactly-once 保证：重复旧批次通常因 hash/目标存在预检失败，no-op 可再次确认；
+hash 不防外部 ABA，也不是重放授权。generation/消息幂等和重启不重放语义不变。
+
+模型结果为紧凑 JSON：version=1、status、error_code（可空）、items；每项 id=item-0..item-7、path、operation=write/edit、
+status、applied（true/false/null）、error_code（可空）、result（可空或原 created/bytes/sha256）。不包含 diff/原文。
+父状态 running/success/partial/failed/rejected/cancelled/result_unconfirmed；子状态 not_executed/running/success/failed/result_unconfirmed。
+applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不把“调用失败”当成“文件没改”。
+预检失败父 rejected，失败项 failed，其他 not_executed；执行失败且已有成功为 partial。未知提交状态优先 result_unconfirmed。
+正常取消父 cancelled，保存已观察提交；未启动项保持 not_executed，已进入文件操作但无法确认的项为 result_unconfirmed。
+全成功无失败前缀；rejected 使用原拒绝前缀，其余非成功返回原失败前缀。共享卡只显示父固定错误码，无文件清单。
+
+模型 JSON 与 Owner 批次详情各限 64 KiB；Owner 全批 diff 最多 1000 行，各项的输入/计算/排队沿用 D 原池与预算。
+差异正文按预留元数据后份额缩减，标记 partial 并保留完整计算的增删统计，不把修改次数称为文件净变化。
+详情计算/保存失败不改变已成功文件结果，不回滚、不补写。取消或崩溃的私有事实边界见[工具详情](../messaging/tool-details.md)。
+不保存整批文件快照、不新增数据库表或调度系统。仍禁止擅自停止其他会话服务。
 
 路径只接受 UTF-8 相对路径；拒绝绝对路径、空字节、`..`、盘符、UNC、环境变量、glob、符号链接逃逸、
 `.git`、真实 `.env`、私钥和实例密钥路径。目录名、文件正文、写入内容和绝对路径不得进入正式日志、审计

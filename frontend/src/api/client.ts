@@ -70,12 +70,19 @@ export type ReadBatchDetails = {
     error_code: string | null; output_limited: boolean;
     result: { text: string; bytes: number; eof: boolean; next_offset: number; sha256: string } | null }>
 }
+export type BatchMutationDetails = {
+  version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'rejected' | 'cancelled' | 'result_unconfirmed'; error_code: string | null
+  items: Array<{ id: string; path: string; operation: 'write' | 'edit';
+    status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null;
+    error_code: string | null; result: { created: boolean; bytes: number; sha256: string } | null; write: WriteDetails | null }>
+}
 export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
   input: ToolCapture | null; output: ToolCapture | null
   write?: WriteDetails | null
   read_batch?: ReadBatchDetails | null
+  write_batch?: BatchMutationDetails | null
   shell?: {
     script: ToolCapture | null; approval_status: 'pending' | 'approved' | 'rejected' | 'expired' | null;
     approval_wait_ms: number | null; execution_duration_ms: number | null;

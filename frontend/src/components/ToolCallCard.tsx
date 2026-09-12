@@ -6,6 +6,7 @@ import { visibleScript } from './ShellApprovals'
 import { ReadBatch } from './ReadBatch'
 
 const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).WriteDiff }))
+const BatchMutation = lazy(async () => ({ default: (await import('./BatchMutation')).BatchMutation }))
 
 const STATUS: Record<string, string> = {
   running: '执行中', success: '已完成', failed: '失败', rejected: '已拒绝', cancelled: '已取消', interrupted: '已中断',
@@ -103,6 +104,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
     return () => { active = false; controller.abort() }
   }, [open, isOwner, conversationId, messageId, callId, part.status, canLoad, approvalVersion, fileWrite, seen])
   const status = part.error_code === 'WORKSPACE_BATCH_PARTIAL' ? '部分完成'
+    : part.error_code === 'WORKSPACE_BATCH_WRITE_UNCONFIRMED' ? '结果未确认'
     : part.error_code === 'EXECUTION_INTERRUPTED' ? '已中断' : STATUS[part.status ?? ''] ?? '状态未知'
   return <div ref={cardRef} data-testid="tool-call-card" className="my-3 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/60 text-xs">
     <button type="button" aria-expanded={open} aria-controls={controlId}
@@ -134,7 +136,10 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
           <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
           {'read_batch' in detail ? (detail.read_batch
             ? <ReadBatch value={detail.read_batch} />
-            : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : fileWrite ? (detail.write
+            : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : 'write_batch' in detail ? (detail.write_batch
+            ? <Suspense fallback={<p role="status">正在加载差异视图…</p>}><BatchMutation value={detail.write_batch} /></Suspense>
+            : <p className="mt-2 text-amber-300">{part.status === 'running' ? '等待批次结束后保存逐项结果。' : part.status === 'rejected'
+              ? '本批请求已拒绝，未开始修改；逐项详情未记录。' : '逐项写入结果未确认，文件可能已修改；不会自动重写或补造历史。'}</p>) : fileWrite ? (detail.write
             ? <Suspense fallback={<p role="status">正在加载差异视图…</p>}><WriteDiff value={detail.write} /></Suspense>
             : <p className="mt-2">此调用未记录文件差异，无法补回。</p>) : detail.shell ? <ShellDetails value={detail.shell} /> : <>
             <CaptureText title="工具输入" capture={detail.input} />

@@ -40,6 +40,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let nativeDiffObserved = false
   let editObservation = { attempted: 0, succeeded: 0, diff_verified: false }
   let readManyObservation = { attempted: 0, succeeded: 0, detail_verified: false }
+  let mutationItemsObservation = { attempted: 0, succeeded: 0, detail_verified: false }
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -81,7 +82,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.reload()
     await page.getByText(title, { exact: true }).click()
     stage = '限定服务脚本审批'
-    await page.getByLabel('消息输入框').fill(`先检查 proof.txt、package.json 和 server.mjs，可自行选择单次或批量读取。请创建 index.html，包含一个 h1 标题 HelloWorld，以及 id="keep" 的 p，其文本原样为 proof.txt 内容。不要修改其他预置文件，不安装依赖。运行设施已准备，启动服务的 script 必须精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=300。本轮只批准该服务脚本和精确的只读检查脚本 ${checkScript}，其余操作按原生工具能力自行选择。确认页面后结束本轮回复，保留服务运行。`)
+    await page.getByLabel('消息输入框').fill(`先检查 proof.txt、package.json 和 server.mjs，可自行选择单次或批量读取。请创建 index.html，包含一个 h1 标题 HelloWorld，以及 id="keep" 的 p，其文本原样为 proof.txt 内容。同时创建 note.txt，内容精确为 note old（无末尾换行）。不要修改其他预置文件，不安装依赖。运行设施已准备，启动服务的 script 必须精确为：${script}；port=${port}，health_path="/"，lifetime_seconds=300。本轮只批准该服务脚本和精确的只读检查脚本 ${checkScript}，其余操作按原生工具能力自行选择。确认页面后结束本轮回复，保留服务运行。`)
     await page.getByLabel('发送消息').click()
     await expect(page.getByRole('button', { name: '批准后台服务启动', exact: true })).toBeVisible({ timeout: 90000 })
     const valid = await page.evaluate(async ({ base, cid, script, port }) => {
@@ -122,6 +123,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     if (!firstFinished) throw new Error('第一轮未完成')
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
     const initial = await readFile(path.join(root, 'index.html'), 'utf8')
+    if (await readFile(path.join(root, 'note.txt'), 'utf8') !== 'note old') throw new Error('第二个受控文件不符')
     if (!initial.includes(proof)) throw new Error('受控文件缺少保留内容')
     const firstService = (await api(`/api/conversations/${cid}/processes`)).items.find((row: { state: string }) => row.state === 'ready')
     if (!firstService) throw new Error('generation 结束后服务未存续')
@@ -129,7 +131,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await expect(preview.getByRole('heading', { name: 'HelloWorld', exact: true })).toBeVisible()
     if (await preview.locator('#keep').textContent() !== proof) throw new Error('实际页面保留内容不符')
     stage = '第二轮局部修改与按实际路径审批'
-    await page.getByLabel('消息输入框').fill(`现在仅将 index.html 的 h1 从 HelloWorld 改为 HelloWorld Updated，其余文本、结构及 #keep 内容原样保留。按实际权限与服务占用规则操作，不擅停其他会话服务；需要重启时重新申请相同脚本、端口及 300 秒寿命。只读检查可用 ${checkScript}，除此和前轮服务脚本外不批准其他 Shell。工具按需要选择，不要求使用某个编辑工具。确认后结束回复并保留预览。`)
+    await page.getByLabel('消息输入框').fill(`现在将 index.html 的 h1 从 HelloWorld 改为 HelloWorld Updated，其余文本、结构及 #keep 内容原样保留；同时把 note.txt 精确改为 note new（无末尾换行）。按实际权限与服务占用规则操作，不擅停其他会话服务；需要重启时重新申请相同脚本、端口及 300 秒寿命。只读检查可用 ${checkScript}，除此和前轮服务脚本外不批准其他 Shell。工具按需要选择，不要求使用某个编辑工具，也不强制单文件或 items 形式。确认后结束回复并保留预览。`)
     const sentResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/conversations/${cid}/messages`))
     await page.getByLabel('发送消息').click()
     const secondUserId = (await (await sentResponse).json()).message.id
@@ -186,6 +188,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     }, { base, cid })
     if (readManyObservation.succeeded && !readManyObservation.detail_verified) throw new Error('已触发批量读取但详情不完整')
     const updated = await readFile(path.join(root, 'index.html'), 'utf8')
+    if (await readFile(path.join(root, 'note.txt'), 'utf8') !== 'note new') throw new Error('第二个受控文件修改不符')
     stage = '独立文件与第二轮页面核对'
     if (!isExpectedHeadingEdit(initial, updated)) throw new Error('修改或保留内容不符')
     await preview.goto(`http://127.0.0.1:${port}/?checkpoint=second`)
@@ -203,9 +206,9 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
         for (const message of history.items.filter((item: { id: number }) => item.id > secondUserId)) {
           for (const call of message.parts_json.filter((part: { type: string; tool_name?: string; status?: string }) => part.type === 'tool_call' && ['workspace_write', 'workspace_edit'].includes(part.tool_name ?? '') && part.status === 'success')) {
             const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
-            const file = detail.write?.files?.[0]
-            if (detail.write?.availability === 'recorded' && file?.applied && file.operation === 'modified'
-              && file.hunks.some((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines.some((line) => line.kind === 'insert' && line.text.includes('HelloWorld Updated')))) {
+            const changes = detail.write_batch ? detail.write_batch.items.map((node: { write: unknown }) => node.write) : [detail.write]
+            if (changes.some((write: any) => write?.availability === 'recorded' && write.files.some((file: any) => file.applied && file.operation === 'modified'
+              && file.hunks.some((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines.some((line) => line.kind === 'insert' && line.text.includes('HelloWorld Updated')))))) {
               observed = true
               if (call.tool_name === 'workspace_edit') editVerified = true
             }
@@ -217,6 +220,26 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       editObservation.diff_verified = diffObservation.editVerified
       if (!nativeDiffObserved) throw new Error('已触发原生修改但差异未记录')
     }
+    stage = '批量修改路径观察'
+    mutationItemsObservation = await page.evaluate(async ({ base, cid }) => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+      const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+      let attempted = 0, succeeded = 0, verified = 0
+      for (const message of history.items) {
+        for (const call of message.parts_json.filter((part: { tool_name?: string }) => ['workspace_write', 'workspace_edit'].includes(part.tool_name ?? ''))) {
+          const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
+          if (!('write_batch' in detail)) continue
+          attempted++
+          if (call.status !== 'success') continue
+          succeeded++
+          const value = detail.write_batch
+          if (value?.status === 'success' && value.items.length >= 1 && value.items.length <= 8 && value.items.every((node: any, index: number) =>
+            node.id === `item-${index}` && node.applied && node.result?.sha256 && ['recorded', 'partial'].includes(node.write?.availability))) verified++
+        }
+      }
+      return { attempted, succeeded, detail_verified: succeeded > 0 && succeeded === verified }
+    }, { base, cid })
+    if (mutationItemsObservation.succeeded && !mutationItemsObservation.detail_verified) throw new Error('批量修改详情未确认')
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
     await page.reload()
     await page.getByLabel('消息输入框').fill('/ps')
@@ -250,6 +273,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     const reportPath = testInfo.outputPath('tool-path-observation.json')
     await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
       normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, workspace_read_items: readManyObservation,
+      workspace_mutation_items: mutationItemsObservation,
       native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })

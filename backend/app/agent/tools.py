@@ -144,7 +144,7 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
         command = args.get('command')
         return json.dumps({'command': command} if command in ('pwd', 'list', 'read', 'count') else {})
     if tool_name in WORKSPACE_FILE_TOOLS:
-        if tool_name == 'workspace_read' and 'items' in args:
+        if tool_name in {'workspace_read', 'workspace_write', 'workspace_edit'} and 'items' in args:
             items = args.get('items')
             return json.dumps({'item_count': len(items)} if isinstance(items, list) else {})
         path = args.get("path")
@@ -204,7 +204,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_edit', 'workspace_read'}:
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -224,11 +224,14 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         allowed = {'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_BATCH_BUSY',
             'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE', 'WORKSPACE_READ_ARGUMENT_INVALID'}
         return {'error_code': code} if isinstance(code, str) and code in allowed else {}
-    if tool_name == 'workspace_edit':
+    if tool_name in {'workspace_write', 'workspace_edit'}:
         allowed = {'WORKSPACE_EDIT_ARGUMENT_INVALID', 'WORKSPACE_EDIT_INPUT_TOO_LARGE',
             'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_FILE_REVISION_CONFLICT',
             'WORKSPACE_FILE_NOT_FOUND', 'WORKSPACE_FILE_NOT_TEXT', 'WORKSPACE_FILE_TOO_LARGE',
-            'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_PATH_SENSITIVE', 'WORKSPACE_TOOL_NOT_AVAILABLE'}
+            'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_PATH_SENSITIVE', 'WORKSPACE_TOOL_NOT_AVAILABLE',
+            'WORKSPACE_WRITE_ARGUMENT_INVALID', 'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE',
+            'WORKSPACE_BATCH_BUSY', 'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_TARGET_CONFLICT',
+            'WORKSPACE_BATCH_WRITE_UNCONFIRMED', 'WORKSPACE_BATCH_PRECHECK_FAILED', 'WORKSPACE_PARENT_NOT_FOUND'}
         code = result.get('error_code')
         return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     summary: dict[str, Any] = {}
