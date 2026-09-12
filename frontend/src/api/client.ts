@@ -102,7 +102,7 @@ export type WorkspaceBinding = {
 export type WorkspaceCapabilities = {
   world_name: string
   workspace_kinds: Array<'managed_directory'>
-  file_tools: Array<'workspace_list' | 'workspace_read' | 'workspace_write'>
+  file_tools: Array<'workspace_list' | 'workspace_read' | 'workspace_write' | 'workspace_edit'>
   basic_commands_available: boolean
   shell_available: boolean
   shell_kind: 'bash' | 'powershell' | null

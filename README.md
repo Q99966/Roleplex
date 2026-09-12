@@ -45,7 +45,7 @@ W1b 已完成并通过人工验收；当前工具时间线与展开详情优化�
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
 W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；W1d Linux 首版与 M 多行输入已完成人工验收，
-[代码 diff 阶段 D](docs/plan/code-diff-multiline-v1.md)已通过人工验收，后续依次为 E1 局部编辑、E2 批量文件操作，再继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
+[代码 diff 阶段 D 与 E1 局部编辑](docs/plan/code-diff-multiline-v1.md)已通过人工验收，后续为 E2 批量文件操作，再继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 
@@ -61,7 +61,9 @@ G 共同执行规则补齐已实现并通过人工验收：增加工具调用后
 
 D 原生 write 差异已实现并通过人工验收：Owner 写入卡默认展开，在原位置直接显示文件名及增删行，进入可视范围后加载详情；刷新后仍读取该次写入的加密记录，
 不从当前文件重建历史。差异超预算、排队/计算失败或取消会明确降级，不回滚已完成的写入；Shell/服务仍不采集文件 diff。
-局部编辑 E1、批量文件操作 E2 尚未实施，范围见[实施计划](docs/plan/code-diff-multiline-v1.md)。
+E1 局部编辑已实现并通过人工验收：在角色工具中显式开启 `workspace_edit`，工作区沿用“原生文件读写”开关；
+读取全文件 hash 后可提交唯一旧片段及新片段，不再需要让模型重传整文件。编辑共用停服、版本冲突和私有 diff 规则，
+大文件 diff 仍遵守 D 的预算。E2 批量文件操作尚未实施，范围见[实施计划](docs/plan/code-diff-multiline-v1.md)。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 

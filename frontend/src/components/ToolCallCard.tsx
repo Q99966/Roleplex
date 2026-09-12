@@ -65,7 +65,7 @@ function ShellDetails({ value }: { value: NonNullable<ToolDetails['shell']> }) {
 export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
   part: Part; conversationId: number; messageId: number; isOwner: boolean
 }) {
-  const fileWrite = part.tool_name === 'workspace_write'
+  const fileWrite = part.tool_name === 'workspace_write' || part.tool_name === 'workspace_edit'
   const [open, setOpen] = useState(fileWrite && isOwner)
   const cardRef = useRef<HTMLDivElement>(null)
   const [seen, setSeen] = useState(false)

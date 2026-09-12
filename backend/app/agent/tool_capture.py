@@ -10,6 +10,7 @@ _FIELDS = {
     'workspace_list': ('path', 'after_name', 'limit'),
     'workspace_read': ('path', 'offset_bytes', 'max_bytes'),
     'workspace_write': ('path', 'content', 'expected_sha256'),
+    'workspace_edit': ('path', 'old_text', 'new_text', 'expected_sha256'),
     'workspace_run_command': ('command', 'args'),
 }
 _ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)')

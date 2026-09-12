@@ -38,6 +38,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let normalCleanup = false
   let toolPaths: string[][] = []
   let nativeDiffObserved = false
+  let editObservation = { attempted: 0, succeeded: 0, diff_verified: false }
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -73,7 +74,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       await request(`/api/workspaces/${workspace.id}`, { shell_enabled: true, file_tools_enabled: true, basic_commands_enabled: true }, 'PATCH')
       const role = await request('/api/roles', { name: `服务助手 ${stamp}`, system_prompt: '根据用户目标和实际工具结果完成开发。尊重审批与服务占用规则，不换工具规避拒绝。不猜测文件或页面内容。',
         model_config_id: seed.model_config_id, model_name: seed.model_name, params: { max_tokens: 4096 },
-        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_run_command', 'workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
+        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_edit', 'workspace_run_command', 'workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
       return (await request('/api/conversations', { title, type: 'single', role_ids: [role.id], workspace_binding_id: workspace.id })).id as number
     }, { base, root, title, stamp })
     await page.reload()
@@ -132,6 +133,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.getByLabel('发送消息').click()
     const secondUserId = (await (await sentResponse).json()).message.id
     let finished = false
+    let successfulMutation = false
     let decisions = 0
     const deadline = Date.now() + 110_000
     while (Date.now() < deadline) {
@@ -150,6 +152,11 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       if (!history.active_generation_ids.length && history.items.some((item: { id: number; sender_type: string; status: string }) => item.id > secondUserId && item.sender_type === 'role' && item.status === 'done')) {
         toolPaths = [history.items.filter((item: { id: number }) => item.id < secondUserId), history.items.filter((item: { id: number }) => item.id > secondUserId)]
           .map((items) => items.flatMap((item: { parts_json: Array<{ type: string; tool_name?: string }> }) => item.parts_json.filter((part) => part.type === 'tool_call').map((part) => part.tool_name ?? 'unknown')))
+        const secondCalls = history.items.filter((item: { id: number }) => item.id > secondUserId)
+          .flatMap((item: { parts_json: Array<{ type: string; tool_name?: string; status?: string }> }) => item.parts_json.filter((part) => part.type === 'tool_call'))
+        editObservation.attempted = secondCalls.filter((part: { tool_name?: string }) => part.tool_name === 'workspace_edit').length
+        editObservation.succeeded = secondCalls.filter((part: { tool_name?: string; status?: string }) => part.tool_name === 'workspace_edit' && part.status === 'success').length
+        successfulMutation = secondCalls.some((part: { tool_name?: string; status?: string }) => ['workspace_write', 'workspace_edit'].includes(part.tool_name ?? '') && part.status === 'success')
         finished = true
         break
       }
@@ -163,23 +170,29 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await expect(preview.getByRole('heading', { name: 'HelloWorld Updated', exact: true })).toBeVisible()
     if (await preview.locator('#keep').textContent() !== proof) throw new Error('实际页面未保留内容')
     const instances = (await api(`/api/conversations/${cid}/processes`)).items
-    if (toolPaths[1].includes('workspace_write') && (instances.find((row: { id: string }) => row.id === firstService.id)?.state !== 'stopped'
+    if (successfulMutation && (instances.find((row: { id: string }) => row.id === firstService.id)?.state !== 'stopped'
       || !instances.some((row: { id: string; state: string }) => row.id !== firstService.id && row.state === 'ready'))) throw new Error('原生编辑停服重启未闭环')
-    if (toolPaths[1].includes('workspace_write')) {
+    if (successfulMutation) {
       stage = '第二轮原生差异核对'
-      nativeDiffObserved = await page.evaluate(async ({ base, cid, secondUserId }) => {
+      const diffObservation = await page.evaluate(async ({ base, cid, secondUserId }) => {
         const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
         const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+        let observed = false, editVerified = false
         for (const message of history.items.filter((item: { id: number }) => item.id > secondUserId)) {
-          for (const call of message.parts_json.filter((part: { type: string; tool_name?: string; status?: string }) => part.type === 'tool_call' && part.tool_name === 'workspace_write' && part.status === 'success')) {
+          for (const call of message.parts_json.filter((part: { type: string; tool_name?: string; status?: string }) => part.type === 'tool_call' && ['workspace_write', 'workspace_edit'].includes(part.tool_name ?? '') && part.status === 'success')) {
             const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
             const file = detail.write?.files?.[0]
             if (detail.write?.availability === 'recorded' && file?.applied && file.operation === 'modified'
-              && file.hunks.some((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines.some((line) => line.kind === 'insert' && line.text.includes('HelloWorld Updated')))) return true
+              && file.hunks.some((hunk: { lines: Array<{ kind: string; text: string }> }) => hunk.lines.some((line) => line.kind === 'insert' && line.text.includes('HelloWorld Updated')))) {
+              observed = true
+              if (call.tool_name === 'workspace_edit') editVerified = true
+            }
           }
         }
-        return false
+        return { observed, editVerified }
       }, { base, cid, secondUserId })
+      nativeDiffObserved = diffObservation.observed
+      editObservation.diff_verified = diffObservation.editVerified
       if (!nativeDiffObserved) throw new Error('已触发原生修改但差异未记录')
     }
     expect((await page.request.get(`http://127.0.0.1:${port}`)).status()).toBe(200)
@@ -214,7 +227,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await page.goto('about:blank').catch(() => undefined)
     const reportPath = testInfo.outputPath('tool-path-observation.json')
     await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
-      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: 'not_implemented_in_D', native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
+      normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })
   }

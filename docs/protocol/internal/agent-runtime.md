@@ -43,6 +43,10 @@ Shell 始终 dangerous，Owner safe override 无效；等待/执行语义见 [Sh
 
 ## ContextBuilder 边界
 
+E1 编辑工具只提取 path_fingerprint、old_text_bytes、new_text_bytes、has_expected_sha256 作为参数安全摘要，
+结果仅向共享工具卡增加显式白名单中的固定错误码。匹配/参数/版本拒绝是正常 rejected 终态，不记录片段、路径或异常原文。
+工作区策略版本随工具集合/说明升级；仅在实际暴露 workspace_edit 时向 write 的说明追加局部编辑建议。
+
 D write 私有采集由 generation 所有者创建有界作用域，GuardedTool 的宿主 call_id 关联凭据，
 写入处同步记录已提交的前后版本并预留有界计算槽，释放写锁后计算；防腐层在工具结束时仅通过
 ToolCallFinished.private_output 交给消息所有者。原文不进入模型工具返回或共享框架事件，未消费凭据上限 32 个。

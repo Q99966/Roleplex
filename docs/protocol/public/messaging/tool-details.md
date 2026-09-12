@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | 已实现并通过人工验收，含 D 写入差异与单层展开修订 |
+| 状态 | D 与 E1 编辑复用私有详情已人工验收 |
 | 协议版本 | 3（兼容新增 write 私有差异） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-12 |
 | 测试 | `backend/tests/test_tool_timeline.py`、`frontend/tests/commands/`、`frontend/tests/real-world/commands-provider.spec.ts` |
 
 ## 接口与资源归属
@@ -90,6 +90,11 @@ not_executed 只用于已知写前拒绝，不用于可能发生部分写入的 
 计算进程无法确认回收时关闭该池准入，不通过新建池绕过限制；应用关闭仍复核回收，失败不伪装成成功。
 
 ## 消息顺序与兼容
+
+E1 workspace_edit（已人工验收）复用上述 write-v1 加密格式及公开 write 对象，tool_name 保留 workspace_edit，
+只产生 modified/unchanged 节点，不创建文件。私有输入白名单为 path/old_text/new_text/expected_sha256；
+片段不进入共享事件、机器日志或摘要。成功提交后的前后字节来自共同文件执行层，不把模型提交的片段当作已应用 diff。
+前端与 write 相同默认展开、进入可视范围加载、只显示时间/文件/diff；不展示原始输入输出，Guest 不请求私有详情。
 
 新角色消息 `timeline_version=1`，parts_json 按事件顺序包含 text 和 tool_call；文本段有稳定 part_id。
 `message_delta` 兼容新增 part_id/part_index，增量只追加目标文本段。工具开始固定前段，结束原位更新。

@@ -48,6 +48,14 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+E1 局部编辑专项：`pytest tests/test_workspace_edit.py -q` 与
+`npm run test:e2e:commands -- workspace-edit.spec.ts`。验证唯一字面匹配（含重叠拒绝）、全文件 hash、
+UTF-8 片段预算、edit/write 共用提交与并发锁、服务占用拒绝、取消后已应用事实、详情保存降级及 Owner/Guest 隔离。
+测试目录复用命令类别/本轮时间戳/用例布局；浏览器仅新增单项编辑成功/冲突展示，不复制完整开发场景。
+真实入口仍为 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`：
+前者验证明确的 read → edit 工具契约；后者启用完整工具集并记录实际选择，不强制 edit，分别报告尝试数、成功数与 diff 核验。
+按阶段要求运行前告知联网计费，关闭真实截图/trace/video，结束时正常回收本轮服务；未触发能力不声称覆盖。
+
 D 写入 diff：后端 `pytest tests/test_write_diff.py -q`；浏览器
 `npm run test:e2e:commands -- write-diff.spec.ts`，覆盖实际文件写入、时间线位置、写入卡默认展开与单层折叠、长行软换行、刷新、Guest 隔离及展示降级。
 后端另验证队列/输入/输出预算、取消/关闭回收、密文身份、过期、历史不重建，以及计算/保存失败不重写文件。

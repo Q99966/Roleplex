@@ -22,19 +22,20 @@ from ..models import (
     User,
     WorkspaceBinding,
 )
-from .files import WorkspaceFileError, WorkspaceFileService
+from .files import WorkspaceFileError, WorkspaceFileService, MAX_EDIT_BYTES
+from .catalog import WORKSPACE_FILE_TOOLS, WORKSPACE_MUTATION_TOOLS
 from .paths import WorkspacePathError
 from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
 
-WORKSPACE_FILE_TOOLS = ("workspace_list", "workspace_read", "workspace_write")
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 6
+WORKSPACE_TOOL_POLICY_VERSION = 7
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     "workspace_read": "读取当前 execution 已绑定工作区内的 UTF-8 文件；每段结果的 sha256 都是本次读取的全文件 hash，供后续安全更新。跨段 hash 改变时重新读取，不拼接不同版本。",
     "workspace_write": "普通源码创建或整文件替换优先使用本工具，更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
+    'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；两片段合计最多 64 KiB。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
     "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
     'workspace_start_service': '请求 Owner 批准实际脚本并托管前台 HTTP 开发服务；可包含必要准备操作，但普通源码编辑优先原生文件工具，不仅为减少调用次数塞进启动脚本。必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。脚本可修改文件、访问网络，未采集文件 diff；启动失败或回收成功不代表副作用回滚。独立逐次审批，不移用 Shell 批准，不自动换入口规避拒绝。',
@@ -46,13 +47,16 @@ _LEASE_LOCKS: dict[int, asyncio.Lock] = {}
 _COMMAND_CALL_LOCKS: dict[int, asyncio.Lock] = {}
 
 
-def _tool_description(name: str) -> str:
+def _tool_description(name: str, *, edit_available: bool = False) -> str:
     """使模型工具 schema 与 ContextBuilder 的策略 hash 使用同一能力描述。
 
     Args:
         name：实际内置工具名。
+        edit_available：本次实际工具集合是否包含 edit，禁止向模型推荐未暴露工具。
     """
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
+    if name == 'workspace_write' and edit_available:
+        description += ' 局部修改可优先使用本轮已启用的 workspace_edit，避免重传整份文件。'
     if name == 'workspace_run_shell':
         from .shell import shell_configuration
         try:
@@ -139,6 +143,15 @@ class WorkspaceWriteInput(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
     content: str
     expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class WorkspaceEditInput(BaseModel):
+    """单文件精确替换输入；字节合计在文件执行层复核，不接受额外参数。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    path: str = Field(min_length=1, max_length=1024)
+    old_text: str = Field(min_length=1, max_length=MAX_EDIT_BYTES)
+    new_text: str = Field(max_length=MAX_EDIT_BYTES)
+    expected_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
 async def _create_lease(
@@ -297,12 +310,12 @@ async def _authorized_service(
             or generation.stop_requested_at is not None
         ):
             return None
-        if tool_name in {'workspace_write', 'workspace_run_shell'}:
+        if tool_name in (*WORKSPACE_MUTATION_TOOLS, 'workspace_run_shell'):
             from ..runtime.models import RuntimeEntry
             from ..runtime.registry import ACTIVE
             # 运行中的服务不替代 Shell 的逐次审批；仅未确认回收仍阻止新的任意脚本。
             # 原生写工具暂保留占用限制，不将其宣传为对 Shell/服务自身写文件的隔离。
-            blocked = ACTIVE if tool_name == 'workspace_write' else ('cleanup_required',)
+            blocked = ACTIVE if tool_name in WORKSPACE_MUTATION_TOOLS else ('cleanup_required',)
             if await session.scalar(select(RuntimeEntry.id).where(RuntimeEntry.workspace_id == workspace_binding_id,
                 RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(blocked)).limit(1)):
                 return None
@@ -323,10 +336,15 @@ async def _authorized_service(
         return WorkspaceFileService(root=root, execution_id=execution_id)
 
 
-def _error_result(code: str) -> str:
-    """返回给模型的结构化文件失败，不泄露路径或宿主异常。"""
+def _error_result(code: str, *, rejected: bool = False) -> str:
+    """返回给模型的结构化文件失败，不泄露路径或宿主异常。
+
+    Args:
+        code：固定错误码。
+        rejected：E1 的预期输入/匹配拒绝；默认保持旧工具响应语义。
+    """
     body = json.dumps({"ok": False, "error_code": code}, separators=(",", ":"))
-    return f"{FAILED_OUTPUT_PREFIX} {body}"
+    return f"{REJECTED_OUTPUT_PREFIX if rejected else FAILED_OUTPUT_PREFIX} {body}"
 
 
 def _command_result(result: dict) -> str:
@@ -416,19 +434,27 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             return _error_result(exc.code)
 
-    async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
-        """exclusive 新建或按 expected hash 原子替换 UTF-8 文件。"""
+    async def mutate_file(tool_name: str, path: str, arguments: dict) -> str:
+        """write/edit 共用授权、私有采集和锁外计算，不接受模型指定工具名。
+
+        Args:
+            tool_name：内置包装函数绑定的写操作名称。
+            path：模型请求路径，执行层再解析。
+            arguments：包装函数从固定 schema 构造的业务参数。
+        """
         from ..agent.write_capture import begin_write_capture
         receipt = begin_write_capture(path)
         try:
             async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
-                authorized = await service("workspace_write")
+                authorized = await service(tool_name)
                 if authorized is None:
                     if receipt:
                         receipt.not_executed()
+                    if tool_name == 'workspace_edit':
+                        return _error_result('WORKSPACE_TOOL_NOT_AVAILABLE', rejected=True)
                     return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
-                result = await authorized.write(path, content, expected_sha256=expected_sha256,
-                    capture_applied=receipt.applied if receipt else None)
+                operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
+                result = await operation(path, **arguments, capture_applied=receipt.applied if receipt else None)
                 output = authorized.json_result(result)
             # 库计算或排队绝不能延长文件/工作区写锁的持有时间。
             if receipt:
@@ -437,10 +463,31 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             if receipt:
                 receipt.not_executed()
-            return _error_result(exc.code)
+            return _error_result(exc.code, rejected=tool_name == 'workspace_edit')
         finally:
             if receipt:
                 receipt.release()
+
+    async def workspace_write(path: str, content: str, expected_sha256: str | None = None) -> str:
+        """新建或整文件替换。
+
+        Args:
+            path：工作区相对路径。
+            content：完整新内容。
+            expected_sha256：更新所需的完整旧 hash。
+        """
+        return await mutate_file('workspace_write', path, {'content': content, 'expected_sha256': expected_sha256})
+
+    async def workspace_edit(path: str, old_text: str, new_text: str, expected_sha256: str) -> str:
+        """对已有文件做一次唯一字面替换。
+
+        Args:
+            path：工作区相对路径。
+            old_text：唯一旧片段。
+            new_text：替换片段。
+            expected_sha256：读取取得的完整文件 hash。
+        """
+        return await mutate_file('workspace_edit', path, {'old_text': old_text, 'new_text': new_text, 'expected_sha256': expected_sha256})
 
     async def workspace_run_command(command: str, args: dict | None = None) -> str:
         """在获得串行槽后重新鉴权并执行固定命令。
@@ -574,8 +621,13 @@ async def create_workspace_tools(
         "workspace_write": StructuredTool.from_function(
             coroutine=workspace_write,
             name="workspace_write",
-            description=WORKSPACE_TOOL_DESCRIPTIONS["workspace_write"],
+            description=_tool_description('workspace_write', edit_available='workspace_edit' in _enabled_tools(role, _binding)),
             args_schema=WorkspaceWriteInput,
+        ),
+        'workspace_edit': StructuredTool.from_function(
+            coroutine=workspace_edit, name='workspace_edit', description=WORKSPACE_TOOL_DESCRIPTIONS['workspace_edit'],
+            args_schema=WorkspaceEditInput,
+            handle_validation_error=lambda _error: _error_result('WORKSPACE_EDIT_ARGUMENT_INVALID', rejected=True),
         ),
     }
     for name, function, schema in [('workspace_start_service', workspace_start_service, ServiceStartInput),
@@ -630,7 +682,7 @@ async def workspace_tool_policy(
         "workspace_binding_id": binding.id,
         "workspace_kind": binding.workspace_kind,
         "exposed_tools": [
-            {"name": name, "description": _tool_description(name)}
+            {"name": name, "description": _tool_description(name, edit_available='workspace_edit' in exposed)}
             for name in WORKSPACE_TOOLS if name in exposed
         ],
     }

@@ -58,7 +58,7 @@ test('real provider uses native tools inside an isolated managed-world workspace
         model_name: seedRole.model_name,
         context_window_tokens: 200000,
         params: { max_tokens: 1024 },
-        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write'],
+        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_edit'],
       }),
     })
     const conversation = await request('/api/conversations', {
@@ -78,11 +78,11 @@ test('real provider uses native tools inside an isolated managed-world workspace
   await page.reload()
   await page.getByText(title, { exact: true }).first().click()
   const prompt = [
-    '这是 W1a 真实工具验收，必须实际调用工具并严格按顺序完成：',
+    '这是原生文件能力契约验收，必须实际调用工具并严格按顺序完成：',
     '1. workspace_list 列出根目录。',
     `2. workspace_write 新建 provider-proof.txt，内容精确为 ${firstContent}。`,
     '3. workspace_read 读取该文件并取得 sha256。',
-    `4. 携带刚取得的 expected_sha256，用 workspace_write 把内容更新为 ${finalContent}。`,
+    `4. 携带刚取得的 expected_sha256，用 workspace_edit，old_text 精确为 ${firstContent}，new_text 精确为 ${finalContent}。`,
     '5. workspace_read 再次读取确认，最后只回复文件中的最终内容。',
   ].join('\n')
   await page.getByLabel('消息输入框').fill(prompt)
@@ -109,7 +109,7 @@ test('real provider uses native tools inside an isolated managed-world workspace
     const calls = message.parts_json.filter((part: { type: string }) => part.type === 'tool_call')
     for (let index = 0; index < calls.length; index++) {
       const part = calls[index]
-      if (part.tool_name !== 'workspace_write') continue
+      if (part.tool_name !== 'workspace_edit') continue
       const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${part.call_id}`, { headers })).json()
       const file = detail.write?.files?.[0]
       if (file?.operation !== 'modified') continue
@@ -125,7 +125,7 @@ test('real provider uses native tools inside an isolated managed-world workspace
     if (refresh) await page.reload()
     const card = page.getByTestId('chat-message').nth(1).getByTestId('tool-call-card').nth(capture.index)
     await card.scrollIntoViewIfNeeded()
-    await expect(card.getByRole('button', { name: '执行详情：workspace_write', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await expect(card.getByRole('button', { name: '执行详情：workspace_edit', exact: true })).toHaveAttribute('aria-expanded', 'true')
     expect(await card.getByRole('region', { name: '文件差异：provider-proof.txt' }).evaluate((element, values) =>
       element.textContent?.includes(values.firstContent) && element.textContent?.includes(values.finalContent), { firstContent, finalContent })).toBe(true)
   }
@@ -136,7 +136,8 @@ test('real provider uses native tools inside an isolated managed-world workspace
   )
   const toolNames = toolEvents.map((event) => event.tool_name)
   expect(toolNames).toContain('workspace_list')
-  expect(toolNames.filter((name) => name === 'workspace_write').length).toBeGreaterThanOrEqual(2)
+  expect(toolNames.filter((name) => name === 'workspace_write').length).toBeGreaterThanOrEqual(1)
+  expect(toolNames.filter((name) => name === 'workspace_edit').length).toBeGreaterThanOrEqual(1)
   expect(toolNames.filter((name) => name === 'workspace_read').length).toBeGreaterThanOrEqual(2)
 
   const providerEvents = await waitForRunEvents(

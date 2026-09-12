@@ -7,7 +7,7 @@
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/errors.py`、`backend/app/routers/`、`backend/app/security/`、`backend/app/agent/loop.py`、`backend/app/services/chat.py`、`backend/app/scheduling/` |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-12 |
 
 本文是稳定 `error_code` 的跨领域权威注册表。各领域协议负责说明“哪个接口或事件会返回哪些错误码”；
 错误码本身的名称、含义、终态和重试语义只在本文定义，避免同一含义散落后漂移。
@@ -191,6 +191,10 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_FILE_NOT_TEXT` | 已实现 | 工具 | — | rejected | no | 文件不是合法 UTF-8 普通文本或目标类型不支持 |
 | `WORKSPACE_FILE_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 文件或待写内容超过 W1a 固定 1 MiB 上限 |
 | `WORKSPACE_FILE_REVISION_CONFLICT` | 已实现 | 工具 | — | rejected | yes | 目标已存在但未提供匹配 hash，或并发更新后 hash 已变化 |
+| `WORKSPACE_EDIT_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | edit 缺少/非法参数、空 old_text、超字符护栏或额外参数；不回显片段 |
+| `WORKSPACE_EDIT_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | old_text 与 new_text 的 UTF-8 字节数合计超过 64 KiB |
+| `WORKSPACE_EDIT_MATCH_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 当前匹配版本内找不到精确旧片段；需重新读取并调整片段 |
+| `WORKSPACE_EDIT_MATCH_AMBIGUOUS` | 已实现 | 工具 | — | rejected | conditional | 旧片段多处匹配，包含重叠；需增加明确上下文，不自动全部替换 |
 | `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不存在；W1a 不自动创建父目录 |
 | `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现 | 工具/审批 REST | —/409 | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
 | `COMMAND_NOT_ALLOWED` | 已实现（W1b） | 工具 | — | rejected | no | command 不是登记的稳定 ID |

@@ -139,6 +139,15 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             }]),
             ScriptedTurn(text='处理完成。'),
         ], delay=delay)
+    if '[EDIT_FAKE' in prompt:
+        first = "export const title = '第一版';\nexport const keep = '保持';\n"
+        old = 'missing' if '[EDIT_FAKE_MISSING]' in prompt else '第一版'
+        return ScriptedChatModel(turns=[
+            ScriptedTurn(text='先读取当前文件。', tool_calls=[{'name': 'workspace_read', 'args': {'path': 'edit.ts'}, 'id': 'edit_read'}]),
+            ScriptedTurn(text='只修改标题。', tool_calls=[{'name': 'workspace_edit', 'args': {'path': 'edit.ts', 'old_text': old,
+                'new_text': '第二版🙂', 'expected_sha256': hashlib.sha256(first.encode()).hexdigest()}, 'id': 'edit_apply'}]),
+            ScriptedTurn(text='编辑流程已结束。'),
+        ], delay=delay)
     if '[WRITE_DIFF_FAKE]' in prompt:
         first = "export const title = '第一版';\nexport const keep = '保持';\n"
         after = "export const title = '第二版🙂';\nexport const keep = '保持';\n"

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from .paths import WorkspacePathError, is_link_like, normalize_relative_path, re
 MAX_FILE_BYTES = 1024 * 1024
 MAX_READ_BYTES = 65_536
 MAX_LIST_ITEMS = 200
+MAX_EDIT_BYTES = 65536
 _WRITE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -227,30 +229,89 @@ class WorkspaceFileService:
                 _capture_applied(capture_applied, None, encoded)
                 return WorkspaceWriteResult(created=True, bytes=len(encoded), sha256=_sha256(encoded))
 
-            if target.is_symlink() or not target.is_file():
-                raise WorkspaceFileError("WORKSPACE_PATH_OUTSIDE_ROOT")
-            if target.stat().st_size > MAX_FILE_BYTES:
-                raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
-            current = target.read_bytes()
-            if expected_sha256 is None or _sha256(current) != expected_sha256:
-                raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT")
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".roleplex-w1a-{self.execution_id[:12]}-", dir=parent,
-            )
-            temporary = Path(temporary_name)
+            current = self._read_update(path, expected_sha256)
+            return self._replace_existing(path, current, encoded, capture_applied)
+
+    def _read_update(self, path: str, expected_sha256: str | None) -> bytes:
+        """持锁读取待更新文件并校验完整版本；再次解析防止复用过期路径对象。
+
+        Args:
+            path：授权根内的相对目标。
+            expected_sha256：读取工具给出的全文件版本。
+        """
+        target = self._resolve(path)
+        if is_link_like(target) or not target.is_file():
+            raise WorkspaceFileError('WORKSPACE_PATH_OUTSIDE_ROOT')
+        if target.stat().st_size > MAX_FILE_BYTES:
+            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
+        with target.open('rb') as handle:
+            current = handle.read(MAX_FILE_BYTES + 1)
+        if len(current) > MAX_FILE_BYTES:
+            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
+        if expected_sha256 is None or _sha256(current) != expected_sha256:
+            raise WorkspaceFileError('WORKSPACE_FILE_REVISION_CONFLICT')
+        return current
+
+    def _replace_existing(self, path: str, current: bytes, encoded: bytes, capture_applied: Callable | None) -> WorkspaceWriteResult:
+        """write/edit 共用唯一原子替换路径，调用者持有工作区锁。
+
+        Args:
+            path：当前授权目标。
+            current：同次校验的旧版本字节。
+            encoded：待提交的精确新字节。
+            capture_applied：成功后接收实际前后版本的私有观察器。
+        """
+        if len(encoded) > MAX_FILE_BYTES:
+            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
+        target = self._resolve(path)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f'.roleplex-w1a-{self.execution_id[:12]}-', dir=target.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, 'wb') as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # 不在匹配和提交之间释放锁；外部变更仍需在提交边界重新检查，非 OS 级 CAS。
+            self._read_update(path, _sha256(current))
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        _capture_applied(capture_applied, current, encoded)
+        return WorkspaceWriteResult(created=False, bytes=len(encoded), sha256=_sha256(encoded))
+
+    async def edit(self, path: str, old_text: str, new_text: str, *, expected_sha256: str,
+                   capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:
+        """唯一字面匹配后修改已有 UTF-8 文件，不解释正则或自动补全上下文。
+
+        Args:
+            path：授权根内已有普通文件。
+            old_text：非空、必须唯一匹配的旧片段。
+            new_text：替换片段，可为空但不删除文件。
+            expected_sha256：本次读取的完整文件 hash，必填。
+            capture_applied：成功提交后共享 D 差异采集。
+        """
+        if not isinstance(old_text, str) or not old_text or not isinstance(new_text, str) or not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+            raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID')
+        try:
+            size = len(old_text.encode('utf-8')) + len(new_text.encode('utf-8'))
+        except UnicodeEncodeError:
+            raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID') from None
+        if size > MAX_EDIT_BYTES:
+            raise WorkspaceFileError('WORKSPACE_EDIT_INPUT_TOO_LARGE')
+        async with self._lock:
+            current = self._read_update(path, expected_sha256)
             try:
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(encoded)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                # 临界点再次复核，避免同一进程外修改被静默覆盖。
-                if _sha256(target.read_bytes()) != expected_sha256:
-                    raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT")
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-            _capture_applied(capture_applied, current, encoded)
-            return WorkspaceWriteResult(created=False, bytes=len(encoded), sha256=_sha256(encoded))
+                text = current.decode('utf-8')
+            except UnicodeDecodeError:
+                raise WorkspaceFileError('WORKSPACE_FILE_NOT_TEXT') from None
+            index = text.find(old_text)
+            if index < 0:
+                raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_NOT_FOUND')
+            # 从下一字符寻找第二处，以免 str.count 的非重叠语义漏掉 aaa 中两处 aa。
+            if text.find(old_text, index + 1) >= 0:
+                raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_AMBIGUOUS')
+            encoded = (text[:index] + new_text + text[index + len(old_text):]).encode('utf-8')
+            return self._replace_existing(path, current, encoded, capture_applied)
 
     @staticmethod
     def json_result(result: object) -> str:

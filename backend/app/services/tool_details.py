@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
 from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView
+from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
 def _cipher() -> Fernet:
@@ -87,7 +88,7 @@ async def update_detail(
         try:
             row.output_encrypted = _encrypt(message_id, call_id, private_output)
         except Exception:
-            if tool_name != 'workspace_write' or private_output.get('format') != 'write-v1':
+            if tool_name not in WORKSPACE_MUTATION_TOOLS or private_output.get('format') != 'write-v1':
                 raise
             # 差异保存失败不能将已成功写入伪装成模型工具失败；仅保留有界提交元数据。
             value = private_output['write']
@@ -115,7 +116,7 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     try:
         output = _decrypt(row, row.output_encrypted)
         payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
-        if row.tool_name == 'workspace_write':
+        if row.tool_name in WORKSPACE_MUTATION_TOOLS:
             if output and output.get('format') == 'write-v1':
                 value = WriteDetailView.model_validate(output['write']).model_dump()
                 if len(json.dumps(value, ensure_ascii=False).encode()) > 65536 or sum(

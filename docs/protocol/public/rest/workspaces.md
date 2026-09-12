@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | 已实现（W1a/W1b/W1c 已验收；群聊绑定与聊天标题区摘要属于 W2a） |
+| 状态 | W1a/W1b/W1c 已验收；E1 单文件编辑已人工验收；群聊绑定与聊天标题区摘要属于 W2a |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-12 |
 
 ## 范围与安全边界
 
@@ -56,7 +56,7 @@ GET /api/workspaces/capabilities
 {
   "world_name": "default",
   "workspace_kinds": ["managed_directory"],
-  "file_tools": ["workspace_list","workspace_read","workspace_write"],
+  "file_tools": ["workspace_list","workspace_read","workspace_write","workspace_edit"],
   "basic_commands_available": true,
   "shell_available": true,
   "shell_kind": "bash",
@@ -126,9 +126,19 @@ PUT /api/conversations/{conversation_id}/workspace
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
 | `workspace_read` | `path`、`offset_bytes>=0`、`max_bytes=1..65536` | `text/bytes/eof/next_offset/sha256`；只读最大 1 MiB 的 UTF-8 普通文件且不拆坏字符 |
 | `workspace_write` | `path/content/expected_sha256?` | `created/bytes/sha256`；新建要求目标不存在，更新要求 hash 完全匹配 |
+| `workspace_edit` | `path/old_text/new_text/expected_sha256`，均必填 | `created=false/bytes/sha256`；仅对已有 UTF-8 文件做一次唯一字面替换（E1 已实现） |
 
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
 临时文件、flush/fsync 与 atomic replace 完成。`expected_sha256` 为空不表示允许覆盖。
+
+E1 edit 不隐含 read/write 开关：角色必须显式启用 workspace_edit，工作区沿用 file_tools_enabled，仍限 Owner single。
+old_text 非空（纯空白片段可以编辑），new_text 可为空但不删除文件；两片段 UTF-8 合计最多 65536 字节，
+schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/未知参数/缺少或非法 hash 为 WORKSPACE_EDIT_ARGUMENT_INVALID。
+先复核全文件 hash，再字面搜索 old_text：零匹配或多处匹配（含重叠）分别拒绝，不做正则/模糊匹配、全局替换、缩进或换行归一化。
+在同一工作区锁内从本次读取的版本构造新内容，输出仍限 1 MiB，复用 write 的提交前 hash 复核和原子替换。
+版本冲突只能重新读取/确认后重试，不自动覆盖。运行中服务对 edit 的限制与 write 相同；不隐含停服授权。
+差异采集、预算、取消和 Owner 展示复用[工具详情](../messaging/tool-details.md)的 write 对象，不新增独立 diff 协议。
+大文件小修改允许执行，但超过 D 的前后合计计算预算时 diff 仍明确降级，不在 E1 偷偷提高预算。
 
 路径只接受 UTF-8 相对路径；拒绝绝对路径、空字节、`..`、盘符、UNC、环境变量、glob、符号链接逃逸、
 `.git`、真实 `.env`、私钥和实例密钥路径。目录名、文件正文、写入内容和绝对路径不得进入正式日志、审计
@@ -143,6 +153,8 @@ PUT /api/conversations/{conversation_id}/workspace
 `WORKSPACE_FILE_NOT_TEXT`、`WORKSPACE_FILE_TOO_LARGE`、`WORKSPACE_FILE_REVISION_CONFLICT`、
 `WORKSPACE_PARENT_NOT_FOUND`、`WORKSPACE_TOOL_NOT_AVAILABLE` 与 `SINGLE_CHAT_REQUIRED`；状态码、终态和重试
 语义只以 [错误码注册表](../../error-codes.md) 为准。
+E1 另使用 WORKSPACE_EDIT_ARGUMENT_INVALID、WORKSPACE_EDIT_INPUT_TOO_LARGE、WORKSPACE_EDIT_MATCH_NOT_FOUND、
+WORKSPACE_EDIT_MATCH_AMBIGUOUS；这些写前拒绝可作为共享工具卡的固定错误码，不包含片段原文。
 
 ## 兼容性与降级
 

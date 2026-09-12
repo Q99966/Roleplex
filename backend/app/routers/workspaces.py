@@ -15,6 +15,7 @@ from ..models import Conversation, ExecutionWorkspace, User, WorkspaceBinding
 from ..realtime import store as event_store
 from ..schemas import WorkspaceCreate, WorkspaceResponse, WorkspaceUpdate
 from ..security.tokens import require_owner
+from ..workspaces.catalog import WORKSPACE_FILE_TOOLS
 from ..workspaces.paths import WorkspacePathError, resolve_workspace_root
 from ..workspaces.service import (
     binding_availability,
@@ -66,7 +67,7 @@ async def capabilities(_owner: Annotated[User, Depends(require_owner)]) -> dict:
     return {
         "world_name": settings.world_name,
         "workspace_kinds": ["managed_directory"],
-        "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
+        "file_tools": list(WORKSPACE_FILE_TOOLS),
         "basic_commands_available": True,
         "shell_available": shell is not None,
         "shell_kind": shell['shell_kind'] if shell else None,

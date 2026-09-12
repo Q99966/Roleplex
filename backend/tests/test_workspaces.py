@@ -53,7 +53,7 @@ async def test_owner_can_register_multiple_absolute_workspace_roots_and_guest_ca
             base_capabilities = {
                 "world_name": settings.world_name,
                 "workspace_kinds": ["managed_directory"],
-                "file_tools": ["workspace_list", "workspace_read", "workspace_write"],
+                "file_tools": ["workspace_list", "workspace_read", "workspace_write", "workspace_edit"],
                 "basic_commands_available": True,
             }
             assert {key: capabilities.json()[key] for key in base_capabilities} == base_capabilities

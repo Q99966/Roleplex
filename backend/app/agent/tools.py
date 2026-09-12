@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from langchain_core.callbacks import AsyncCallbackManagerForToolRun
 from .tool_context import tool_call_id
+from ..workspaces.catalog import WORKSPACE_FILE_TOOLS
 
 # 显式 safe 白名单：只包含只读或纯生成类内置工具。
 # 新增工具默认不在此列表内，必须经安全评审后显式加入。
@@ -142,7 +143,7 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
     if tool_name == 'workspace_run_command':
         command = args.get('command')
         return json.dumps({'command': command} if command in ('pwd', 'list', 'read', 'count') else {})
-    if tool_name in {"workspace_list", "workspace_read", "workspace_write"}:
+    if tool_name in WORKSPACE_FILE_TOOLS:
         path = args.get("path")
         summary: dict[str, int | str | bool] = {}
         if isinstance(path, str):
@@ -158,9 +159,10 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
                 if isinstance(value, int) and not isinstance(value, bool):
                     summary[key] = value
         else:
-            content = args.get("content")
-            if isinstance(content, str):
-                summary["content_bytes"] = len(content.encode("utf-8"))
+            for key in ('old_text', 'new_text') if tool_name == 'workspace_edit' else ('content',):
+                content = args.get(key)
+                if isinstance(content, str):
+                    summary[f'{key}_bytes'] = len(content.encode('utf-8', errors='replace'))
             summary["has_expected_sha256"] = isinstance(args.get("expected_sha256"), str)
         return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
     summary: dict[str, int | str] = {}
@@ -193,13 +195,13 @@ def summarize_tool_output(output: Any) -> str:
 
 
 def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
-    """从命令结果提取公开允许字段，不复制任何输出原文。
+    """从命令或原生编辑结果提取公开允许字段，不复制任何输出原文。
 
     Args:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell'}:
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_edit'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -214,6 +216,13 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         return {}
     if not isinstance(result, dict):
         return {}
+    if tool_name == 'workspace_edit':
+        allowed = {'WORKSPACE_EDIT_ARGUMENT_INVALID', 'WORKSPACE_EDIT_INPUT_TOO_LARGE',
+            'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_FILE_REVISION_CONFLICT',
+            'WORKSPACE_FILE_NOT_FOUND', 'WORKSPACE_FILE_NOT_TEXT', 'WORKSPACE_FILE_TOO_LARGE',
+            'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_PATH_SENSITIVE', 'WORKSPACE_TOOL_NOT_AVAILABLE'}
+        code = result.get('error_code')
+        return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     summary: dict[str, Any] = {}
     if result.get('command') in ('pwd', 'list', 'read', 'count'):
         summary['command'] = result['command']
