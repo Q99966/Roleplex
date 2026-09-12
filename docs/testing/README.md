@@ -48,6 +48,13 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+E2 探索归组切片：`npm run test:e2e -- exploration-grouping.spec.ts` 验证顺序、边界、旧版/未知版本、
+重复身份与异常摘要；`npm run test:e2e:commands -- exploration.spec.ts` 使用真实前后端和确定性文件工具，
+验证连续 Read/List、重复读取计数、缺失文件、流式折叠选择、断线/刷新、正文与跨轮边界、Owner/Guest 详情隔离，
+以及隐藏子项阅读锚点和收起侧栏后的 390px 窄屏。测试目录为命令类别/本轮时间戳/default/exploration，沿用整轮清理。
+真实回归复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，不新增或强迫特定读取路径的收费场景；
+此切片尚未实现批量文件执行，不据此声称覆盖 E2 的批量预算、部分提交、重放与子项状态。
+
 E1 局部编辑专项：`pytest tests/test_workspace_edit.py -q` 与
 `npm run test:e2e:commands -- workspace-edit.spec.ts`。验证唯一字面匹配（含重叠拒绝）、全文件 hash、
 UTF-8 片段预算、edit/write 共用提交与并发锁、服务占用拒绝、取消后已应用事实、详情保存降级及 Owner/Guest 隔离。

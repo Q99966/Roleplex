@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react'
 import type { Message } from '../api/client'
 import { ToolCallCard } from './ToolCallCard'
+import { ExplorationGroup } from './ExplorationGroup'
+import { groupMessageParts } from './exploration'
 
 const MarkdownRenderer = lazy(async () => ({ default: (await import('./MarkdownRenderer')).MarkdownRenderer }))
 
@@ -12,13 +14,17 @@ export function MessageParts({ message, isOwner }: { message: Message; isOwner: 
   if (message.sender_type === 'user') return <>{message.parts_json.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('')}</>
   const legacy = !message.timeline_version && message.parts_json.some((part) => part.type === 'tool_call')
   return <>
-    {message.parts_json.map((part, index) => {
+    {groupMessageParts(message).map((group) => {
+      const { index, key } = group
+      const part = group.parts[0]
+      if (group.kind === 'exploration') return <ExplorationGroup key={key} parts={group.parts}
+        conversationId={message.conversation_id} messageId={message.id} isOwner={isOwner} />
       if (part.type === 'text') return part.text ? <div key={String(part.part_id ?? `text-${index}`)} data-testid="message-text-part">
         <Suspense fallback={<span className="whitespace-pre-wrap">{part.text}</span>}>
           <MarkdownRenderer content={part.text} isGenerating={message.status === 'generating' && index === message.parts_json.length - 1} />
         </Suspense>
       </div> : null
-      if (part.type === 'tool_call') return <div key={part.call_id} data-reading-anchor={`m-${message.id}:tool-${part.call_id}`}>
+      if (part.type === 'tool_call') return <div key={key} data-reading-anchor={`m-${message.id}:tool-${part.call_id}`}>
         {legacy && index === message.parts_json.findIndex((item) => item.type === 'tool_call') && <p className="mt-3 text-xs text-slate-500">历史执行记录，位置未记录</p>}
         <ToolCallCard part={part} conversationId={message.conversation_id} messageId={message.id} isOwner={isOwner} />
       </div>

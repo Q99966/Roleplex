@@ -139,6 +139,17 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             }]),
             ScriptedTurn(text='处理完成。'),
         ], delay=delay)
+    if '[EXPLORE_FAKE]' in prompt:
+        # 连续只读、缺失文件和正文断点，走真实工具与消息事件以验证纯展示归组。
+        return ScriptedChatModel(turns=[
+            ScriptedTurn(tool_calls=[{'name': name, 'args': {'path': path}, 'id': f'explore_{index}'}])
+            for index, (name, path) in enumerate([
+                ('workspace_read', 'explore.txt'), ('workspace_list', '.'),
+                ('workspace_read', 'explore.txt'), ('workspace_read', 'missing.txt'),
+            ])
+        ] + [ScriptedTurn(text='第一段探索完成，下面单独核对目录。',
+            tool_calls=[{'name': 'workspace_list', 'args': {'path': '.'}, 'id': 'explore_tail'}]),
+            ScriptedTurn(text='探索验收完成。')], delay=max(delay, 0.4))
     if '[EDIT_FAKE' in prompt:
         first = "export const title = '第一版';\nexport const keep = '保持';\n"
         old = 'missing' if '[EDIT_FAKE_MISSING]' in prompt else '第一版'

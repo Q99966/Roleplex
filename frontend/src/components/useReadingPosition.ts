@@ -47,13 +47,22 @@ export function useReadingPosition(conversationId: number | null) {
     if (!feed || !content || loading) return
     /** 按当前锚点修正前插、Markdown 和工具详情展开造成的布局变化。 */
     function restore() {
-      if (!feed || useChatStore.getState().conversationId !== conversationId) return
+      if (!feed || conversationId === null || useChatStore.getState().conversationId !== conversationId) return
       const position = useChatStore.getState().position
       if (position.bottom) feed.scrollTop = feed.scrollHeight
       else {
-        const anchor = [...feed.querySelectorAll<HTMLElement>('[data-reading-anchor]')]
+        let anchor = [...feed.querySelectorAll<HTMLElement>('[data-reading-anchor]')]
           .find((item) => item.dataset.readingAnchor === position.anchor)
-        if (anchor) feed.scrollTop += anchor.getBoundingClientRect().top - feed.getBoundingClientRect().top - position.offset
+        let offset = position.offset
+        // 折叠探索组后，原子项仍挂载但没有布局；零矩形不是它的真实阅读位置。
+        if (anchor && !anchor.getClientRects().length) {
+          anchor = anchor.parentElement?.closest<HTMLElement>('[data-reading-anchor]') ?? undefined
+          offset = 0
+          if (anchor) useChatStore.getState().setPosition(conversationId, {
+            anchor: anchor.dataset.readingAnchor ?? null, offset, bottom: false,
+          })
+        }
+        if (anchor) feed.scrollTop += anchor.getBoundingClientRect().top - feed.getBoundingClientRect().top - offset
       }
       restoredTop.current = feed.scrollTop
     }
