@@ -194,6 +194,9 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_EDIT_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | edit 缺少/非法参数、空 old_text、超字符护栏或额外参数；不回显片段 |
 | `WORKSPACE_BATCH_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | 批次形态、数量、字段或类型非法；不回显原文 |
 | `WORKSPACE_READ_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | 统一读取缺失参数、非法字段或混用 items 与顶层单文件字段（含 null/默认值） |
+| `RUNTIME_QUERY_CURSOR_INVALID` | 已实现 | 工具 | — | rejected | conditional | 服务列表游标形态或所属会话/Owner 不符，不回显游标 |
+| `RUNTIME_QUERY_CURSOR_EXPIRED` | 已实现 | 工具 | — | rejected | conditional | 服务列表游标所属运行 epoch 已变化，从首页重新查询 |
+| `RUNTIME_QUERY_FAILED` | 已实现 | 工具 | — | failed | conditional | 状态查询数据库/内部故障或返回超预算，不伪装空列表，不公开异常对象 |
 | `WORKSPACE_WRITE_ARGUMENT_INVALID` | 已实现 | 工具 | — | rejected | conditional | write 缺少/非法参数、混用 items 与顶层字段；不回显源码 |
 | `WORKSPACE_BATCH_TARGET_CONFLICT` | 已实现 | 工具 | — | rejected | conditional | 全批预检发现重复规范目标或硬链接别名，未写入任何项 |
 | `WORKSPACE_BATCH_WRITE_UNCONFIRMED` | 已实现 | 工具 | — | failed | conditional | 文件操作结果无法确认，可能已部分/全部落地；先核查，禁止盲目重放 |

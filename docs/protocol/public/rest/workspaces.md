@@ -119,6 +119,10 @@ PUT /api/conversations/{conversation_id}/workspace
 
 ## W1a 文件工具内部契约
 
+S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无 ID 时分页列本会话既有服务，
+不放开文件、服务启动或停止权限。其参数/归属/分页契约见[服务协议](../messaging/runtime-services.md)，
+本领域的 write/edit 服务占用限制仍保持不变。
+
 工具结果使用紧凑 JSON 文本返回模型，原文不得进入日志或公开工具过程卡。
 
 | 工具 | 输入 | 结果 |

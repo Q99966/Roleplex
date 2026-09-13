@@ -3,10 +3,10 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 客户端；内部 Agent 与运行时 |
-| 状态 | 已实现（Linux 首版，已人工验收） |
+| 状态 | W1d 与 S1 只读服务发现已人工验收 |
 | 协议版本 | 1 |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-11 |
+| 复核日期 | 2026-09-13 |
 | 事实来源 | `app/runtime/`、`routers/runtime.py`、`models.py`、运行时迁移与测试 |
 
 ## 身份、状态和配额
@@ -52,7 +52,7 @@ stop 不是 kill 已发出，只有实际退出和回收验证后才能释放名
 
 提供 `workspace_start_service(script,port,health_path="/",lifetime_seconds=7200)`、
 `workspace_service_status(runtime_id)`、`workspace_service_logs(runtime_id,after=0)`、`workspace_stop_service(runtime_id)`。
-这些工具在 Owner single 和工作区/角色显式启用时使用。start 参数仅表达脚本及受限探针/寿命，不能传 argv、cwd、
+启动、日志、停止在 Owner single 和工作区/角色显式启用时使用；状态查询的 S1 扩展见下文。start 参数仅表达脚本及受限探针/寿命，不能传 argv、cwd、
 环境、审批结果或调用身份。启动批准必须绑定后台服务操作、runtime ID、脚本、目录、解释器、端口、探针和限制；
 W1c 普通脚本批准不能消费为服务启动。
 同工作区运行服务时，Owner 仍可申请 workspace_run_shell 的逐次审批；审批视图提示共享文件和服务影响，Shell 继续占配额。
@@ -63,6 +63,34 @@ W1c 普通脚本批准不能消费为服务启动。
 probe 固定 127.0.0.1 的批准端口与相对路径，无 DNS/代理/认证头、不跟重定向、响应体有界且不落日志。
 服务寿命以单调时钟执行，UTC 到期时间仅用于展示；墙钟回退不能延长已批准寿命，到期进入 expired。
 listener 必须属于监管器后代，不能把陌生进程的 200 当成功；监听偏离声明范围时失败并清理。
+
+## S1 Agent 服务发现（已人工验收）
+
+workspace_service_status 的旧 runtime_id 查询保持 runtime_id/state/port/health_code 四字段响应，包含本会话已登记终态，
+原可查询的 command 状态亦保留兼容。不传 runtime_id 则列出当前会话 kind=service 且属于既有 ACTIVE 集合的实例；
+包含 pending/starting/waiting_ready/ready/unhealthy/running/stopping/cleanup_required，不混称全部就绪。
+列表不含终态或一次性命令，不扫描 OS、不读取脚本/日志或当前目录。不存在或不可见 ID 统一 RUNTIME_NOT_FOUND。
+
+列表参数 cursor（可空）、limit 默认 50，严格整数 1..100；runtime_id 必须 32 位小写十六进制，显式 null/空 ID 拒绝，
+且不能与任意 cursor/limit 键混传（包括 null/默认值）。未知字段、无效形态沿用 RUNTIME_ARGUMENT_INVALID。
+返回 items/has_more/next_cursor；每项仅 runtime_id/state/port/health_code/workspace_binding_id，指向本会话登记的原工作区引用。
+不返回 can_stop；查询结果不授予停止权限。按 sequence、id 降序 seek 分页，最多读取 limit+1 个必要字段投影，
+不加载密文日志列。每次紧凑 UTF-8 JSON 最大 64 KiB；异常数据导致超预算时明确查询失败，不截断 JSON 或返回假空列表。
+无服务才返回 items=[]、has_more=false、next_cursor=null。
+
+不透明游标包含格式版本、当前 stream epoch、Owner、会话和末项 sequence/id；它不是授权凭据，作用域/形态错误
+为 RUNTIME_QUERY_CURSOR_INVALID。重启/切 World 后 epoch 不同为 RUNTIME_QUERY_CURSOR_EXPIRED，重新从首页查询。
+列表随真实状态变化，不是快照；续页期间退出的实例可以消失，新登记可在重新查询首页时出现，不提供跨页固定总量承诺。
+数据库/内部查询故障为 RUNTIME_QUERY_FAILED，正常拒绝与实际失败分别使用既有工具拒绝/失败前缀。
+
+状态工具创建和每次调用均要求有效 Owner single execution/generation、未取消、活跃且显式启用 status 的角色，
+以及 Owner/角色双方当前会话成员关系；查询目标按 owner_id、conversation_ref_id 及原 conversation_id 复核。
+查询不依赖当前 Workspace Binding、文件 lease、启动开关、服务配额、Shell 平台可用性或 RuntimeGate/清理操作门槛；
+这些条件不应阻止有权限的当前 execution 查看既有登记。它也不释放或绕过任何控制/写入门槛。
+会话/角色已删除、权限/成员已撤销、execution 已结束或取消仍拒绝 WORKSPACE_TOOL_NOT_AVAILABLE；
+应用退出、数据库关闭后不承诺继续查询。历史工作区与当前绑定不同不影响本会话状态查询，也不因此开放其文件访问。
+只读状态不创建租用、运行实例、审批或回收记录。启动、日志、停止权限与 write/edit 停服规则不变，S2 拒绝诊断未实施。
+模型结果及 Owner 私有详情可以含本会话列表；共享卡/WS/正式日志不复制列表和游标，私有采集见工具详情协议。
 
 ## 删除、退出与恢复
 

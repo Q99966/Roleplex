@@ -143,6 +143,11 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
     if tool_name == 'workspace_run_command':
         command = args.get('command')
         return json.dumps({'command': command} if command in ('pwd', 'list', 'read', 'count') else {})
+    if tool_name == 'workspace_service_status':
+        summary = {'mode': 'single' if 'runtime_id' in args else 'list', 'has_cursor': isinstance(args.get('cursor'), str)}
+        if type(args.get('limit')) is int and 1 <= args['limit'] <= 100:
+            summary['limit'] = args['limit']
+        return json.dumps(summary, separators=(',', ':'))
     if tool_name in WORKSPACE_FILE_TOOLS:
         if tool_name in {'workspace_read', 'workspace_write', 'workspace_edit'} and 'items' in args:
             items = args.get('items')
@@ -204,7 +209,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read'}:
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read', 'workspace_service_status'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -219,6 +224,11 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         return {}
     if not isinstance(result, dict):
         return {}
+    if tool_name == 'workspace_service_status':
+        code = result.get('error_code')
+        allowed = {'RUNTIME_ARGUMENT_INVALID', 'RUNTIME_NOT_FOUND', 'RUNTIME_QUERY_CURSOR_INVALID',
+            'RUNTIME_QUERY_CURSOR_EXPIRED', 'RUNTIME_QUERY_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE'}
+        return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     if tool_name == 'workspace_read':
         code = result.get('error_code')
         allowed = {'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_BATCH_BUSY',

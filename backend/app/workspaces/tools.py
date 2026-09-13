@@ -15,9 +15,7 @@ from ..db import SessionLocal
 from ..models import (
     AgentExecution,
     Conversation,
-    ConversationMember,
     ExecutionWorkspace,
-    Generation,
     Role,
     User,
     WorkspaceBinding,
@@ -29,10 +27,12 @@ from .service import binding_root
 from .commands import WorkspaceCommandError, WorkspaceCommandService
 from .batch_read import ReadItemInput
 from .batch_mutation import WriteItemInput, EditItemInput
+from .access import authorized_member, authorized_execution
+from .service_query import create_status_tool
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 10
+WORKSPACE_TOOL_POLICY_VERSION = 11
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件，优先使用 items 数组：一项是单文件，多项是批量，最多8项，每项默认4096字节，max_bytes 合计最多32768字节；输入 JSON 最多16 KiB，输出 JSON 最多64 KiB。各项独立授权、结果、全文件 sha256 与 next_offset；output_limited 表示正文为输出预算缩短。跨段 hash 改变时重新读取，不拼接不同版本。兼容旧 path/offset_bytes/max_bytes 单文件形式（默认65536字节、返回原五字段），但与 items 严格互斥，不能同时传入。重复读取是新的观察，不保证相同版本，不写文件。',
@@ -41,7 +41,7 @@ WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
     "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
     'workspace_start_service': '请求 Owner 批准实际脚本并托管前台 HTTP 开发服务；可包含必要准备操作，但普通源码编辑优先原生文件工具，不仅为减少调用次数塞进启动脚本。必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。脚本可修改文件、访问网络，未采集文件 diff；启动失败或回收成功不代表副作用回滚。独立逐次审批，不移用 Shell 批准，不自动换入口规避拒绝。',
-    'workspace_service_status': '查询当前会话已登记服务的真实状态；不扫描全机，不占进程名额。',
+    'workspace_service_status': '不传参数即可找回当前会话尚未结束或清理待确认的常驻服务 runtime_id；默认每页50项，limit最大100，has_more时用next_cursor作为cursor续页。列表不是同一时刻快照，服务状态可能变化。传runtime_id查询指定实例并兼容原四字段，不能同时传cursor/limit，也不要传null ID。不扫描全机，不占进程名额，不启动或停止；只查本会话登记，工作区停用或无可写租用也可查询。缺失、撤权或查询失败不是空列表；可通过既有权限允许的停止工具或Owner /ps处理，查询不授予停止权限。',
     'workspace_service_logs': '读取当前会话服务的有界私有双流日志及游标缺口，内容会发给当前模型。',
     'workspace_stop_service': '停止当前会话指定的托管实例并确认回收，不按 PID 或端口杀进程。',
 }
@@ -87,7 +87,7 @@ def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
         shell_available = True
     except WorkspaceCommandError:
         shell_available = False
-    return [name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []) and (
+    return [name for name in WORKSPACE_TOOLS if name != 'workspace_service_status' and name in (role.builtin_tools_json or []) and (
         (binding.services_enabled and shell_available) if name in SERVICE_TOOLS else (binding.shell_enabled and shell_available) if name == 'workspace_run_shell'
         else binding.basic_commands_enabled if name == 'workspace_run_command' else binding.file_tools_enabled)]
 
@@ -235,7 +235,7 @@ async def _create_lease(
         triggered_by_user_id：调度器绑定的触发者。
         allow_dangerous：链路是否获准使用 dangerous 工具。
     """
-    enabled = tuple(name for name in WORKSPACE_TOOLS if name in (role.builtin_tools_json or []))
+    enabled = tuple(name for name in WORKSPACE_TOOLS if name != 'workspace_service_status' and name in (role.builtin_tools_json or []))
     if not enabled or not role.active or role.deleted_at is not None or not allow_dangerous or triggered_by_user_id is None:
         return None
     conversation = await session.get(Conversation, conversation_id)
@@ -318,16 +318,11 @@ async def _authorized_service(
         tool_name：用于重新检查角色与工作区开关的工具名。
     """
     async with SessionLocal() as session:
-        execution = await session.scalar(select(AgentExecution).where(
-            AgentExecution.execution_id == execution_id,
-            AgentExecution.conversation_id == conversation_id,
-            AgentExecution.role_id == role_id,
-            AgentExecution.status == "running",
-        ))
-        generation = await session.get(Generation, execution.generation_id) if execution is not None else None
-        conversation = await session.get(Conversation, conversation_id)
-        role = await session.get(Role, role_id)
-        user = await session.get(User, triggered_by_user_id)
+        actor = await authorized_execution(session, execution_id=execution_id, conversation_id=conversation_id,
+            role_id=role_id, user_id=triggered_by_user_id, tool_name=tool_name)
+        if actor is None:
+            return None
+        conversation, role = actor
         lease = await session.scalar(select(ExecutionWorkspace).where(
             ExecutionWorkspace.execution_id == execution_id,
             ExecutionWorkspace.workspace_binding_id == workspace_binding_id,
@@ -338,38 +333,13 @@ async def _authorized_service(
             WorkspaceBinding.created_by == triggered_by_user_id,
             WorkspaceBinding.active.is_(True),
         ))
-        # 工具可跨多个 await 存续；创建时的成员检查不能替代每次调用和审批后的实时复核。
-        owner_member = await session.scalar(select(ConversationMember.id).where(
-            ConversationMember.conversation_id == conversation_id,
-            ConversationMember.member_type == 'user', ConversationMember.member_id == triggered_by_user_id,
-        ))
-        role_member = await session.scalar(select(ConversationMember.id).where(
-            ConversationMember.conversation_id == conversation_id,
-            ConversationMember.member_type == 'role', ConversationMember.member_id == role_id,
-        ))
         if (
-            execution is None
-            or owner_member is None
-            or role_member is None
-            or conversation is None
-            or conversation.type != "single"
-            or conversation.deleted_at is not None
-            or conversation.workspace_binding_id != workspace_binding_id
-            or role is None
-            or not role.active
-            or role.deleted_at is not None
-            or role.created_by != triggered_by_user_id
-            or tool_name not in (role.builtin_tools_json or [])
-            or user is None
-            or not user.is_owner
+            conversation.workspace_binding_id != workspace_binding_id
             or lease is None
             or lease.root_path_snapshot != root_path_snapshot
             or binding is None
             or tool_name not in _enabled_tools(role, binding)
             or binding.root_path != root_path_snapshot
-            or generation is None
-            or generation.status != "running"
-            or generation.stop_requested_at is not None
         ):
             return None
         if tool_name in (*WORKSPACE_MUTATION_TOOLS, 'workspace_run_shell'):
@@ -432,7 +402,7 @@ async def create_workspace_tools(
     triggered_by_user_id: int | None,
     allow_dangerous: bool,
 ) -> list[BaseTool]:
-    """为本次 execution 创建受 lease 和二次授权保护的文件/命令工具。
+    """创建文件/命令工具及独立只读状态工具；查询不依赖可写 lease。
 
     Args:
         session：创建 lease 的短事务会话。
@@ -442,6 +412,12 @@ async def create_workspace_tools(
         triggered_by_user_id：调度器绑定的触发者。
         allow_dangerous：链路是否允许 dangerous 工具。
     """
+    query_tools = []
+    if 'workspace_service_status' in (role.builtin_tools_json or []) and allow_dangerous and triggered_by_user_id is not None and await authorized_execution(session,
+        execution_id=execution_id, conversation_id=conversation_id, role_id=role.id,
+        user_id=triggered_by_user_id, tool_name='workspace_service_status') is not None:
+        query_tools.append(create_status_tool(execution_id=execution_id, conversation_id=conversation_id,
+            role_id=role.id, user_id=triggered_by_user_id, description=_tool_description('workspace_service_status')))
     created = await _create_lease(
         session,
         execution_id=execution_id,
@@ -451,7 +427,7 @@ async def create_workspace_tools(
         allow_dangerous=allow_dangerous,
     )
     if created is None or triggered_by_user_id is None:
-        return []
+        return guard_tools(query_tools, allow_dangerous=allow_dangerous)
     lease, _binding = created
 
     def runtime_identity(name: str) -> dict:
@@ -676,17 +652,6 @@ async def create_workspace_tools(
             raise registry.RuntimeRejected('RUNTIME_NOT_FOUND')
         return row
 
-    async def workspace_service_status(runtime_id: str) -> str:
-        """Args:
-            runtime_id：当前会话运行实例。
-        """
-        from ..runtime.registry import RuntimeRejected
-        try:
-            row = await runtime_access(runtime_id, 'workspace_service_status')
-            return json.dumps({'runtime_id': row.id, 'state': row.state, 'port': row.port, 'health_code': row.health_code})
-        except RuntimeRejected as exc:
-            return _command_result({'error_code': exc.code})
-
     async def workspace_service_logs(runtime_id: str, after: int = 0) -> str:
         """Args:
             runtime_id：当前会话运行实例。
@@ -750,11 +715,13 @@ async def create_workspace_tools(
         ),
     }
     for name, function, schema in [('workspace_start_service', workspace_start_service, ServiceStartInput),
-        ('workspace_service_status', workspace_service_status, ServiceIdInput), ('workspace_service_logs', workspace_service_logs, ServiceLogInput),
+        ('workspace_service_logs', workspace_service_logs, ServiceLogInput),
         ('workspace_stop_service', workspace_stop_service, ServiceIdInput)]:
         raw[name] = StructuredTool.from_function(coroutine=function, name=name, description=WORKSPACE_TOOL_DESCRIPTIONS[name],
             args_schema=schema, handle_validation_error=lambda _error: _command_result({'error_code': 'RUNTIME_ARGUMENT_INVALID'}))
-    selected = [raw[name] for name in _enabled_tools(role, _binding)]
+    raw.update({tool.name: tool for tool in query_tools})
+    enabled = {*_enabled_tools(role, _binding), *(tool.name for tool in query_tools)}
+    selected = [raw[name] for name in WORKSPACE_TOOLS if name in enabled]
     return guard_tools(selected, allow_dangerous=allow_dangerous)
 
 
@@ -780,7 +747,6 @@ async def workspace_tool_policy(
         or role.deleted_at is not None
         or triggered_by_user_id != role.created_by
         or conversation.type != "single"
-        or conversation.workspace_binding_id is None
     ):
         return {"version": WORKSPACE_TOOL_POLICY_VERSION, "exposed_tools": []}
     user = await session.get(User, triggered_by_user_id)
@@ -789,17 +755,21 @@ async def workspace_tool_policy(
         WorkspaceBinding.created_by == triggered_by_user_id,
         WorkspaceBinding.active.is_(True),
     ))
-    if user is None or not user.is_owner or binding is None:
+    if user is None or not user.is_owner:
         return {"version": WORKSPACE_TOOL_POLICY_VERSION, "exposed_tools": []}
-    exposed = _enabled_tools(role, binding)
-    try:
-        binding_root(binding)
-    except WorkspacePathError:
-        return {"version": WORKSPACE_TOOL_POLICY_VERSION, "exposed_tools": []}
+    exposed = []
+    if binding is not None:
+        try:
+            binding_root(binding)
+            exposed = _enabled_tools(role, binding)
+        except WorkspacePathError:
+            pass
+    if await authorized_member(session, conversation_id=conversation.id, role_id=role.id,
+        user_id=triggered_by_user_id, tool_name='workspace_service_status') is not None:
+        exposed.append('workspace_service_status')
     return {
         "version": WORKSPACE_TOOL_POLICY_VERSION,
-        "workspace_binding_id": binding.id,
-        "workspace_kind": binding.workspace_kind,
+        **({"workspace_binding_id": binding.id, "workspace_kind": binding.workspace_kind} if binding else {}),
         "exposed_tools": [
             {"name": name, "description": _tool_description(name, edit_available='workspace_edit' in exposed)}
             for name in WORKSPACE_TOOLS if name in exposed

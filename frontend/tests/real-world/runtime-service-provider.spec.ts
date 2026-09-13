@@ -41,6 +41,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let editObservation = { attempted: 0, succeeded: 0, diff_verified: false }
   let readManyObservation = { attempted: 0, succeeded: 0, detail_verified: false }
   let mutationItemsObservation = { attempted: 0, succeeded: 0, detail_verified: false }
+  let discoveryObservation = { attempted: 0, succeeded: 0, detail_verified: false, matched_initial_service: false }
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -166,6 +167,29 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       await page.waitForTimeout(150)
     }
     if (!finished) throw new Error('第二轮未完成')
+    stage = '服务发现路径观察'
+    discoveryObservation = await page.evaluate(async ({ base, cid, initialId }) => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+      const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+      let attempted = 0, succeeded = 0, verified = 0, matched = false
+      for (const message of history.items) {
+        for (const call of message.parts_json.filter((part: { tool_name?: string }) => part.tool_name === 'workspace_service_status')) {
+          const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
+          if (!detail.input || Object.hasOwn(JSON.parse(detail.input.text), 'runtime_id')) continue
+          attempted++
+          if (call.status !== 'success') continue
+          succeeded++
+          const value = detail.output && !detail.output.truncated ? JSON.parse(detail.output.text) : null
+          if (Array.isArray(value?.items) && typeof value.has_more === 'boolean'
+            && value.items.every((item: { runtime_id: string; state: string }) => /^[a-f0-9]{32}$/.test(item.runtime_id) && typeof item.state === 'string')) {
+            verified++
+            matched ||= value.items.some((item: { runtime_id: string }) => item.runtime_id === initialId)
+          }
+        }
+      }
+      return { attempted, succeeded, detail_verified: succeeded > 0 && succeeded === verified, matched_initial_service: matched }
+    }, { base, cid, initialId: firstService.id })
+    if (discoveryObservation.succeeded && !discoveryObservation.detail_verified) throw new Error('服务发现详情不完整')
     stage = '批量读取路径观察'
     readManyObservation = await page.evaluate(async ({ base, cid }) => {
       const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
@@ -274,6 +298,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
     await writeFile(reportPath, JSON.stringify({ functional_passed: failedStage === null, failed_stage: failedStage,
       normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, workspace_read_items: readManyObservation,
       workspace_mutation_items: mutationItemsObservation,
+      service_discovery_lists: discoveryObservation,
       native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })

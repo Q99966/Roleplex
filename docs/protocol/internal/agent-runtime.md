@@ -47,7 +47,10 @@ E1 编辑工具只提取 path_fingerprint、old_text_bytes、new_text_bytes、ha
 结果仅向共享工具卡增加显式白名单中的固定错误码。匹配/参数/版本拒绝是正常 rejected 终态，不记录片段、路径或异常原文。
 工作区策略版本随工具集合/说明升级；仅在实际暴露 workspace_edit 时向 write 的说明追加局部编辑建议。
 E2 workspace_read 的 items 形式参数审计只含 item_count，不提取私有路径/内容；共享结果只含固定读取/批量错误码。
-工具策略版本升级为 10，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
+工具策略版本升级为 11，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
+S1 workspace_service_status 的工厂与策略描述独立于文件 lease/启动开关，仍要求当前 Owner single 与角色显式权限。
+共用身份/成员/execution 复核，查询不取得文件访问或控制能力；查询审计只提取 mode/has_cursor 与合法 limit，
+不记录 runtime_id 或游标原文。模型输出列表仅通过 Owner 私有详情采集，不进入共享工具事件或机器日志。
 批量修改参数审计仅 item_count；输入私有采集保留目标/版本/长度，差异和逐项状态通过 write-batch-v1 私有作用域交给消息所有者。
 批量修改先全批预检、逐项授权并提交，锁外等待 D 计算；非事务、不自动重放、不擅停服务，完整边界以工作区协议为准。
 逐项读取及取消结果复用下述文件采集作用域，

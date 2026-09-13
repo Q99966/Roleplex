@@ -48,6 +48,13 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+S1 服务发现：`pytest tests/test_service_discovery.py -q`；浏览器 `npm run test:e2e:commands -- service-discovery.spec.ts`。
+专项覆盖无 ID 列表、分页/状态变化、旧单项查询、身份/资源隔离、无可写 lease 或启动能力时仍能查询、
+故障不冒充空列表，以及当前消息/历史无原 runtime_id 的确定性查询。浏览器使用真实托管进程和 fake Provider，
+目录为命令类别/本轮时间戳/default/service-discovery；退出或失败均经本轮 Owner 正常停止并核验端口释放。
+真实验证复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，仅记录实际列表调用、详情及是否找到首轮实例，
+不强制模型忘记 ID、不强制列表路径，也不为期望路径重跑。S2 拒绝诊断及 S3 运行中编辑不在本轮验收范围。
+
 E2 批量写入/编辑：`pytest tests/test_workspace_batch_mutation.py -q`，覆盖整批预检、硬链接/重复目标、
 旧参数兼容及互斥、输入预算、顺序提交、部分成功、只重试失败项、未知 OS 写入、取消、重新授权、
 服务占用且不擅停、锁等待/两批准入、整批 diff 预算、采集/加密失败与崩溃结果缺口。

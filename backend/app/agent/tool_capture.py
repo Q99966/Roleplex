@@ -7,6 +7,7 @@ from typing import Any
 
 CAPTURE_LIMIT = 65_536
 _FIELDS = {
+    'workspace_service_status': ('runtime_id', 'cursor', 'limit'),
     'workspace_list': ('path', 'after_name', 'limit'),
     'workspace_read': ('path', 'offset_bytes', 'max_bytes', 'items'),
     'workspace_write': ('path', 'content', 'expected_sha256', 'items'),

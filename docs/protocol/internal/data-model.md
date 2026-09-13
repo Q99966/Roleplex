@@ -388,6 +388,9 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 
 ## tool_execution_details
 
+S1 workspace_service_status 使用原 input_encrypted/output_encrypted 的通用有界文本采集，保存查询时输入和结果；
+不新增表/字段，不保存原脚本或日志，不以当前登记重建历史列表，具体边界见工具详情协议。
+
 D 复用既有 output_encrypted 存储 write-v1 私有记录，包含原始有界结果和独立有界 write 差异对象；
 不新增字段，详情读取时拆分为原 output 与兼容 write 扩展。差异生命周期与原记录相同，具体结构以工具详情协议为准。
 E2 多文件读取复用 output_encrypted 的 read-batch-v1 格式，保存本调用的有界逐项结果；接口拆出 read_batch，

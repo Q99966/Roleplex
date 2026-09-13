@@ -108,6 +108,11 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[SERVICE_DISCOVERY_FAKE]' in prompt:
+        # 固定脚本只请求列表，不含任何启动返回的 runtime_id；通过真实工具取登记事实。
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{
+            'name': 'workspace_service_status', 'args': {}, 'id': 'service_discovery'}]),
+            ScriptedTurn(text='当前会话服务查询完成。')], delay=delay)
     if '[SERVICE_FAKE:' in prompt:
         import re
         import shlex

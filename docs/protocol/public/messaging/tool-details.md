@@ -27,6 +27,11 @@ expired 和 unavailable 不返回输入输出；解密失败为 unavailable，�
 
 ## 采集与保留
 
+S1 状态查询新增 workspace_service_status 的通用采集：仅 runtime_id/cursor/limit 输入及有界 JSON 输出，
+沿用当前加密、7 天期限、原消息/call 绑定和 Owner 归属校验，不新增 wire 字段或存储格式。
+Owner 展开的历史列表是调用时结果，不重新查询登记来补造历史；旧未采集状态调用仍为 not_recorded。
+共享消息只增加原 detail_available 能力标记，查询列表/游标不广播给 Guest，固定查询错误码可作为安全摘要。
+
 通用采集覆盖已实现的 workspace_list/read/write/run_command；输入仅保留对应工具 schema 的字段，未知字段不保存。
 workspace_run_shell 使用下述专用审批关联和结构化输出规则，不把脚本加入通用输入采集白名单。
 未知/MCP/未接入工具仅有摘要，不自动采集原始对象。每份输入/结果最多 65536 UTF-8 字节，不截坏字符，
