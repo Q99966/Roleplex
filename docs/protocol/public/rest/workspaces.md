@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | W1a/W1b/W1c/E1 与 E2 统一文件操作已验收；群聊绑定与聊天标题区摘要属于 W2a |
+| 状态 | W1a/W1b/W1c/E1/E2 与 S2 拒绝诊断已验收；群聊绑定与聊天标题区摘要属于 W2a |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-12 |
+| 复核日期 | 2026-09-13 |
 
 ## 范围与安全边界
 
@@ -208,6 +208,31 @@ applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不
 摘要、E2E summary 或测试失败文本。
 
 ## 适用错误码
+
+### S2 原生修改可用性诊断（已人工验收）
+
+write/edit 的 path/items 形式复用类型化可用性判断，不放开现行服务占用或生命周期门槛。
+先校验 Owner single、角色存活、双方成员、有效 execution/generation 及绑定所有权；身份/归属失效仍返回
+WORKSPACE_TOOL_NOT_AVAILABLE，不附 diagnostic，也不泄漏服务数量/ID。其后分别报告角色权限/工作区开关变化、
+绑定/根变化、租用失效、目录不可用；角色已删除/停用属于身份失效，不借诊断绕过鉴权。
+
+有效绑定上的阻塞优先级：失败范围清理或 cleanup_required 服务 → World closing → 范围清理 running/prepared →
+单项 stopping → 其他 ACTIVE 服务。多个清理范围并存按 world/workspace/conversation 排序；范围清理只匹配本 World、
+本工作区或本会话。保持原阻塞条件，不把成功停止一个实例当成解除所有门槛。
+错误码以注册表为准，单项拒绝使用原拒绝前缀；批次预检失败仍无写入，执行阶段已有成功则父 partial，
+仅失败项报告本项未执行并保留之前成功结果/diff，后续项不启动，不自动回滚或整批重放。
+
+单项失败结果兼容增加 diagnostic；items 仅失败节点兼容增加此字段，不在父级声称整批未执行。
+结构为 version=1、reason、scope（world/workspace/conversation/tool）、executed=false、固定 message/next_steps，
+recommended_tool（workspace_service_status 或 null）、services（最多3项 runtime_id/state，未授权/未查询为 null）、
+services_truncated、other_sessions_blocking（未判断时 null）。reason 与注册表原因对应；完整紧凑 UTF-8 JSON <=2048 字节。
+实例明细必须同时满足本轮实际工具集中存在 status 和当前角色仍启用它；否则只提示 Owner /ps，不返回明细或推荐未暴露工具。
+明细只包含同工作区且 owner/存活会话关联/原会话身份都匹配的服务；其他会话或历史归属仅返回布尔汇总，
+不返回对方 ID、会话名、脚本或日志。提示不授权停止、不建议通过 Shell 绕过拒绝，也不保证查询后状态仍相同。
+
+完整诊断只进入模型结果及 Owner 加密详情；共享工具卡和 WS/正式日志仅提取固定错误码，不复制诊断正文/实例清单。
+公共旧客户端可忽略新增字段，旧成功响应不变。S1 状态查询及 Shell/日志/停止的可执行条件不因诊断而改变。
+前端展示与私有保存规则见[工具详情](../messaging/tool-details.md)。
 
 本领域使用 `WORKSPACE_NOT_FOUND`、`WORKSPACE_ROOT_PATH_INVALID`、`WORKSPACE_ROOT_NOT_AVAILABLE`、`WORKSPACE_PATH_INVALID`、
 `WORKSPACE_PATH_OUTSIDE_ROOT`、`WORKSPACE_PATH_SENSITIVE`、`WORKSPACE_DIRECTORY_NOT_FOUND`、

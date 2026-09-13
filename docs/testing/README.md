@@ -48,6 +48,13 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+S2 写入拒绝诊断：`pytest tests/test_write_diagnostics.py -q`；浏览器 `npm run test:e2e:commands -- write-diagnostics.spec.ts`。
+覆盖单项/批次可用性、清理优先级、跨会话明细隐藏、当前权限与实际暴露工具交集、身份失败无资源信息、
+以及已提交首项后的新阻塞。浏览器使用真实服务，检查 Owner 原位私有原因/建议、正常停服后继续修改、历史不重建及 Guest 隔离，
+目录为命令类别/本轮时间戳/default/write-diagnostics；关闭或失败均正常回收本轮服务，不清理正式服务。
+真实回归复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，单独报告拒绝诊断是否触发与结构核验，
+不强制模型先犯错，也不把正常先停服的成功场景称为已覆盖拒绝分支。S3 运行中编辑仍未实施。
+
 S1 服务发现：`pytest tests/test_service_discovery.py -q`；浏览器 `npm run test:e2e:commands -- service-discovery.spec.ts`。
 专项覆盖无 ID 列表、分页/状态变化、旧单项查询、身份/资源隔离、无可写 lease 或启动能力时仍能查询、
 故障不冒充空列表，以及当前消息/历史无原 runtime_id 的确定性查询。浏览器使用真实托管进程和 fake Provider，

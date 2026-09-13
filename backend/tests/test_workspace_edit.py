@@ -181,7 +181,7 @@ async def test_running_service_blocks_edit_until_explicit_stop(command_root, iso
         sent = await send_command(client, headers, cid, '[EDIT_FAKE]')
         reply = await wait_reply(client, headers, cid, sent['message']['id'])
         call = next(part for part in reply['parts_json'] if part.get('tool_name') == 'workspace_edit')
-        assert call['status'] == 'rejected' and call['error_code'] == 'WORKSPACE_TOOL_NOT_AVAILABLE'
+        assert call['status'] == 'rejected' and call['error_code'] == 'WORKSPACE_SERVICE_ACTIVE'
         assert (command_root / 'edit.ts').read_text() == FIRST
         rows = (await client.get(f'/api/conversations/{cid}/processes', headers=headers)).json()['items']
         assert next(row for row in rows if row['id'] == running['id'])['state'] == 'ready'
@@ -352,7 +352,7 @@ async def test_edit_schema_and_independent_capability_are_enforced(command_root,
             assert output.startswith('[工具被拒绝]') and 'WORKSPACE_EDIT_ARGUMENT_INVALID' in output
             assert 'not-to-log' not in output and '第一版' not in output
         await client.patch(f'/api/workspaces/{wid}', headers=headers, json={'file_tools_enabled': False})
-        assert 'WORKSPACE_TOOL_NOT_AVAILABLE' in await tools['workspace_edit'].ainvoke(args)
+        assert 'WORKSPACE_TOOL_CAPABILITY_CHANGED' in await tools['workspace_edit'].ainvoke(args)
         assert (command_root / 'edit.ts').read_text() == FIRST
         await client.patch(f'/api/workspaces/{wid}', headers=headers, json={'file_tools_enabled': True})
         async with SessionLocal() as session:
@@ -364,7 +364,7 @@ async def test_edit_schema_and_independent_capability_are_enforced(command_root,
                 policy = await workspace_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=role.created_by)
                 description = next(item['description'] for item in policy['exposed_tools'] if item['name'] == 'workspace_write')
                 assert ('workspace_edit' in description) is enabled
-        assert 'WORKSPACE_TOOL_NOT_AVAILABLE' in await tools['workspace_edit'].ainvoke(args)
+        assert 'WORKSPACE_TOOL_CAPABILITY_CHANGED' in await tools['workspace_edit'].ainvoke(args)
 
 
 @pytest.mark.anyio

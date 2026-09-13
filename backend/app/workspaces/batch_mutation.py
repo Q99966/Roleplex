@@ -251,6 +251,9 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
         code = exc.code if isinstance(exc, WorkspaceFileError) else 'WORKSPACE_BATCH_BUSY'
         if not node['applied']:
             node.update(status='failed', applied=False, error_code=code)
+            from .diagnostics import AccessRejected
+            if isinstance(exc, AccessRejected) and exc.diagnostic is not None:
+                node['diagnostic'] = exc.diagnostic
         succeeded = any(item['applied'] for item in receipt.value['items'])
         receipt.value.update(status='rejected' if phase == 'precheck' else 'partial' if succeeded else 'failed',
             error_code='WORKSPACE_BATCH_PARTIAL' if succeeded else code)

@@ -372,7 +372,7 @@ async def test_batch_service_gate_does_not_stop_running_service(command_root, is
             sent = await send_command(client, headers, cid, '[BATCH_MUTATION_FAKE]')
             message = await wait_reply(client, headers, cid, sent['message']['id'])
             calls = [part for part in message['parts_json'] if part['type'] == 'tool_call']
-            assert all(part['status'] == 'rejected' and part['error_code'] == 'WORKSPACE_TOOL_NOT_AVAILABLE' for part in calls)
+            assert all(part['status'] == 'rejected' and part['error_code'] == 'WORKSPACE_SERVICE_ACTIVE' for part in calls)
             assert not (command_root / 'batch-a.txt').exists()
             rows = (await client.get(f'/api/conversations/{cid}/processes', headers=headers)).json()['items']
             assert next(row for row in rows if row['id'] == running['id'])['state'] == 'ready'

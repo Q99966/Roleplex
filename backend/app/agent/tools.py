@@ -235,6 +235,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
             'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE', 'WORKSPACE_READ_ARGUMENT_INVALID'}
         return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     if tool_name in {'workspace_write', 'workspace_edit'}:
+        from ..workspaces.diagnostics import DENIAL_CODES
         allowed = {'WORKSPACE_EDIT_ARGUMENT_INVALID', 'WORKSPACE_EDIT_INPUT_TOO_LARGE',
             'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_FILE_REVISION_CONFLICT',
             'WORKSPACE_FILE_NOT_FOUND', 'WORKSPACE_FILE_NOT_TEXT', 'WORKSPACE_FILE_TOO_LARGE',
@@ -243,7 +244,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
             'WORKSPACE_BATCH_BUSY', 'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_TARGET_CONFLICT',
             'WORKSPACE_BATCH_WRITE_UNCONFIRMED', 'WORKSPACE_BATCH_PRECHECK_FAILED', 'WORKSPACE_PARENT_NOT_FOUND'}
         code = result.get('error_code')
-        return {'error_code': code} if isinstance(code, str) and code in allowed else {}
+        return {'error_code': code} if isinstance(code, str) and code in allowed | DENIAL_CODES else {}
     summary: dict[str, Any] = {}
     if result.get('command') in ('pwd', 'list', 'read', 'count'):
         summary['command'] = result['command']

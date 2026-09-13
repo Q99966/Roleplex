@@ -70,11 +70,18 @@ export type ReadBatchDetails = {
     error_code: string | null; output_limited: boolean;
     result: { text: string; bytes: number; eof: boolean; next_offset: number; sha256: string } | null }>
 }
+export type WriteDiagnostic = {
+  version: number; reason: string; scope: 'world' | 'workspace' | 'conversation' | 'tool'; executed: false;
+  message: string; next_steps: string[]; recommended_tool: 'workspace_service_status' | null;
+  services: Array<{ runtime_id: string; state: string }> | null; services_truncated: boolean;
+  other_sessions_blocking: boolean | null
+}
 export type BatchMutationDetails = {
   version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'rejected' | 'cancelled' | 'result_unconfirmed'; error_code: string | null
   items: Array<{ id: string; path: string; operation: 'write' | 'edit';
     status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null;
-    error_code: string | null; result: { created: boolean; bytes: number; sha256: string } | null; write: WriteDetails | null }>
+    error_code: string | null; result: { created: boolean; bytes: number; sha256: string } | null; write: WriteDetails | null;
+    diagnostic?: WriteDiagnostic | null }>
 }
 export type ToolDetails = {
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
@@ -83,6 +90,7 @@ export type ToolDetails = {
   write?: WriteDetails | null
   read_batch?: ReadBatchDetails | null
   write_batch?: BatchMutationDetails | null
+  diagnostic?: WriteDiagnostic | null
   shell?: {
     script: ToolCapture | null; approval_status: 'pending' | 'approved' | 'rejected' | 'expired' | null;
     approval_wait_ms: number | null; execution_duration_ms: number | null;

@@ -42,6 +42,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
   let readManyObservation = { attempted: 0, succeeded: 0, detail_verified: false }
   let mutationItemsObservation = { attempted: 0, succeeded: 0, detail_verified: false }
   let discoveryObservation = { attempted: 0, succeeded: 0, detail_verified: false, matched_initial_service: false }
+  let denialObservation = { observed: 0, detail_verified: false }
   const title = `真实后台服务 ${stamp}`
   const preview = await page.context().newPage()
   await preview.route('**/*', (route) => new URL(route.request().url()).origin === `http://127.0.0.1:${port}` ? route.continue() : route.abort())
@@ -190,6 +191,25 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       return { attempted, succeeded, detail_verified: succeeded > 0 && succeeded === verified, matched_initial_service: matched }
     }, { base, cid, initialId: firstService.id })
     if (discoveryObservation.succeeded && !discoveryObservation.detail_verified) throw new Error('服务发现详情不完整')
+    stage = '写入拒绝诊断路径观察'
+    denialObservation = await page.evaluate(async ({ base, cid }) => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+      const history = await (await fetch(`${base}/api/conversations/${cid}/messages`, { headers })).json()
+      let observed = 0, verified = 0
+      for (const message of history.items) {
+        for (const call of message.parts_json.filter((part: { tool_name?: string }) => ['workspace_write', 'workspace_edit'].includes(part.tool_name ?? ''))) {
+          const detail = await (await fetch(`${base}/api/conversations/${cid}/messages/${message.id}/tools/${call.call_id}`, { headers })).json()
+          const values = [detail.diagnostic, ...(detail.write_batch?.items.map((item: { diagnostic?: unknown }) => item.diagnostic) ?? [])].filter(Boolean)
+          for (const value of values) {
+            observed++
+            if (value.version === 1 && value.executed === false && typeof value.reason === 'string'
+              && Array.isArray(value.next_steps) && value.next_steps.length > 0) verified++
+          }
+        }
+      }
+      return { observed, detail_verified: observed > 0 && observed === verified }
+    }, { base, cid })
+    if (denialObservation.observed && !denialObservation.detail_verified) throw new Error('写入拒绝诊断详情不完整')
     stage = '批量读取路径观察'
     readManyObservation = await page.evaluate(async ({ base, cid }) => {
       const headers = { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
@@ -299,6 +319,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       normal_cleanup_passed: normalCleanup, turn_tools: toolPaths, workspace_edit: editObservation, workspace_read_items: readManyObservation,
       workspace_mutation_items: mutationItemsObservation,
       service_discovery_lists: discoveryObservation,
+      write_denial_diagnostics: denialObservation,
       native_diff: nativeDiffObserved ? 'verified' : 'not_observed',
       emergency_cleanup: 'not_performed_by_case; wrapper teardown is separate' }))
     await testInfo.attach('两轮工具路径观察', { path: reportPath, contentType: 'application/json' })

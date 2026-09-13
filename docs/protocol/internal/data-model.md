@@ -388,6 +388,9 @@ execution 身份、目标角色、chain 和 execution kind 必须通过 generati
 
 ## tool_execution_details
 
+S2 在既有 write-v1 / write-batch-v1 加密输出中兼容保存有界 diagnostic，分别属于单次调用或失败子项；
+不新增表或字段，不从当前状态重建旧拒绝原因，详情与隐私边界以工具详情协议为准。
+
 S1 workspace_service_status 使用原 input_encrypted/output_encrypted 的通用有界文本采集，保存查询时输入和结果；
 不新增表/字段，不保存原脚本或日志，不以当前登记重建历史列表，具体边界见工具详情协议。
 

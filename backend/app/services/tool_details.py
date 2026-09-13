@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -164,6 +164,9 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                         len(hunk['lines']) for node in value['items'] if node['write']
                         for file in node['write']['files'] for hunk in file['hunks']) > 1000:
                         raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                    for node in value['items']:
+                        if node['diagnostic'] is not None:
+                            _diagnostic(node['diagnostic'])
                     payload['write_batch'] = value
             elif output and output.get('format') == 'write-v1':
                 value = WriteDetailView.model_validate(output['write']).model_dump()
@@ -171,12 +174,24 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                     len(hunk['lines']) for file in value['files'] for hunk in file['hunks']) > 1000:
                     raise ValueError('TOOL_DETAILS_UNAVAILABLE')
                 payload['write'] = value
+                if output.get('diagnostic') is not None:
+                    payload['diagnostic'] = _diagnostic(output['diagnostic'])
                 payload['output'] = ToolCaptureView.model_validate(output['result']).model_dump() if output.get('result') is not None else None
             else:
                 payload['write'] = {'version': 1, 'availability': 'pending' if row.status == 'running' else 'not_recorded', 'reason': None, 'files': []}
         return payload
     except (InvalidToken, ValueError, KeyError, TypeError):
         return {**result, 'availability': 'unavailable'}
+
+
+def _diagnostic(value: dict) -> dict:
+    """Args:
+        value：从身份绑定密文恢复的诊断，返回前验证类型和整体字节预算。
+    """
+    result = WriteDiagnosticView.model_validate(value).model_dump()
+    if len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()) > 2048:
+        raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+    return result
 
 
 def _utc_string(value: datetime | None) -> str | None:

@@ -108,6 +108,13 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[WRITE_DIAGNOSTIC_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[ScriptedTurn(text='尝试写入受控文件。', tool_calls=[{
+            'name': 'workspace_write', 'args': {'path': 'blocked.txt', 'content': 'new'}, 'id': 'diagnostic_write'}]),
+            ScriptedTurn(text='再检查批次编辑拒绝。', tool_calls=[{'name': 'workspace_edit', 'args': {'items': [
+                {'path': name, 'old_text': 'old', 'new_text': 'new', 'expected_sha256': hashlib.sha256(b'old').hexdigest()}
+                for name in ['existing.txt', 'unstarted.txt']]}, 'id': 'diagnostic_batch'}]),
+            ScriptedTurn(text='写入拒绝诊断流程结束。')], delay=delay)
     if '[SERVICE_DISCOVERY_FAKE]' in prompt:
         # 固定脚本只请求列表，不含任何启动返回的 runtime_id；通过真实工具取登记事实。
         return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{

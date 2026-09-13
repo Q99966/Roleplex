@@ -1,5 +1,6 @@
 import type { BatchMutationDetails } from '../api/client'
 import { WriteDiff } from './WriteDiff'
+import { WriteDiagnosticNote } from './WriteDiagnosticNote'
 
 const STATUS: Record<string, string> = { success: '已应用', failed: '失败', not_executed: '未执行',
   running: '执行中', result_unconfirmed: '结果未确认' }
@@ -26,6 +27,7 @@ function MutationNode({ item, single }: { item: BatchMutationDetails['items'][nu
     {item.error_code && <span className="ml-2 text-red-300">{item.error_code}</span>}
   </>
   const body = <>
+    {item.diagnostic && <WriteDiagnosticNote value={item.diagnostic} />}
     {item.applied === null && <p className="text-amber-300">文件可能已修改，结果未确认；请先核查，不要直接重试。</p>}
     {item.applied === false && <p className="text-slate-400">本项未写入。</p>}
     {item.write ? <WriteDiff value={item.write} showFileHeading={single} />

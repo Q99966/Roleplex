@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | D/E1、E2 探索归组与批量文件节点已人工验收 |
-| 协议版本 | 5（兼容新增 write_batch 私有修改节点） |
+| 状态 | D/E1/E2 与 S2 私有拒绝诊断已人工验收 |
+| 协议版本 | 6（兼容新增原生修改拒绝诊断） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
-| 复核日期 | 2026-09-12 |
+| 复核日期 | 2026-09-13 |
 | 测试 | `backend/tests/test_tool_timeline.py`、`frontend/tests/commands/`、`frontend/tests/real-world/commands-provider.spec.ts` |
 
 ## 接口与资源归属
@@ -95,6 +95,18 @@ not_executed 只用于已知写前拒绝，不用于可能发生部分写入的 
 计算进程无法确认回收时关闭该池准入，不通过新建池绕过限制；应用关闭仍复核回收，失败不伪装成成功。
 
 ## 消息顺序与兼容
+
+### S2 拒绝诊断（已人工验收）
+
+单项 write/edit 的 Owner 详情兼容增加 diagnostic；批次在 write_batch.items 的失败节点增加 diagnostic（可空）。
+格式、字段与2 KiB预算以工作区协议为准，读取时验证 schema 与预算；未知历史不会从当前服务/目录推导拒绝原因。
+单项复用 write-v1 的可选 diagnostic，批次复用 write-batch-v1 的可选节点字段；不增加表或独立诊断审计。
+调用结束由原消息所有者保存加密诊断，沿用 message/call 绑定、Owner/成员鉴权、7 天保留及级联删除。
+差异保存降级尽力保留诊断；加密整体不可用不保存明文，也不把展示失败当成重新写入的理由。
+
+Owner 工具详情在原位置显示原因、下一步及有权查看的本会话服务摘要，明确是拒绝时观察，不是实时列表。
+批次的 executed=false 只属于失败项；之前已应用节点保留。Guest 只看到共享状态和固定错误码，不发诊断详情请求。
+提示不提供自动停服/重试按钮，不改变现有写入、停止权限或审批。旧记录缺少 diagnostic 时保持原展示。
 
 E1 workspace_edit（已人工验收）复用上述 write-v1 加密格式及公开 write 对象，tool_name 保留 workspace_edit，
 只产生 modified/unchanged 节点，不创建文件。私有输入白名单为 path/old_text/new_text/expected_sha256；

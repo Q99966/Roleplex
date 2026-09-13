@@ -4,6 +4,7 @@ import { api, type Part, type ToolCapture, type ToolDetails } from '../api/clien
 import { useChatStore } from '../store/chat'
 import { visibleScript } from './ShellApprovals'
 import { ReadBatch } from './ReadBatch'
+import { WriteDiagnosticNote } from './WriteDiagnosticNote'
 
 const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).WriteDiff }))
 const BatchMutation = lazy(async () => ({ default: (await import('./BatchMutation')).BatchMutation }))
@@ -134,6 +135,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
         {detail?.availability === 'available' && <>
           <p>开始：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
           <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
+          {detail.diagnostic && <WriteDiagnosticNote value={detail.diagnostic} />}
           {'read_batch' in detail ? (detail.read_batch
             ? <ReadBatch value={detail.read_batch} />
             : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : 'write_batch' in detail ? (detail.write_batch

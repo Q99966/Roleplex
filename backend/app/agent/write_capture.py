@@ -24,6 +24,7 @@ class WriteReceipt:
         self.path = path if len(path) <= 4096 else None
         self.ticket = None
         self.output = None
+        self.diagnostic = None
         self.value = {'version': 1, 'availability': 'result_unconfirmed', 'reason': None, 'files': []}
 
     def applied(self, before: bytes | None, after: bytes) -> None:
@@ -77,7 +78,8 @@ class WriteReceipt:
         """Args:
             output：防腐层观察到的普通工具结果，取消时可为空。
         """
-        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value}
+        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value,
+            **({'diagnostic': self.diagnostic} if self.diagnostic is not None else {})}
 
 
 class WriteCaptureScope:

@@ -186,6 +186,14 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_NAME_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 Owner 已有同名工作区 |
 | `WORKSPACE_PATH_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 World 已登记相同 canonical Workspace 根 |
 | `WORKSPACE_UNAVAILABLE` | 已实现 | REST/工具 | 409/— | rejected | conditional | 工作区被禁用、目录复核失败或当前状态不可租用 |
+| `WORKSPACE_SERVICE_ACTIVE` | 已实现 | 工具 | — | rejected/failed | conditional | 同工作区有尚未结束服务，当前写入项未执行，先协调停服 |
+| `WORKSPACE_SERVICE_STOPPING` | 已实现 | 工具 | — | rejected/failed | conditional | 服务正在停止/回收，不能按请求已发出或固定等待时长视为完成 |
+| `WORKSPACE_CLEANUP_REQUIRED` | 已实现 | 工具 | — | rejected/failed | conditional | 有回收未确认服务或匹配范围的失败清理操作，优先核查回收证明 |
+| `WORKSPACE_SCOPE_CLOSING` | 已实现 | 工具 | — | rejected/failed | conditional | World 关闭门槛阻止当前写入项 |
+| `WORKSPACE_SCOPE_CLEANUP` | 已实现 | 工具 | — | rejected/failed | conditional | 匹配范围的清理正在进行，当前写入项未执行 |
+| `WORKSPACE_TOOL_CAPABILITY_CHANGED` | 已实现 | 工具 | — | rejected/failed | conditional | 身份/归属有效，但角色工具权限或工作区能力开关已变化 |
+| `WORKSPACE_BINDING_CHANGED` | 已实现 | 工具 | — | rejected/failed | conditional | 会话绑定或根与当前执行快照不一致，不使用旧快照写入 |
+| `WORKSPACE_LEASE_UNAVAILABLE` | 已实现 | 工具 | — | rejected/failed | conditional | 当前执行租用缺失/失效或租用快照已不匹配 |
 | `WORKSPACE_BUSY` | 已实现 | REST/工具 | 409/— | rejected | yes | 同一 managed directory 已被另一个写 execution 租用 |
 | `WORKSPACE_FILE_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 目标普通文件不存在 |
 | `WORKSPACE_FILE_NOT_TEXT` | 已实现 | 工具 | — | rejected | no | 文件不是合法 UTF-8 普通文本或目标类型不支持 |

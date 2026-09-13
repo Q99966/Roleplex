@@ -29,10 +29,11 @@ from .batch_read import ReadItemInput
 from .batch_mutation import WriteItemInput, EditItemInput
 from .access import authorized_member, authorized_execution
 from .service_query import create_status_tool
+from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocker
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 11
+WORKSPACE_TOOL_POLICY_VERSION = 12
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件，优先使用 items 数组：一项是单文件，多项是批量，最多8项，每项默认4096字节，max_bytes 合计最多32768字节；输入 JSON 最多16 KiB，输出 JSON 最多64 KiB。各项独立授权、结果、全文件 sha256 与 next_offset；output_limited 表示正文为输出预算缩短。跨段 hash 改变时重新读取，不拼接不同版本。兼容旧 path/offset_bytes/max_bytes 单文件形式（默认65536字节、返回原五字段），但与 items 严格互斥，不能同时传入。重复读取是新的观察，不保证相同版本，不写文件。',
@@ -296,7 +297,7 @@ async def _create_lease(
         return lease, binding
 
 
-async def _authorized_service(
+async def _service_decision(
     *,
     execution_id: str,
     conversation_id: int,
@@ -305,8 +306,9 @@ async def _authorized_service(
     workspace_binding_id: int,
     root_path_snapshot: str,
     tool_name: str,
-) -> WorkspaceFileService | None:
-    """每次工具调用重新校验身份、绑定、独立能力和 lease 快照。
+    query_available: bool = False,
+) -> AccessDecision:
+    """每次调用校验实际执行条件；原生修改额外返回经授权的拒绝事实。
 
     Args:
         execution_id：本轮持久 execution。
@@ -316,12 +318,22 @@ async def _authorized_service(
         workspace_binding_id：lease 绑定的当前 World 工作区。
         root_path_snapshot：创建工具时捕获的规范根，不接受模型覆盖。
         tool_name：用于重新检查角色与工作区开关的工具名。
+        query_available：原生修改的本轮实际工具集中是否有状态查询，不能由模型指定。
     """
+    mutation = tool_name in WORKSPACE_MUTATION_TOOLS
+
+    def reject(code: str, scope: str) -> AccessDecision:
+        """Args:
+            code：具体可用性原因。
+            scope：已授权条件的影响范围；非修改调用保持原通用拒绝。
+        """
+        return denied(code, scope) if mutation else AccessDecision()
+
     async with SessionLocal() as session:
         actor = await authorized_execution(session, execution_id=execution_id, conversation_id=conversation_id,
-            role_id=role_id, user_id=triggered_by_user_id, tool_name=tool_name)
+            role_id=role_id, user_id=triggered_by_user_id, tool_name=tool_name, require_tool=not mutation)
         if actor is None:
-            return None
+            return AccessDecision()
         conversation, role = actor
         lease = await session.scalar(select(ExecutionWorkspace).where(
             ExecutionWorkspace.execution_id == execution_id,
@@ -331,51 +343,65 @@ async def _authorized_service(
         binding = await session.scalar(select(WorkspaceBinding).where(
             WorkspaceBinding.id == workspace_binding_id,
             WorkspaceBinding.created_by == triggered_by_user_id,
-            WorkspaceBinding.active.is_(True),
         ))
-        if (
-            conversation.workspace_binding_id != workspace_binding_id
-            or lease is None
-            or lease.root_path_snapshot != root_path_snapshot
-            or binding is None
-            or tool_name not in _enabled_tools(role, binding)
-            or binding.root_path != root_path_snapshot
-        ):
-            return None
-        if tool_name in (*WORKSPACE_MUTATION_TOOLS, 'workspace_run_shell'):
+        if binding is None:
+            return AccessDecision()
+        if tool_name not in (role.builtin_tools_json or []):
+            return reject('WORKSPACE_TOOL_CAPABILITY_CHANGED', 'tool')
+        if conversation.workspace_binding_id != workspace_binding_id or binding.root_path != root_path_snapshot:
+            return reject('WORKSPACE_BINDING_CHANGED', 'workspace')
+        if lease is None or lease.root_path_snapshot != root_path_snapshot:
+            return reject('WORKSPACE_LEASE_UNAVAILABLE', 'workspace')
+        if not binding.active or tool_name not in _enabled_tools(role, binding):
+            return reject('WORKSPACE_TOOL_CAPABILITY_CHANGED', 'workspace')
+        if mutation:
+            blocker = await mutation_blocker(session, workspace_id=workspace_binding_id, conversation_id=conversation_id,
+                owner_id=triggered_by_user_id, query_available=query_available and 'workspace_service_status' in (role.builtin_tools_json or []))
+            if blocker is not None:
+                return blocker
+        if tool_name == 'workspace_run_shell':
             from ..runtime.models import RuntimeEntry
-            from ..runtime.registry import ACTIVE
             # 运行中的服务不替代 Shell 的逐次审批；仅未确认回收仍阻止新的任意脚本。
             # 原生写工具暂保留占用限制，不将其宣传为对 Shell/服务自身写文件的隔离。
-            blocked = ACTIVE if tool_name in WORKSPACE_MUTATION_TOOLS else ('cleanup_required',)
             if await session.scalar(select(RuntimeEntry.id).where(RuntimeEntry.workspace_id == workspace_binding_id,
-                RuntimeEntry.kind == 'service', RuntimeEntry.state.in_(blocked)).limit(1)):
-                return None
-        from ..runtime.models import RuntimeGate, CleanupOperation
-        from sqlalchemy import or_
-        if await session.scalar(select(RuntimeGate.closing).where(RuntimeGate.id == 1)):
-            return None
-        if await session.scalar(select(CleanupOperation.id).where(CleanupOperation.state.in_(('running', 'prepared', 'failed')),
-            or_(CleanupOperation.scope == 'world', (CleanupOperation.scope == 'conversation') & (CleanupOperation.scope_id == conversation_id),
-                (CleanupOperation.scope == 'workspace') & (CleanupOperation.scope_id == workspace_binding_id))).limit(1)):
-            return None
+                RuntimeEntry.kind == 'service', RuntimeEntry.state == 'cleanup_required').limit(1)):
+                return AccessDecision()
+        if not mutation:
+            from ..runtime.models import RuntimeGate, CleanupOperation
+            from sqlalchemy import or_
+            if await session.scalar(select(RuntimeGate.closing).where(RuntimeGate.id == 1)):
+                return AccessDecision()
+            if await session.scalar(select(CleanupOperation.id).where(CleanupOperation.state.in_(('running', 'prepared', 'failed')),
+                or_(CleanupOperation.scope == 'world', (CleanupOperation.scope == 'conversation') & (CleanupOperation.scope_id == conversation_id),
+                    (CleanupOperation.scope == 'workspace') & (CleanupOperation.scope_id == workspace_binding_id))).limit(1)):
+                return AccessDecision()
         try:
             root = binding_root(binding)
         except WorkspacePathError:
-            return None
+            return reject('WORKSPACE_UNAVAILABLE', 'workspace')
         if str(root) != root_path_snapshot:
-            return None
-        return WorkspaceFileService(root=root, execution_id=execution_id)
+            return reject('WORKSPACE_BINDING_CHANGED', 'workspace')
+        return AccessDecision(service=WorkspaceFileService(root=root, execution_id=execution_id), error_code='')
 
 
-def _error_result(code: str, *, rejected: bool = False) -> str:
+async def _authorized_service(**identity) -> WorkspaceFileService | None:
+    """保留其他工具/审批调用方的 service-or-None 接口，不扩大其策略。
+
+    Args:
+        identity：宿主绑定的身份、工具和租用快照；由 _service_decision 的显式参数约束。
+    """
+    return (await _service_decision(**identity)).service
+
+
+def _error_result(code: str, *, rejected: bool = False, diagnostic: dict | None = None) -> str:
     """返回给模型的结构化文件失败，不泄露路径或宿主异常。
 
     Args:
         code：固定错误码。
         rejected：原生文件工具的预期输入/匹配拒绝；默认保持旧工具响应语义。
+        diagnostic：已鉴权且有界的本项拒绝事实，仅用于模型与 Owner 详情。
     """
-    body = json.dumps({"ok": False, "error_code": code}, separators=(",", ":"))
+    body = json.dumps({"ok": False, "error_code": code, **({'diagnostic': diagnostic} if diagnostic is not None else {})}, ensure_ascii=False, separators=(",", ":"))
     return f"{REJECTED_OUTPUT_PREFIX if rejected else FAILED_OUTPUT_PREFIX} {body}"
 
 
@@ -450,6 +476,17 @@ async def create_workspace_tools(
             tool_name=tool_name,
         )
 
+    async def mutation_service(tool_name: str) -> WorkspaceFileService:
+        """Args:
+            tool_name：原生 write/edit；失败以类型化写前拒绝交给单项/批次共用处理。
+        """
+        decision = await _service_decision(execution_id=execution_id, conversation_id=conversation_id, role_id=role.id,
+            triggered_by_user_id=triggered_by_user_id, workspace_binding_id=lease.workspace_binding_id,
+            root_path_snapshot=lease.root_path_snapshot, tool_name=tool_name, query_available=bool(query_tools))
+        if decision.service is None:
+            raise AccessRejected(decision)
+        return decision.service
+
     async def workspace_list(path: str = ".", after_name: str | None = None, limit: int = 200) -> str:
         """列出绑定工作区内一个目录页，不跟随符号链接。"""
         authorized = await service("workspace_list")
@@ -493,13 +530,7 @@ async def create_workspace_tools(
         receipt = begin_write_capture(path)
         try:
             async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
-                authorized = await service(tool_name)
-                if authorized is None:
-                    if receipt:
-                        receipt.not_executed()
-                    if tool_name == 'workspace_edit':
-                        return _error_result('WORKSPACE_TOOL_NOT_AVAILABLE', rejected=True)
-                    return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
+                authorized = await mutation_service(tool_name)
                 operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
                 result = await operation(path, **arguments, capture_applied=receipt.applied if receipt else None)
                 output = authorized.json_result(result)
@@ -508,9 +539,11 @@ async def create_workspace_tools(
                 await receipt.finish(output)
             return output
         except WorkspaceFileError as exc:
+            diagnostic = exc.diagnostic if isinstance(exc, AccessRejected) else None
             if receipt:
                 receipt.not_executed()
-            return _error_result(exc.code, rejected=tool_name == 'workspace_edit')
+                receipt.diagnostic = diagnostic
+            return _error_result(exc.code, rejected=tool_name == 'workspace_edit' or isinstance(exc, AccessRejected), diagnostic=diagnostic)
         finally:
             if receipt:
                 receipt.release()
@@ -547,7 +580,7 @@ async def create_workspace_tools(
             scope, call_id = write_capture_scope.get(), tool_call_id.get()
             receipt = scope.begin_mutation_batch(call_id, operation, values) if scope and call_id else None
             receipt = receipt or BatchMutationReceipt(operation, values)
-            result = await mutate_many(operation, values, authorize=lambda: service(tool_name),
+            result = await mutate_many(operation, values, authorize=lambda: mutation_service(tool_name),
                 lock=_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()), receipt=receipt)
             status = receipt.value['status']
             return result if status == 'success' else f'{REJECTED_OUTPUT_PREFIX if status == "rejected" else FAILED_OUTPUT_PREFIX} {result}'

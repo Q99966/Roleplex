@@ -303,6 +303,29 @@ class BatchReadDetailView(BaseModel):
     items: list[BatchReadItemView] = Field(min_length=1, max_length=8)
 
 
+class WriteBlockerView(BaseModel):
+    """有状态查询权限时，最多披露本会话的必要服务身份。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    runtime_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    state: str = Field(max_length=32)
+
+
+class WriteDiagnosticView(BaseModel):
+    """只描述本次被拒绝的写入项，不代表批次之前没有提交。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    version: Literal[1]
+    reason: Literal['service_active', 'service_stopping', 'cleanup_required', 'scope_closing', 'scope_cleanup',
+        'capability_changed', 'binding_changed', 'lease_unavailable', 'workspace_unavailable']
+    scope: Literal['world', 'workspace', 'conversation', 'tool']
+    executed: Literal[False]
+    message: str = Field(max_length=300)
+    next_steps: list[str] = Field(max_length=3)
+    recommended_tool: Literal['workspace_service_status'] | None
+    services: list[WriteBlockerView] | None = Field(max_length=3)
+    services_truncated: bool
+    other_sessions_blocking: bool | None
+
+
 class FileDiffLineView(BaseModel):
     """私有差异的一行；不适用的行号显式为 null。"""
     model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
@@ -367,6 +390,7 @@ class BatchMutationItemView(BaseModel):
     error_code: str | None = Field(max_length=80)
     result: BatchWriteResultView | None
     write: WriteDetailView | None
+    diagnostic: WriteDiagnosticView | None = None
 
 
 class BatchMutationDetailView(BaseModel):
