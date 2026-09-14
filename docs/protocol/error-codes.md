@@ -217,7 +217,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_EDIT_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | old_text 与 new_text 的 UTF-8 字节数合计超过 64 KiB |
 | `WORKSPACE_EDIT_MATCH_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 当前匹配版本内找不到精确旧片段；需重新读取并调整片段 |
 | `WORKSPACE_EDIT_MATCH_AMBIGUOUS` | 已实现 | 工具 | — | rejected | conditional | 旧片段多处匹配，包含重叠；需增加明确上下文，不自动全部替换 |
-| `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不存在；W1a 不自动创建父目录 |
+| `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不能创建或祖先不是目录；普通缺失目录自动创建，链接/敏感路径沿用专用拒绝码 |
 | `WORKSPACE_TOOL_NOT_AVAILABLE` | 已实现 | 工具/审批 REST | —/409 | rejected | conditional | execution、Owner、角色、会话、绑定或能力的二次授权失败 |
 | `COMMAND_NOT_ALLOWED` | 已实现（W1b） | 工具 | — | rejected | no | command 不是登记的稳定 ID |
 | `COMMAND_ARGUMENT_INVALID` | 已实现（W1b） | 工具 | — | rejected | conditional | 参数不符合该命令 schema 或含禁止语法 |

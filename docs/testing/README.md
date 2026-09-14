@@ -509,3 +509,5 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 - 测试完成后先人工验收，再提交。
 
 工程级强约束见 [AGENTS.md](../../AGENTS.md)，各领域的具体关联测试见对应协议文档元数据。
+
+写入自动创建父目录的小阶段验证与人工检查见[父目录写入测试记录](workspace-write-parents.md)。

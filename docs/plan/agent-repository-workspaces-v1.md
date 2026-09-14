@@ -290,7 +290,7 @@ W1a 不启动任何子进程，先用服务端原生文件 API 证明 World 归�
 | `workspace_read` | `path`、`offset_bytes>=0`、`max_bytes<=65536` | 只读 UTF-8 普通文件；返回 text/bytes/eof/next_offset/sha256，不拆坏字符 |
 | `workspace_write` | `path`、`content`、`expected_sha256?` | 原子创建或替换文本文件；新建时 target 必须不存在，更新时 hash 必须完全匹配 |
 
-`workspace_write` 首版不自动创建父目录，不提供 delete/move/chmod/symlink。内容编码后最大 1 MiB；更新使用
+`workspace_write` 按 2026-09-14 用户确认的补充自动创建绑定根内缺失的父目录；批量预检无副作用，逐项执行时创建，拒绝链接、敏感路径、非目录祖先及同批文件/目录目标冲突。创建目录后文件写入失败可能留下空目录，不自动删除或回滚其他内容。不提供 delete/move/chmod/symlink。内容编码后最大 1 MiB；更新使用
 同目录临时文件、flush/fsync 和 atomic replace，失败保留旧文件并清理精确临时目标。创建新文件时
 `expected_sha256=null` 并使用 exclusive create；目标已存在则返回 revision conflict，不能把省略 hash 当作
 覆盖授权。

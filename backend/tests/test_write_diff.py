@@ -110,7 +110,7 @@ async def test_write_diff_is_private_persistent_and_not_rebuilt(command_root, is
         file = detail['write']['files'][0]
         assert file['operation'] == 'modified' and file['added'] == file['removed'] == 1
         assert any(line['kind'] == 'delete' and '第一版' in line['text'] for hunk in file['hunks'] for line in hunk['lines'])
-        assert set(json.loads(detail['output']['text'])) == {'created', 'bytes', 'sha256'}
+        assert set(json.loads(detail['output']['text'])) == {'created', 'bytes', 'sha256', 'created_parent_count'}
         (command_root / 'demo.ts').write_text('人工修改', encoding='utf-8')
         assert (await client.get(route, headers=headers)).json()['write'] == detail['write']
         guest = (await client.post('/api/auth/register', json={'username': guest_username('diff'), 'password': TEST_PASSWORD, 'nickname': 'Guest'})).json()

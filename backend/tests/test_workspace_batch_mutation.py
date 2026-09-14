@@ -47,7 +47,7 @@ async def test_batch_precheck_failure_never_writes_earlier_file(command_root):
     async def authorize():
         """返回当前服务。"""
         return service
-    for bad_path in ['.env', '../outside', 'missing/child.txt', 'a.txt']:
+    for bad_path in ['.env', '../outside', 'a.txt']:
         items = validate_items('write', [{'path': 'a.txt', 'content': 'first'}, {'path': bad_path, 'content': 'second'}])
         value = json.loads(await mutate_many('write', items, authorize=authorize, lock=asyncio.Lock(), receipt=BatchMutationReceipt('write', items)))
         assert value['status'] == 'rejected'
@@ -255,12 +255,12 @@ async def test_agent_batch_mutation_has_private_diffs_and_safe_summary(command_r
             assert detail['output'] is None and 'write' not in detail
             assert all(node['applied'] and node['write']['availability'] == 'recorded' for node in detail['write_batch']['items'])
             assert 'alpha old' not in detail['input']['text'] and 'old_text' not in json.loads(detail['input']['text'])['items'][0]
-        assert (command_root / 'batch-a.txt').read_text() == 'alpha new'
+        assert (command_root / 'src/nested/batch-a.txt').read_text() == 'alpha new'
         async with SessionLocal() as session:
             records = (await session.scalars(select(ToolCall).where(ToolCall.conversation_id == cid))).all()
             assert all(json.loads(record.args_summary) == {'item_count': 2} for record in records)
             for event in (await session.scalars(select(EventLog).where(EventLog.conversation_id == cid))).all():
-                assert 'alpha old' not in str(event.payload_json) and 'batch-a.txt' not in str(event.payload_json)
+                assert 'alpha old' not in str(event.payload_json) and 'src/nested/batch-a.txt' not in str(event.payload_json)
 
 
 def test_batch_mutation_schema_preserves_legacy_and_rejects_mixing():
@@ -373,7 +373,7 @@ async def test_batch_service_gate_does_not_stop_running_service(command_root, is
             message = await wait_reply(client, headers, cid, sent['message']['id'])
             calls = [part for part in message['parts_json'] if part['type'] == 'tool_call']
             assert all(part['status'] == 'rejected' and part['error_code'] == 'WORKSPACE_SERVICE_ACTIVE' for part in calls)
-            assert not (command_root / 'batch-a.txt').exists()
+            assert not (command_root / 'src/nested/batch-a.txt').exists()
             rows = (await client.get(f'/api/conversations/{cid}/processes', headers=headers)).json()['items']
             assert next(row for row in rows if row['id'] == running['id'])['state'] == 'ready'
         finally:
@@ -430,3 +430,182 @@ async def test_batch_encryption_failure_and_crash_gap_keep_truth(monkeypatch):
     value = tool_details.detail_payload(row)['write_batch']
     assert value['status'] == 'success' and value['items'][0]['applied'] is True
     assert value['items'][0]['write']['reason'] == 'capture_failed' and not value['items'][0]['write']['files'][0]['hunks']
+
+
+@pytest.mark.anyio
+async def test_write_creates_parents_only_after_precheck_and_keeps_boundaries(command_root):
+    """Args:
+        command_root：本轮隔离目录，所有目录副作用均在其中核对。
+    """
+    from app.workspaces.files import WorkspaceFileService, WorkspaceFileError
+    from app.workspaces.batch_mutation import mutate_many, BatchMutationReceipt, validate_items
+    service = WorkspaceFileService(root=command_root, execution_id='parents')
+    await service.preflight('write', 'test/nested/run.mjs', {'content': 'ok', 'expected_sha256': None})
+    assert not (command_root / 'test').exists()
+    await asyncio.gather(service.write('test/nested/run.mjs', 'ok'), service.write('test/nested/other.mjs', 'other'))
+    assert (command_root / 'test/nested/run.mjs').read_text() == 'ok'
+    async def authorize():
+        """为确定性批次提供当前授权服务。"""
+        return service
+    for paths in [('fresh/a.txt', '.env'), ('fresh/file', 'fresh/file/child')]:
+        items = validate_items('write', [{'path': path, 'content': 'ok'} for path in paths])
+        result = json.loads(await mutate_many('write', items, authorize=authorize, lock=asyncio.Lock(), receipt=BatchMutationReceipt('write', items)))
+        assert result['status'] == 'rejected'
+        assert all(node['created_parent_count'] == 0 for node in result['items'])
+        assert not (command_root / 'fresh').exists()
+    items = validate_items('write', [{'path': path, 'content': 'ok'} for path in ['new/src/main.js', 'new/test/run.mjs']])
+    result = json.loads(await mutate_many('write', items, authorize=authorize, lock=asyncio.Lock(), receipt=BatchMutationReceipt('write', items)))
+    assert result['status'] == 'success'
+    (command_root / 'link').symlink_to(command_root / 'new', target_is_directory=True)
+    for path in ['link/escape/file', '../escape/file', 'absent/.env/file', 'test/nested/run.mjs/file']:
+        with pytest.raises(WorkspaceFileError):
+            await service.write(path, 'denied')
+    assert not (command_root / 'new/escape').exists()
+    assert not (command_root / 'absent').exists()
+    with pytest.raises(WorkspaceFileError):
+        await service.write('stale/missing.txt', 'denied', expected_sha256='0' * 64)
+    assert not (command_root / 'stale').exists()
+
+@pytest.mark.anyio
+async def test_parent_creation_rechecks_paths_and_reports_creation_failure(command_root, monkeypatch):
+    """Args:
+        command_root：预检后修改路径的受控目录。
+        monkeypatch：模拟目录创建失败，不依赖当前用户的主机权限。
+    """
+    from pathlib import Path
+    from app.workspaces.files import WorkspaceFileService, WorkspaceFileError
+    service = WorkspaceFileService(root=command_root, execution_id='parent-race')
+    await service.preflight('write', 'race/new/file.txt', {'content': 'ok', 'expected_sha256': None})
+    destination = command_root / 'destination'
+    destination.mkdir()
+    (command_root / 'race').symlink_to(destination, target_is_directory=True)
+    with pytest.raises(WorkspaceFileError) as error:
+        await service.write('race/new/file.txt', 'denied')
+    assert error.value.code == 'WORKSPACE_PATH_OUTSIDE_ROOT'
+    assert list(destination.iterdir()) == []
+    original = Path.mkdir
+    def fail_second(path, *args, **kwargs):
+        """Args:
+            path：待创建目录，在第二层模拟无权限。
+            args：原 mkdir 位置参数。
+            kwargs：原 mkdir 关键字参数。
+        """
+        if path == command_root / 'partial/blocked':
+            raise PermissionError('controlled fixture')
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'mkdir', fail_second)
+    with pytest.raises(WorkspaceFileError) as error:
+        await service.write('partial/blocked/file.txt', 'denied')
+    assert error.value.code == 'WORKSPACE_PARENT_NOT_FOUND'
+    assert (command_root / 'partial').is_dir()
+    assert not (command_root / 'partial/blocked').exists()
+
+@pytest.mark.anyio
+async def test_created_parent_receipt_survives_file_rejection(command_root, monkeypatch):
+    """Args:
+        command_root：隔离工作区。
+        monkeypatch：在创建父目录后模拟目标被另一操作创建。
+    """
+    from app.workspaces.files import WorkspaceFileService, WorkspaceFileError
+    from app.agent.write_capture import WriteReceipt
+    service = WorkspaceFileService(root=command_root, execution_id='parent-receipt')
+    original = service._create_write_parents
+    def competing_create(path, **kwargs):
+        """Args:
+            path：当前写入目标。
+            kwargs：原目录创建凭据回调。
+        """
+        original(path, **kwargs)
+        (command_root / path).write_text('other writer')
+    monkeypatch.setattr(service, '_create_write_parents', competing_create)
+    receipt = WriteReceipt('new/deep/file.txt')
+    with pytest.raises(WorkspaceFileError) as error:
+        await service.write(receipt.path, 'must not overwrite', capture_parent_created=receipt.parent_created)
+    assert error.value.code == 'WORKSPACE_FILE_REVISION_CONFLICT'
+    receipt.not_executed()
+    assert receipt.export(None)['write']['created_parent_count'] == 2
+    assert not receipt.commit_confirmed
+    assert (command_root / receipt.path).read_text() == 'other writer'
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('batch', [False, True])
+async def test_parent_rejection_survives_encrypted_detail_roundtrip(command_root, isolated_command_database, monkeypatch, batch):
+    """Args:
+        command_root：本轮隔离工作区。
+        isolated_command_database：独立迁移数据库。
+        monkeypatch：受控模型与预检后竞争点。
+        batch：覆盖单项与批量的私有凭据和模型错误结果。
+    """
+    from app.services import chat
+    from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
+    from app.workspaces.files import WorkspaceFileService
+    from app.agent.tools import FAILED_OUTPUT_PREFIX
+    target = 'nested/deep/file.txt'
+    def model(prompt):
+        """Args:
+            prompt：普通测试消息，不转发外部 Provider。
+        """
+        item = {'path': target, 'content': 'must not overwrite'}
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_write',
+            'args': {'items': [item]} if batch else item, 'id': 'parent-race'}]), ScriptedTurn(text='受控验证完成。')], delay=0)
+    monkeypatch.setattr(chat, 'fake_reply_model', model)
+    original = WorkspaceFileService._create_write_parents
+    def changed(service, path, **kwargs):
+        """Args:
+            service：本轮真实文件服务。
+            path：经过预检的目标。
+            kwargs：同步目录计数回调。
+        """
+        original(service, path, **kwargs)
+        (service.root / path).write_text('competing writer')
+    monkeypatch.setattr(WorkspaceFileService, '_create_write_parents', changed)
+    async with command_conversation(command_root) as (client, headers, cid, rid, wid):
+        role = next(row for row in (await client.get('/api/roles', headers=headers)).json() if row['id'] == rid)
+        await client.put(f'/api/roles/{rid}', headers=headers, json={**role, 'builtin_tools': ['workspace_write']})
+        await client.patch(f'/api/workspaces/{wid}', headers=headers, json={'file_tools_enabled': True})
+        sent = await send_command(client, headers, cid, '验证父目录竞争')
+        message = await wait_reply(client, headers, cid, sent['message']['id'])
+        call = next(part for part in message['parts_json'] if part['type'] == 'tool_call')
+        assert call['effect_state'] == 'unknown' and call['confirmed_applied_items'] == 0
+        route = f"/api/conversations/{cid}/messages/{message['id']}/tools/{call['call_id']}"
+        detail = (await client.get(route, headers=headers)).json()
+        if batch:
+            node = detail['write_batch']['items'][0]
+            assert node['applied'] is False and node['created_parent_count'] == 2
+        else:
+            assert detail['write']['created_parent_count'] == 2
+            assert detail['write']['availability'] == 'not_executed'
+            output = json.loads(detail['output']['text'].removeprefix(FAILED_OUTPUT_PREFIX).strip())
+            assert output['details']['created_parent_count'] == 2
+        assert (command_root / target).read_text() == 'competing writer'
+        assert (await client.get(route, headers=headers)).json() == detail
+
+
+@pytest.mark.anyio
+async def test_batch_parent_count_survives_cancelled_file_operation(command_root, monkeypatch):
+    """Args:
+        command_root：本轮目录。
+        monkeypatch：在目录创建后、文件写入前确定性取消。
+    """
+    from app.workspaces.files import WorkspaceFileService
+    from app.workspaces.batch_mutation import mutate_many, BatchMutationReceipt, validate_items
+    service = WorkspaceFileService(root=command_root, execution_id='parent-cancel')
+    original = service._create_write_parents
+    def cancelled(path, **kwargs):
+        """Args:
+            path：实际目标。
+            kwargs：原目录计数回调。
+        """
+        original(path, **kwargs)
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(service, '_create_write_parents', cancelled)
+    async def authorize():
+        """返回本轮授权服务。"""
+        return service
+    items = validate_items('write', [{'path': 'new/child/file.txt', 'content': 'cancelled'}])
+    receipt = BatchMutationReceipt('write', items)
+    with pytest.raises(asyncio.CancelledError):
+        await mutate_many('write', items, authorize=authorize, lock=asyncio.Lock(), receipt=receipt)
+    node = receipt.export(None)['batch']['items'][0]
+    assert node['created_parent_count'] == 2 and node['applied'] is None
+    assert not (command_root / 'new/child/file.txt').exists()

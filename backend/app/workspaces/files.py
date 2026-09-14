@@ -207,18 +207,23 @@ class WorkspaceFileService:
                                 context_lines=context_lines, queries=queries, match=match, authorize=authorize)
 
     async def write(self, path: str, content: str, *, expected_sha256: str | None = None,
-                    capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:
+                    capture_applied: Callable[[bytes | None, bytes], None] | None = None,
+                    capture_parent_created: Callable[[], None] | None = None) -> WorkspaceWriteResult:
         """新建或按 hash 替换；只在确认提交后交出本次前后版本。
 
         Args:
             path：授权工作区内相对路径。
             content：新 UTF-8 内容。
+            capture_parent_created：每个父目录成功创建时同步记录计数，不包含路径。
             expected_sha256：更新时必需的全文件旧 hash。
             capture_applied：内部私有观察器，只能同步预留，不能等待计算或执行额外写入。
         """
         async with self._lock:
             target, current, encoded = self._prepare_write(path, content, expected_sha256)
             if current is None:
+                self._create_write_parents(path, capture_parent_created=capture_parent_created)
+                # 目录创建不等于文件提交；外部新建目标必须重新走版本检查。
+                target, current, encoded = self._prepare_write(path, content, expected_sha256)
                 try:
                     with target.open("xb") as handle:
                         handle.write(encoded)
@@ -231,6 +236,52 @@ class WorkspaceFileService:
 
             return self._replace_existing(path, current, encoded, capture_applied)
 
+    def _write_target(self, path: str) -> Path:
+        """无副作用检查全部已有祖先；缺失后缀只作为待创建路径返回。
+
+        Args:
+            path：绑定根内待写相对路径，先整体检查敏感组件与深度。
+        """
+        try:
+            normalized = normalize_relative_path(path)
+        except WorkspacePathError as exc:
+            raise _translate(exc) from None
+        if is_link_like(self.root) or not self.root.is_dir():
+            raise WorkspaceFileError('WORKSPACE_PATH_OUTSIDE_ROOT')
+        parts = normalized.split('/')
+        for index in range(len(parts)):
+            target = self._resolve('/'.join(parts[:index + 1]), require_exists=False)
+            if not target.exists():
+                return self.root / normalized
+            if index < len(parts) - 1 and not target.is_dir():
+                raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND')
+        return target
+
+    def _create_write_parents(self, path: str, *, capture_parent_created: Callable[[], None] | None = None) -> None:
+        """逐层创建缺失目录并复核链接；失败不删除已创建目录或外部内容。
+
+        Args:
+            path：已经整体预检的文件路径，仅在实际写入阶段调用。
+            capture_parent_created：宿主的同步计数回调，创建成功后立即调用。
+        """
+        self._write_target(path)
+        parts = path.split('/')[:-1]
+        for index in range(len(parts)):
+            relative = '/'.join(parts[:index + 1])
+            parent = self._resolve(relative, require_exists=False)
+            try:
+                parent.mkdir()
+            except FileExistsError:
+                pass
+            except OSError:
+                raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND') from None
+            else:
+                if capture_parent_created is not None:
+                    capture_parent_created()
+            # 已存在不代表可信目录，仍需拒绝被替换的 symlink/junction。
+            if not self._resolve(relative).is_dir():
+                raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND')
+
     def _prepare_write(self, path: str, content: str, expected_sha256: str | None) -> tuple[Path, bytes | None, bytes]:
         """单文件提交与批量预检共用写前规则，调用者持有文件锁。
 
@@ -242,14 +293,7 @@ class WorkspaceFileService:
         encoded = content.encode('utf-8')
         if len(encoded) > MAX_FILE_BYTES:
             raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
-        try:
-            target = resolve_workspace_path(self.root, path, require_exists=False)
-        except WorkspacePathError as exc:
-            if exc.code == 'WORKSPACE_FILE_NOT_FOUND':
-                raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND') from None
-            raise _translate(exc) from None
-        if not target.parent.is_dir():
-            raise WorkspaceFileError('WORKSPACE_PARENT_NOT_FOUND')
+        target = self._write_target(path)
         if not target.exists():
             if expected_sha256 is not None:
                 raise WorkspaceFileError('WORKSPACE_FILE_REVISION_CONFLICT')

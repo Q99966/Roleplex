@@ -4,6 +4,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 ## 当前阶段
 
+原生写入现支持自动创建授权工作区内缺失的父目录（含批量写入，已通过人工验收）；行为与失败边界见[工作区协议](docs/protocol/public/rest/workspaces.md#写入自动创建父目录)。
+
 T2 人工验收补充：搜索支持多个字面关键词的 OR/同行 AND；Owner 结果按文件归组，批量行读取标题显示实际范围。见[搜索与范围读取协议](docs/protocol/internal/workspace-search-read.md)。
 
 已完成 M0/M1 基础骨架、M2 单聊闭环、M4a 群聊、E0 持久 execution 身份和 W1a 当前 World 工作区与

@@ -191,3 +191,12 @@ def test_context_budget_does_not_reintroduce_statistics():
     selected, used, _ = _select_history([_ProjectedHistory(row, body, estimate_messages_tokens([body]))],
         fixed_tokens=10, input_budget=600, pinned_budget=0)
     assert selected == () and used == 0
+
+
+def test_directory_side_effect_is_not_reported_as_no_effect():
+    """文件提交计数保持零，目录副作用不能被未提交文件状态抹去。"""
+    for value in [
+        {'format': 'write-v1', 'write': {'availability': 'not_executed', 'created_parent_count': 1}},
+        {'format': 'write-batch-v1', 'batch': {'items': [{'applied': False, 'created_parent_count': 2}]}},
+    ]:
+        assert tool_evidence('workspace_write', 'failed', value) == {'effect_state': 'unknown', 'confirmed_applied_items': 0}

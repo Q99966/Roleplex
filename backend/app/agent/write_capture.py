@@ -26,7 +26,12 @@ class WriteReceipt:
         self.output = None
         self.diagnostic = None
         self.commit_confirmed = False
+        self.created_parent_count = 0
         self.value = {'version': 1, 'availability': 'result_unconfirmed', 'reason': None, 'files': []}
+
+    def parent_created(self) -> None:
+        """目录创建后同步保留有界计数，不将其当成文件提交或 diff。"""
+        self.created_parent_count += 1
 
     def applied(self, before: bytes | None, after: bytes) -> None:
         """文件服务确认提交后同步预留计算容量，不能抛错改变写入结果。
@@ -80,7 +85,7 @@ class WriteReceipt:
         """Args:
             output：防腐层观察到的普通工具结果，取消时可为空。
         """
-        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value, 'commit_confirmed': self.commit_confirmed,
+        return {'format': 'write-v1', 'result': output or self.output, 'write': {**self.value, 'created_parent_count': self.created_parent_count}, 'commit_confirmed': self.commit_confirmed,
             **({'diagnostic': self.diagnostic} if self.diagnostic is not None else {})}
 
 

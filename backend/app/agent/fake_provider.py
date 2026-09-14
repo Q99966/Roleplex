@@ -199,7 +199,7 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             ScriptedTurn(text='处理完成。'),
         ], delay=delay)
     if '[BATCH_MUTATION_FAKE]' in prompt:
-        files = [('batch-a.txt', 'alpha old'), ('batch-b.txt', 'beta old')]
+        files = [('src/nested/batch-a.txt', 'alpha old'), ('test/nested/batch-b.txt', 'beta old')]
         return ScriptedChatModel(turns=[ScriptedTurn(text='先创建两个文件。', tool_calls=[{
             'name': 'workspace_write', 'args': {'items': [{'path': name, 'content': text} for name, text in files]}, 'id': 'batch_create'}]),
             ScriptedTurn(text='再分别局部修改。', tool_calls=[{'name': 'workspace_edit', 'args': {'items': [

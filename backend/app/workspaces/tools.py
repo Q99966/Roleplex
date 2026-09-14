@@ -34,13 +34,13 @@ from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocke
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 14
+WORKSPACE_TOOL_POLICY_VERSION = 15
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件。可用 path+start_line/end_line 按行读取（从1开始、含两端，默认200行、最多2000行）；与 offset_bytes/max_bytes 字节模式互斥。兼容旧 path 字节形式，默认最多65536字节，返回原五字段。items 一次最多8项，各项默认65536字节，按实际返回量分享主机内容预算；不因申请值相加拒绝。参数JSON最多16 KiB，完整结果最多64 KiB，预算未覆盖项保留状态。所有成功读取给出全文件sha256；可传 expected_sha256 校验搜索/续读版本，不拼接不同版本。行模式只返回完整行，line_too_long时可用返回的start_offset作为offset_bytes改用字节模式。读取支持更大文件的有界扫描，写入上限仍为1 MiB。繁忙时工具内部有界排队，不需要查询队列。',
     'workspace_search': '在绑定工作区定位文件和代码。query为区分大小写的字面文本，mode=text（默认）返回相对路径、匹配行号、少量上下文和确认后的全文件sha256；mode=files使用文件名fnmatch模式（如*.py），不提供内容版本。path默认根目录，可缩小到子目录/文件；limit默认100最多200，context_lines默认1最多3。系统敏感路径、链接、依赖缓存和构建目录排除。扫描/结果达到预算时status=partial，不等于全工作区无匹配。text可用queries数组（1..8词，每词1..256字符）替代query，match=any表示OR，all要求同一行含全部词；多个已知关键词合并一次扫描，matched_queries返回从0开始的命中词索引，|和&仍是字面字符。已知小文件可直接读取；未知位置先搜索，再用workspace_read按行读取；读取传已知expected_sha256，变化后重新定位。不是Shell、正则或语义索引，不获得额外资源权限。',
 
-    "workspace_write": "普通源码创建或整文件替换优先使用本工具，更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
+    "workspace_write": "普通源码创建或整文件替换优先使用本工具；自动创建工作区内缺失的父目录，不必先用Shell建目录，拒绝链接/敏感路径和非目录祖先。批量预检不创建目录，实际写入阶段才创建；失败可能保留已创建空目录。更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
     'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；两片段合计最多 64 KiB。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
     "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
@@ -437,7 +437,7 @@ def _error_result(code: str, *, rejected: bool = False, diagnostic: dict | None 
         code：固定错误码。
         rejected：原生文件工具的预期输入/匹配拒绝；默认保持旧工具响应语义。
         diagnostic：已鉴权且有界的本项拒绝事实，仅用于模型与 Owner 详情。
-        details：扫描层生成的安全预算/阶段信息。
+        details：执行层生成的安全预算、阶段或父目录创建计数。
     """
     body = json.dumps({"ok": False, "error_code": code, **({'diagnostic': diagnostic} if diagnostic is not None else {}),
         **({'details': details} if details is not None else {})}, ensure_ascii=False, separators=(",", ":"))
@@ -614,14 +614,18 @@ async def create_workspace_tools(
             path：模型请求路径，执行层再解析。
             arguments：包装函数从固定 schema 构造的业务参数。
         """
-        from ..agent.write_capture import begin_write_capture
-        receipt = begin_write_capture(path)
+        from ..agent.write_capture import begin_write_capture, WriteReceipt
+        receipt = begin_write_capture(path) or WriteReceipt(path)
         try:
             async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
                 authorized = await mutation_service(tool_name)
                 operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
-                result = await operation(path, **arguments, capture_applied=receipt.applied if receipt else None)
-                output = authorized.json_result(result)
+                result = await operation(path, **arguments, capture_applied=receipt.applied,
+                    **({'capture_parent_created': receipt.parent_created} if tool_name == 'workspace_write' else {}))
+                result_value = json.loads(authorized.json_result(result))
+                if tool_name == 'workspace_write':
+                    result_value['created_parent_count'] = receipt.created_parent_count
+                output = json.dumps(result_value, ensure_ascii=False)
             # 库计算或排队绝不能延长文件/工作区写锁的持有时间。
             if receipt:
                 await receipt.finish(output)
@@ -631,7 +635,8 @@ async def create_workspace_tools(
             if receipt:
                 receipt.not_executed()
                 receipt.diagnostic = diagnostic
-            return _error_result(exc.code, rejected=tool_name == 'workspace_edit' or isinstance(exc, AccessRejected), diagnostic=diagnostic)
+            return _error_result(exc.code, rejected=tool_name == 'workspace_edit' or isinstance(exc, AccessRejected), diagnostic=diagnostic,
+                details={'created_parent_count': receipt.created_parent_count} if tool_name == 'workspace_write' else None)
         finally:
             if receipt:
                 receipt.release()

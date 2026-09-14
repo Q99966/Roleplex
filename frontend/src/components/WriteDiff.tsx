@@ -57,10 +57,11 @@ export function WriteDiff({ value, showFileHeading = true }: { value: WriteDetai
   if (value.version !== 1) return <p>当前版本不支持此差异格式。</p>
   const notices: Record<string, string> = {
     pending: '等待本次写入结束后采集差异。', not_recorded: '此调用未记录文件差异，无法补回。',
-    not_executed: '本次写入未执行，没有已应用差异。', result_unconfirmed: '写入结果未确认，不能据此判断文件没有变化。',
+    not_executed: '本次文件内容未提交，没有已应用差异。', result_unconfirmed: '写入结果未确认，不能据此判断文件没有变化。',
     partial: '差异仅部分展示；增删统计来自完整计算，不等于当前显示行数。',
   }
   return <section aria-label="本次文件变更" className="mt-3">
+    {!!value.created_parent_count && <p className="text-slate-400">本次创建了 {value.created_parent_count} 个父目录{value.files.some((file) => file.applied) ? "。" : "，可能留下空目录。"}</p>}
     {notices[value.availability] && <p className="text-amber-300">{notices[value.availability]}</p>}
     {value.availability === 'unavailable' && <p className="text-amber-300">{REASONS[value.reason ?? ''] ?? '差异不可用，不代表没有修改。'}</p>}
     {value.files.map((file) => <FileNode key={file.id} file={file} showHeading={showFileHeading} />)}

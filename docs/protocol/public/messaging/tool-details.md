@@ -175,3 +175,14 @@ Owner 修改卡默认展开并沿用视口内加载；一个节点直接显示 d
 不显示原始输入输出，不提供自动回滚按钮；失败/未执行/未确认节点始终保留。Guest 不请求私有节点。
 
 T2 搜索命中兼容增加 matched_queries（零基词索引，旧记录默认空数组）；query/queries/match 仅从 Owner 私有输入读取。具体语义以[搜索协议](../../internal/workspace-search-read.md)为准。
+
+
+### 自动创建父目录的调用级证据
+
+单文件 write 详情对象与批量 write/edit 每个文件节点兼容新增 created_parent_count（0..19，旧记录缺省/null 表示未采集）。
+只统计本次 mkdir 成功创建的父目录，不计并发方或既有目录；创建完成立即保存到原调用凭据，与文件 commit/applied 独立。
+成功、拒绝、取消、文件提交结果未知及 diff 降级时均保留该计数。大于零只证明历史创建事实，不保证目录当前仍为空或存在。
+批量预检失败的新记录计数为零；执行时文件未提交但计数大于零，Owner 显示“本次创建了 N 个父目录，可能留下空目录”。
+模型单文件结果兼容增加 created_parent_count；已知拒绝通过 details.created_parent_count 表达，批量通过逐项同名字段表达。
+共享调用级 effect_state 不把“文件未提交但有目录副作用”标成 not_applied，保守使用 unknown；confirmed_applied_items 仍只统计文件提交。
+不新增路径日志、每轮总结、表或数据库迁移。新字段沿用加密详情、保留期限与 Owner/Guest 隔离。

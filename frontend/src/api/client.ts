@@ -55,7 +55,7 @@ export type FileChange = {
 }
 export type WriteDetails = {
   version: number; availability: 'recorded' | 'partial' | 'unavailable' | 'not_executed' | 'result_unconfirmed' | 'pending' | 'not_recorded';
-  reason: string | null; files: FileChange[]
+  reason: string | null; files: FileChange[]; created_parent_count?: number | null
 }
 export type ShellApproval = {
   id: number; execution_id: string; tool_call_id: string; tool_name: string; workspace_binding_id: number;
@@ -92,7 +92,7 @@ export type WriteDiagnostic = {
 export type BatchMutationDetails = {
   version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'rejected' | 'cancelled' | 'result_unconfirmed'; error_code: string | null
   items: Array<{ id: string; path: string; operation: 'write' | 'edit';
-    status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null;
+    status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null; created_parent_count?: number | null;
     error_code: string | null; result: { created: boolean; bytes: number; sha256: string } | null; write: WriteDetails | null;
     diagnostic?: WriteDiagnostic | null }>
 }

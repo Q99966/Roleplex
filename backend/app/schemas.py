@@ -439,6 +439,7 @@ class WriteDetailView(BaseModel):
     availability: Literal['recorded', 'partial', 'unavailable', 'not_executed', 'result_unconfirmed', 'pending', 'not_recorded']
     reason: Literal['input_budget', 'line_budget', 'queue_full', 'queue_timeout', 'compute_timeout', 'cancelled', 'capture_failed', 'not_text', 'shutdown'] | None
     files: list[FileChangeView] = Field(max_length=1)
+    created_parent_count: int | None = Field(default=None, ge=0, le=19, strict=True)
 
 
 class BatchWriteResultView(BaseModel):
@@ -457,6 +458,7 @@ class BatchMutationItemView(BaseModel):
     operation: Literal['write', 'edit']
     status: Literal['not_executed', 'running', 'success', 'failed', 'result_unconfirmed']
     applied: bool | None
+    created_parent_count: int | None = Field(default=None, ge=0, le=19, strict=True)
     error_code: str | None = Field(max_length=80)
     result: BatchWriteResultView | None
     write: WriteDetailView | None

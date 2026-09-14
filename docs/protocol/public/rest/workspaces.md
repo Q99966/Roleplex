@@ -17,7 +17,7 @@ Workspace Binding 属于当前物理 World，只允许当前 World Owner 管理�
 Owner 返回。切换 World 后必须重新读取列表；Guest 不能枚举工作区、绝对路径或能力状态。产品不使用部署级
 allowed-root 白名单限制 Owner 可登记的目录。
 
-W1a 只支持 `managed_directory`，不启动子进程，不提供 Shell、Git、删除、移动、chmod 或自动创建父目录。
+W1a 只支持 `managed_directory`，不启动子进程，不提供 Shell、Git、删除、移动或 chmod；原生写入支持在授权根内自动创建缺失的父目录。
 文件内容可能发送给角色绑定的模型厂商，因此 `workspace_list/read/write` 均按 dangerous 工具处理；只有
 Owner 触发的 single 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease 为 ready 时
 才向模型暴露，并在每次调用前重新鉴权和解析路径。
@@ -129,7 +129,7 @@ S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无
 |---|---|---|
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
 | `workspace_read` / `workspace_search` | T2 字节/行范围读取与文件名/文本定位 | [搜索与范围读取权威契约](../../internal/workspace-search-read.md)；旧单文件五字段响应兼容 |
-| `workspace_write` | 旧 `path/content/expected_sha256?` 或新 `items` | 旧形式保留 `created/bytes/sha256`；批次结果见下文；新建要求不存在，更新要求旧 hash |
+| `workspace_write` | 旧 `path/content/expected_sha256?` 或新 `items` | 旧形式保留 `created/bytes/sha256` 并兼容新增父目录计数；批次结果见下文；新建要求不存在，更新要求旧 hash |
 | `workspace_edit` | 旧 `path/old_text/new_text/expected_sha256` 或新 `items` | 旧形式保留 `created=false/bytes/sha256`；批次结果见下文；唯一字面替换已有 UTF-8 文件 |
 
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
@@ -143,6 +143,16 @@ schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/
 版本冲突只能重新读取/确认后重试，不自动覆盖。运行中服务对 edit 的限制与 write 相同；不隐含停服授权。
 差异采集、预算、取消和 Owner 展示复用[工具详情](../messaging/tool-details.md)的 write 对象，不新增独立 diff 协议。
 大文件小修改允许执行，但超过 D 的前后合计计算预算时 diff 仍明确降级，不在 E1 偷偷提高预算。
+
+### 写入自动创建父目录
+
+workspace_write 的 path 与 items 形式均自动创建缺失的父目录，不要求模型先调用 Shell。
+先检查完整路径的敏感组件/深度、已有祖先的目录类型与链接、内容大小及文件版本；批量全批预检无目录副作用。
+预检通过后，在每项实际写入阶段持既有写锁逐层创建并重新校验路径，文件目标仍遵守独占新建与旧 hash 更新规则。
+同批目标之间存在文件/目录祖先冲突时整批拒绝；已有非目录祖先、链接或敏感路径不得替换或绕过。
+创建目录失败返回 WORKSPACE_PARENT_NOT_FOUND；之后文件失败可能保留空目录，不回滚或自动删除目录。
+文件提交凭据仅证明文件内容提交，不能把创建父目录当成文件提交成功；目录计数和兼容语义见[工具详情](../messaging/tool-details.md#自动创建父目录的调用级证据)。无法抵抗外部进程在路径检查与文件系统操作之间刻意替换路径，不承诺 OS 级隔离。
+本补充不改变工作区登记时 create_directory 的单层目录行为，不扩展 edit 为文件创建，也不修改写队列或大小额度。
 
 ### T2 搜索、范围读取与统一准入
 

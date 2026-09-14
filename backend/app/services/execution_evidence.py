@@ -35,6 +35,10 @@ def tool_evidence(name: str, status: str, private_output: dict | None) -> dict:
                 effect = 'not_applied'
         if private_output.get('diagnostic', {}).get('executed') is False and count == 0:
             effect = 'not_applied'
+        nodes = private_output.get('batch', {}).get('items', [])[:8] if private_output.get('format') == 'write-batch-v1' else [private_output.get('write') or {}]
+        # 文件提交为零不能抹去已知目录副作用；共享摘要不扩展私有目录详情。
+        if effect == 'not_applied' and any(type(node.get('created_parent_count')) is int and node['created_parent_count'] > 0 for node in nodes):
+            effect = 'unknown'
     return {'effect_state': effect, 'confirmed_applied_items': count}
 
 

@@ -7,6 +7,7 @@ import json
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -80,7 +81,7 @@ class BatchMutationReceipt:
         """
         self.value = {'version': 1, 'status': 'running', 'error_code': None, 'items': [
             {'id': f'item-{index}', 'path': item['path'], 'operation': operation, 'status': 'not_executed',
-             'applied': False, 'error_code': None, 'result': None, 'write': None} for index, item in enumerate(items)]}
+             'applied': False, 'error_code': None, 'result': None, 'write': None, 'created_parent_count': 0} for index, item in enumerate(items)]}
         reservations = [_reservation(item) for item in items]
         spare = (OUTPUT_LIMIT - 512 - sum(reservations)) // len(items)
         self.budgets = [size + spare for size in reservations]
@@ -93,6 +94,8 @@ class BatchMutationReceipt:
         Args:
             index：当前稳定子项索引。
         """
+        if self.current is not None:
+            self.value['items'][index]['created_parent_count'] = self.current.created_parent_count
         try:
             self._retain(index)
         except Exception:
@@ -203,7 +206,8 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
                 if service is None:
                     raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
                 path, inode = await service.preflight(operation, item['path'], {k: v for k, v in item.items() if k != 'path'})
-                if path in paths or (inode is not None and inode in inodes):
+                if (path in paths or (inode is not None and inode in inodes)
+                        or any(Path(path) in Path(other).parents or Path(other) in Path(path).parents for other in paths)):
                     raise WorkspaceFileError('WORKSPACE_BATCH_TARGET_CONFLICT')
                 paths.add(path)
                 if inode is not None:
@@ -228,7 +232,8 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
                     raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
                 node.update(status='running', applied=None)
                 result = await getattr(service, operation)(item['path'], **{k: v for k, v in item.items() if k != 'path'},
-                    capture_applied=applied)
+                    capture_applied=applied,
+                    **({'capture_parent_created': receipt.current.parent_created} if operation == 'write' else {}))
                 node.update(status='success', applied=True, result=asdict(result))
             # 计算和等待不得占用文件锁/命令锁；下一项重新授权，服务可能已经变化。
             try:
