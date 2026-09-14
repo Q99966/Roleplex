@@ -40,7 +40,7 @@ export default class RoleplexLogReporter implements Reporter {
       ...identity,
       error: result.error?.message ? this.redact(result.error.message).slice(-8192) : undefined,
     })
-    for (const attachment of result.attachments) {
+    for (const [attachmentIndex, attachment] of result.attachments.entries()) {
       if (!attachment.path) continue
       try {
         const extension = path.extname(attachment.path)
@@ -50,7 +50,8 @@ export default class RoleplexLogReporter implements Reporter {
         const screenshot = ['.png', '.jpg', '.jpeg', '.webp'].includes(normalizedExtension)
         if (!textual && !screenshot) continue
         const kind = textual ? 'diagnostics' : 'screenshots'
-        const filename = `${identity.name}_${identity.hash}${extension}`
+        // 同一用例的桌面/窄屏截图及重试附件不能相互覆盖，不使用可能敏感的附件原名。
+        const filename = `${identity.name}_${identity.hash}_${result.retry}_${attachmentIndex}${extension}`
         const relative = path.join('artifacts', kind, filename)
         const destination = path.join(this.runDir, relative)
         this.ensureDirectory(path.dirname(destination))

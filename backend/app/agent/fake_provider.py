@@ -108,6 +108,12 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[EXECUTION_FACTS_FAKE]' in prompt:
+        # 默认图预算内先真实写入，再持续只读以确定性触顶；不修改生产预算。
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{
+            'name': 'workspace_write', 'args': {'path': 'facts-proof.txt', 'content': 'controlled-facts'}, 'id': 'facts-write',
+        }]), *[ScriptedTurn(tool_calls=[{'name': 'workspace_list', 'args': {}, 'id': f'facts-list-{index}'}])
+               for index in range(10)]], delay=delay)
     if '[WRITE_DIAGNOSTIC_FAKE]' in prompt:
         return ScriptedChatModel(turns=[ScriptedTurn(text='尝试写入受控文件。', tool_calls=[{
             'name': 'workspace_write', 'args': {'path': 'blocked.txt', 'content': 'new'}, 'id': 'diagnostic_write'}]),

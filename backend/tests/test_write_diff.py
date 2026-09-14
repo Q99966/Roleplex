@@ -167,6 +167,8 @@ async def test_cancel_after_write_preserves_applied_fact(command_root, isolated_
         detail = (await client.get(f"/api/conversations/{cid}/messages/{message['id']}/tools/{call['call_id']}", headers=headers)).json()
         assert detail['write']['files'][0]['applied'] is True
         assert detail['write']['reason'] == 'cancelled'
+        assert message['stop_reason'] == 'user_cancelled'
+        assert call['confirmed_applied_items'] == 1
         assert current_pool().retained_bytes == 0
 
 

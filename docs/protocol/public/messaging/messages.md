@@ -4,7 +4,7 @@
 |---|---|
 | 受众 | 公开 |
 | 状态 | 已实现（单聊与 M4a mentions 串行群聊；Orchestrator 未实现） |
-| 协议版本 | 4（兼容新增显式最近历史窗口） |
+| 协议版本 | 6（兼容新增 stop_reason，停止生成统计摘要） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
 | 关联测试 | `backend/tests/test_history_window.py`、`test_chat_flow.py`、`test_context_builder.py`、`frontend/tests/multiline-composer.spec.ts`、`history-window.spec.ts`、`real-world/long-conversation.spec.ts`；既有聊天/群聊测试 |
@@ -125,7 +125,7 @@ POST /api/conversations/{conversation_id}/stop
 ## 模型历史与上下文预算
 
 生成统一通过内部 ContextBuilder 读取当前消息之前的终态历史：目标角色自己的 `done` 回复作为 assistant，
-其他真人/角色消息带稳定身份作为 user；非空 `stopped` 回复带停止标记，`error/interrupted` 不进入模型历史。
+其他真人/角色消息带稳定身份作为 user；`stopped` 回复按已知原因带简短停止标记，缺失原因时不猜测；`error/interrupted` 不进入历史。旧统计摘要不进入模型上下文。
 当前消息单独作为本轮输入，不会在 history 中重复出现。
 
 M4a 群聊后续角色还会读取当前真人消息之后、同一 chain 已提交的前序角色终态；例如 @A @B 中，B 只有在
@@ -154,7 +154,7 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 当前公开 part：
 
 新角色消息的有序文本段、工具位置、timeline_version 和 Owner 详情见 [工具执行详情](tool-details.md)。
-该功能不向普通消息 payload 添加原始工具输入输出。
+该功能不向普通消息 payload 添加原始工具输入输出。T1 保留调用级安全工具事实，停止原因见本篇末节；[旧执行摘要](execution-summary.md)已停止生成。
 
 - `text`：`{"type":"text","text":"占位文本"}`。
 - `tool_call`：`{"type":"tool_call","call_id":"占位调用","tool_name":"占位工具","status":"running","duration_ms":12}`。
@@ -168,3 +168,15 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 Orchestrator 分派、附件、Artifact part 和重新生成尚未实现。`reply_to_id` 会持久化但当前不影响回复对象；
 客户端遇到未知 part 类型必须降级为占位展示，不得白屏。
+
+
+## T1 收窄：停止原因与证据保留
+
+消息响应兼容新增 `stop_reason`，无确定异常原因时为 null；可取 user_cancelled、graph_budget、provider_failed、
+protocol_error、interrupted、context_rejected。字段由服务器保存的 meta_json.stop_reason 提供，旧 T1 记录可从
+原服务器摘要兼容读取；用户发送内容不能指定此元数据。原 message/generation 状态、鉴权和 revision 规则不变。
+
+新回复不再生成 execution_summary part，也不聚合各调用计数；具体工具卡的 effect_state、confirmed_applied_items
+及原加密详情继续保留。历史中的旧摘要不显示、不投影给模型，不重写已经结束的历史记录。
+Context schema 4 恢复原正常正文与工具占位投影；stopped 仅加简短、准确的停止标记，error/interrupted 正文不进入历史。
+不再提供 facts-only 预算降级，按原消息边界裁剪，不改变上下文窗口预算。停止原因不会成为正常历史的新增前缀。

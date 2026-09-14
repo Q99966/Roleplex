@@ -51,10 +51,12 @@ class ToolCallFinished:
 
 @dataclass(frozen=True)
 class MessageDone:
-    """本轮生成正常结束，携带最终文本与可选用量统计。"""
+    """本轮生成收口；停止原因独立于已确认工具事实。"""
 
     text: str
     usage: dict[str, Any] = field(default_factory=dict)
+    stop_reason: str = 'completed'
+    undispatched_proposals: int | None = 0
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,7 @@ class ProviderError:
 
     code: str
     message: str
+    stop_reason: str = 'provider_failed'
 
 
 # 业务层按此联合类型消费事件；新增事件类型时必须同步更新内部协议文档。

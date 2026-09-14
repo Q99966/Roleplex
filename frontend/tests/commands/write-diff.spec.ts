@@ -27,6 +27,8 @@ test('真实写入按工具位置展示可折叠 diff，刷新恢复且 Guest �
   await page.getByLabel('发送消息').click()
   await expect(page.getByText('修改完成。', { exact: true })).toBeVisible()
   const reply = page.getByTestId('chat-message').nth(1)
+  await expect(reply.getByRole('region', { name: '系统执行记录' })).toHaveCount(0)
+  await expect(reply).not.toContainText('已确认文件提交')
   const sequence = reply.locator('[data-testid="message-text-part"], [data-testid="tool-call-card"]')
   await expect(sequence).toHaveCount(5)
   const card = reply.getByTestId('tool-call-card').nth(1)

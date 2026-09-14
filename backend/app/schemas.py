@@ -227,6 +227,10 @@ class Part(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+# 仅由服务器写入消息元数据，正常结束由已有 status=done 表达。
+StopReason = Literal['user_cancelled', 'graph_budget', 'provider_failed', 'protocol_error', 'interrupted', 'context_rejected']
+
+
 class MessageCreate(BaseModel):
     """包含提及、回复和可选客户端幂等信息的消息请求。"""
 
@@ -234,6 +238,14 @@ class MessageCreate(BaseModel):
     mentions: list[int | Literal["all"]] = Field(default_factory=list)
     reply_to_id: int | None = None
     client_message_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode='after')
+    def reject_server_facts(self):
+        """服务器摘要不能由消息发送接口伪造。"""
+        if any(part.type == 'execution_summary' for part in self.parts):
+            from pydantic_core import PydanticCustomError
+            raise PydanticCustomError('server_part_forbidden', '服务器执行摘要不能由客户端提交')
+        return self
 
 
 class EventEnvelope(BaseModel):

@@ -180,6 +180,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             const role = message.sender_id === null ? undefined : roleDirectory[message.sender_id]
             const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
             const senderDeleted = !isUser && Boolean(role?.deleted_at)
+            const budgetStopped = message.stop_reason === 'graph_budget'
             return (
               <div key={message.id} data-testid="chat-message" data-reading-anchor={`m-${message.id}`} className={`flex gap-3.5 max-w-2xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border shrink-0 ${
@@ -188,13 +189,13 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                   {isUser ? 'ME' : senderName.slice(0, 1)}
                 </div>
                 <div className="min-w-0">
-                  <div className={`flex items-center gap-2 mb-1.5 ${isUser ? 'justify-end' : ''}`}>
+                  <div className={`flex flex-wrap items-center gap-2 mb-1.5 ${isUser ? 'justify-end' : ''}`}>
                     <span className="text-xs font-semibold text-slate-300">{senderName}</span>
                     {senderDeleted && (
                       <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 py-px">已删除</span>
                     )}
                     {message.status === 'generating' && <span className="text-[10px] text-indigo-400">生成中…</span>}
-                    {message.status === 'stopped' && <span className="text-[10px] text-amber-400">已停止</span>}
+                    {message.status === 'stopped' && <span className="text-[10px] text-amber-400">{budgetStopped ? '达到本轮执行步数上限' : '已停止'}</span>}
                     {message.status === 'error' && <span className="text-[10px] text-red-400">生成失败</span>}
                   </div>
                   <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border break-words ${

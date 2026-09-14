@@ -203,12 +203,12 @@ Agent 角色定义，是"联系人"的数据来源。
 | `reply_to_id` | 引用的消息（预留，当前会持久化但不影响回复逻辑） |
 | `client_message_id` | 客户端生成的幂等键。与 `(conversation_id, sender_id)` 组成唯一约束 `uq_message_client_key`，重复提交直接命中已有消息，不会重复生成 |
 | `mentions_json` | M4a `@` 到的稳定角色 ID 或 `"all"`；群聊按该顺序去重调度，单聊忽略 |
-| `parts_json` | 消息内容，part 数组。当前支持 `text` 和不含原始参数/输出的 `tool_call` 过程卡；后续扩展 code / image / file / artifact，客户端对未知类型降级展示 |
+| `parts_json` | 消息内容，part 数组。当前支持 `text`、不含原始参数/输出的 `tool_call` 过程卡；旧 `execution_summary` 只保留兼容（见[旧执行摘要](../public/messaging/execution-summary.md)）；后续扩展 code / image / file / artifact，客户端对未知类型降级展示 |
 | `status` | `pending`（已建未开始）/ `generating`（流式中）/ `done`（完成）/ `error`（失败）/ `stopped`（用户停止）/ `interrupted`（进程重启时遗留的未完成生成，启动时自动改写） |
 | `revision` | 消息乐观锁版本。每次内容或状态变化 `+1`，客户端据此幂等应用事件；**一条消息只由其生成任务这一个 reducer 修改** |
 | `pinned` | 是否 pin（预留，M3） |
 | `chain_id` | 一次触发链的标识，与 `generations.run_id` 相同值，用来把用户消息、生成和角色回复串起来 |
-| `meta_json` | 附加元数据（usage、重生成的旧版本等，预留），默认 `{}` |
+| `meta_json` | 附加元数据，默认 `{}`；`timeline_version=1` 标记有序展示，`stop_reason` 保存服务器停止原因；旧 `execution_summary_version=1` 仅用于识别旧摘要记录，不再为新消息设置；其他用途预留 |
 | `created_at` | 创建时间 |
 
 流式过程中 `parts_json` 不是逐片段写库的：增量先在内存累积并广播，按节流间隔和最终完成时落库，因此生成中途读到的文本可能落后于界面显示。

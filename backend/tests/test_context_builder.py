@@ -45,7 +45,7 @@ def test_terminal_projection_is_stable_and_role_relative():
 
     assert isinstance(own, AIMessage) and own.content == "结果"
     assert isinstance(other, HumanMessage) and other.content == "[role:8] 结果"
-    assert isinstance(stopped, AIMessage) and "已由用户停止" in str(stopped.content)
+    assert isinstance(stopped, AIMessage) and "[该回复已停止]" in str(stopped.content)
     assert project_message(_message(status="error"), target_role_id=7) is None
     assert project_message(_message(status="interrupted"), target_role_id=7) is None
 

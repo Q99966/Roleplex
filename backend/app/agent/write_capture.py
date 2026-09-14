@@ -25,6 +25,7 @@ class WriteReceipt:
         self.ticket = None
         self.output = None
         self.diagnostic = None
+        self.commit_confirmed = False
         self.value = {'version': 1, 'availability': 'result_unconfirmed', 'reason': None, 'files': []}
 
     def applied(self, before: bytes | None, after: bytes) -> None:
@@ -34,6 +35,7 @@ class WriteReceipt:
             before：受锁保护的旧版本；新建为 None。
             after：成功提交的新版本。
         """
+        self.commit_confirmed = True
         from ..workspaces.diffs import change_metadata, current_pool
         from ..workspaces.paths import normalize_relative_path
         try:
@@ -78,7 +80,7 @@ class WriteReceipt:
         """Args:
             output：防腐层观察到的普通工具结果，取消时可为空。
         """
-        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value,
+        return {'format': 'write-v1', 'result': output or self.output, 'write': self.value, 'commit_confirmed': self.commit_confirmed,
             **({'diagnostic': self.diagnostic} if self.diagnostic is not None else {})}
 
 

@@ -17,6 +17,8 @@ export function MessageParts({ message, isOwner }: { message: Message; isOwner: 
     {groupMessageParts(message).map((group) => {
       const { index, key } = group
       const part = group.parts[0]
+      // 后台执行事实用于恢复与上下文，不作为聊天内容或未知类型占位展示。
+      if (part.type === 'execution_summary') return null
       if (group.kind === 'exploration') return <ExplorationGroup key={key} parts={group.parts}
         conversationId={message.conversation_id} messageId={message.id} isOwner={isOwner} />
       if (part.type === 'text') return part.text ? <div key={String(part.part_id ?? `text-${index}`)} data-testid="message-text-part">

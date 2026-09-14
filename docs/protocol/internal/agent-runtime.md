@@ -7,7 +7,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-11 |
+| 复核日期 | 2026-09-14 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -24,8 +24,8 @@
 | `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary`；W1b 可选 `command_summary`，见 [命令契约](workspace-commands.md) |
 | `ProviderCallStarted` | 一次模型 API 调用开始 | `call_index` |
 | `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存读写 token 与可选命中比 |
-| `MessageDone` | 本轮正常结束 | `text`（最终全文）、`usage` |
-| `ProviderError` | 本轮失败 | `code`（稳定错误码）、`message` |
+| `MessageDone` | 本轮正常或预算停止收口 | `text`、`usage`、`stop_reason`、`undispatched_proposals`；见[执行事实](execution-facts.md) |
+| `ProviderError` | 本轮 Provider 或协议失败 | `code`、安全 `message`、`stop_reason` |
 
 `MessageDone` 与 `ProviderError` 互斥，且必然是流的最后一个事件。取消不是事件：
 `asyncio.CancelledError` 原样向上传播，由调度层按 `stopped` 收尾。
@@ -108,11 +108,17 @@ M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同
 框架事件到领域事件的转换全部收敛在 `app/agent/loop.py`，测试用源码扫描保证其他模块
 不出现框架事件名。锁定版本（langgraph 0.2.74 / langchain-core 0.3.36）下的实测结论：
 
-- **步数上限不会抛异常**。达到 `recursion_limit` 时事件流直接结束，不抛 `GraphRecursionError`，
-  留下一条带未配对工具调用的助手消息。因此防腐层自己统计"最近一轮模型回合里还没拿到
-  结果的工具调用数"，非零就判定为触顶。异常路径同时保留，兼容会抛异常的版本。
-- **收尾调用不能带未配对的工具调用**。触顶后追加一次禁用工具的收尾调用时，只发送原始
-  输入加收尾提示；把那条含未完成 `tool_use` 的助手消息回传厂商会被直接拒绝，反而让整轮失败。
+- **同一锁定版本既会抛异常，也会静默结束**。2026-09-14 T0 探针纠正原“不会抛异常”的结论：
+  重复工具脚本在上限 1/3/5/15 抛 `GraphRecursionError`，2/4/6 静默结束；这是该脚本的观测，
+  不是对任意图的奇偶规则。静默路径原始模型回调含工具提议，但图最终状态已将最后消息替换为无调用兜底。
+  旧版 pending 计数只证明模型回调结果未配对，不能单独证明触顶或未执行。
+- **T1 已移除不完整的额外收尾调用**。工具事实由消息所有者保留，不生成每轮统计摘要；图预算停止与协议异常分别处理；
+  不再用 pending 数量猜测触顶，不再追加缺少事实/角色前缀的模型请求。上下文 schema 4 移除逐轮统计摘要注入，
+  正常历史保留原正文，失败/中断消息不自动进入历史。契约见[执行事实与可信收尾](execution-facts.md)，
+  修复后实测见[T1 验证记录](../../testing/tool-reliability-t1.md)。
+- **T0 真实 Provider 对照**（2026-09-14）：DeepSeek V4 Flash 正常预算下确认实际提交；专用 3 步探针中，
+  文件已提交但额外收尾返回 `write_status=not_done`。完整两轮浏览器产物验收通过，第二轮仍触发默认 15 步上限。
+  样本、实际用量与覆盖边界仅在上述验证记录维护；不是所有厂商或任意任务的普遍结论。
 - **fake provider 与真实 provider 走同一条路径**。确定性模型实现完整的 `BaseChatModel`
   接口（含 `bind_tools`），因此普通回归测试覆盖的是真实链路而不是旁路。
 

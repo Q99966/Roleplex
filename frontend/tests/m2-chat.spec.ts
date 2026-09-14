@@ -108,7 +108,8 @@ test.describe('M2 single chat', () => {
     await expect(stopButton).toBeHidden({ timeout: 20_000 })
 
     // 停止后不应再出现完整结尾，且消息标记为已停止。
-    await expect(page.getByText('已停止')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('已停止', { exact: true })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('region', { name: '系统执行记录' })).toHaveCount(0)
   })
 
   test('rejects message posting for non-members', async ({ request }) => {

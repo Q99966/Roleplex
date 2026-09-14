@@ -45,7 +45,7 @@ W1b 已完成并通过人工验收；当前工具时间线与展开详情优化�
 [实施计划](docs/plan/tool-timeline-details-v1.md)。下一项按[会话连接与按需加载计划](docs/plan/conversation-loading-v1.md)
 A 连接解耦与 B 分页、缓存及滚动位置均已完成人工验收；单条超长消息分块延期。
 W1c 任意 Shell、Owner 逐次审批及私有执行详情已完成人工验收；W1d Linux 首版与 M 多行输入已完成人工验收，
-[代码 diff 阶段 D、E1 局部编辑与 E2 批量文件操作](docs/plan/code-diff-multiline-v1.md)已通过人工验收，后续继续 W2a。所有聊天标题区显示当前 Workspace 与 Owner
+[代码 diff 阶段 D、E1 局部编辑与 E2 批量文件操作](docs/plan/code-diff-multiline-v1.md)已通过人工验收；继续 W2a 前先推进下述工具可靠性 T0。所有聊天标题区显示当前 Workspace 与 Owner
 更换/解绑入口、群聊 Workspace Binding 和 Repository Binding 已纳入 W2a；富媒体产物、Orchestrator 与
 MCP 产品接入仍在后续里程碑。
 
@@ -80,8 +80,12 @@ E2 批量写入/编辑已通过人工验收：原 `workspace_write`／`workspace
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
 
-近期工具可靠性修正及长期角色能力库的建议路线见[完整方案草案](docs/plan/tool-reliability-capability-roadmap-v1.md)。
-该草案待确认，不代表其中的收尾修复、读取排队、多片段编辑或预留工具已经实现，也不自动改变现行权限和停服规则。
+近期工具可靠性修正及长期角色能力库路线见[完整方案](docs/plan/tool-reliability-capability-roadmap-v1.md)。
+T0 已完成离线与真实 Provider 问题取证，见[T0 验证记录](docs/testing/tool-reliability-t0.md)。
+T1 中断处理已实现并通过人工验收：保留工具执行证据并准确记录停止原因，图预算停止不再追加缺少事实的模型收尾；
+不生成每轮统计摘要，不向历史注入摘要。原工具卡和 Owner 私有详情按原权限与期限保存，中断后恢复工作尚未实现。
+验证与人工检查见[T1 验证记录](docs/testing/tool-reliability-t1.md)。读取排队、多片段编辑与可配置执行预算尚未实现，
+现行图上限、工具权限和停服规则不变。
 
 ### 模型 provider 开关与契约测试
 

@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
@@ -23,11 +23,8 @@ from .tool_capture import capture_input, capture_output
 
 logger = logging.getLogger("roleplex.agent.loop")
 
-# react 循环的最大步数；触顶后改为一次禁用工具的收尾调用，保证有文本结尾。
+# 图步数上限不是工具次数；触顶只交付系统事实，不追加收费模型请求。
 DEFAULT_RECURSION_LIMIT = 15
-
-# 触顶后要求模型直接收尾的提示，不再允许调用工具。
-_WRAP_UP_PROMPT = "已达到本轮工具调用上限，请基于已有信息直接给出最终答复，不要再调用工具。"
 
 # 框架事件名集中在此，业务层不感知。
 _EVENT_MODEL_STREAM = "on_chat_model_stream"
@@ -197,49 +194,6 @@ def _tool_status(output: Any) -> str:
     return "ok"
 
 
-async def _wrap_up(
-    model: BaseChatModel,
-    messages: list[Any],
-    accumulated: str,
-    call_usages: list[dict[str, int | float | bool]],
-    time_source: Callable[[], float],
-) -> AsyncIterator[AgentEvent]:
-    """追加一次禁用工具的收尾调用，保证本轮有文本结尾。
-
-    收尾调用只带原始输入和收尾提示，**不带那条包含未完成工具调用的助手消息**：
-    把未配对的 tool_use 再发回厂商会被直接拒绝（400），反而让本轮彻底失败。
-    """
-    started = time_source()
-    call_index = len(call_usages) + 1
-    yield ProviderCallStarted(call_index=call_index)
-    try:
-        final = await model.ainvoke([*messages, ("user", _WRAP_UP_PROMPT)])
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        yield ProviderError(code=_error_code(exc), message=str(exc))
-        return
-    duration_ms = int((time_source() - started) * 1000)
-    normalized_usage = normalize_provider_usage(final)
-    call_usages.append(normalized_usage)
-    yield ProviderCallCompleted(
-        call_index=call_index,
-        ttft_ms=duration_ms,
-        duration_ms=duration_ms,
-        input_tokens=normalized_usage.get("input_tokens"),
-        output_tokens=normalized_usage.get("output_tokens"),
-        total_tokens=normalized_usage.get("total_tokens"),
-        cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
-        cache_write_tokens=normalized_usage.get("cache_write_tokens"),
-        cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
-        total_tokens_derived=normalized_usage.get("total_tokens_derived"),
-    )
-    text = _chunk_text(final)
-    if text:
-        yield TextDelta(text=text)
-    yield MessageDone(text=accumulated + text, usage=_aggregate_usage(call_usages))
-
-
 async def run_agent(
     *,
     model: BaseChatModel,
@@ -264,13 +218,25 @@ async def run_agent(
     Yields:
         `TextDelta` / `ToolCallStarted` / `ToolCallFinished` / `ProviderCallCompleted` /
         `MessageDone` / `ProviderError`。
-        正常结束以 `MessageDone` 收尾，失败以 `ProviderError` 收尾，两者互斥。
+        正常结束或图预算停止以 `MessageDone` 收尾，失败以 `ProviderError` 收尾，两者互斥。
 
     Raises:
         asyncio.CancelledError：调用方取消本次生成时原样向上传播，
             由调度层按 stopped 收尾，不在此处伪装成错误事件。
     """
-    agent = create_react_agent(model, list(tools), prompt=system_prompt)
+    remaining_steps: int | None = None
+
+    def graph_prompt(state: dict) -> list:
+        """在防腐层观察锁定图版本的派发预算，不把框架状态暴露给业务层。
+
+        Args:
+            state：每次模型调用前的图状态；只读取预算并保留原消息。
+        """
+        nonlocal remaining_steps
+        remaining_steps = state.get('remaining_steps')
+        return [*([SystemMessage(content=system_prompt)] if system_prompt else []), *state['messages']]
+
+    agent = create_react_agent(model, list(tools), prompt=graph_prompt)
     messages: list[Any] = [*(history or []), ("user", prompt)]
     accumulated = ""
     clock = time_source or loop_time
@@ -281,10 +247,13 @@ async def run_agent(
     provider_call_index: dict[str, int] = {}
     provider_stream_usage: dict[str, dict[str, int | float | bool]] = {}
     next_provider_call_index = 0
-    # 最近一次模型回合中尚未拿到结果的工具调用数量。
-    # 实测锁定版本的 LangGraph 在达到步数上限时**不会抛异常**，而是直接结束事件流，
-    # 留下一条带未配对 tool_use 的助手消息；因此触顶只能靠这个计数自行识别。
-    pending_tool_calls = 0
+    pending_ids: set[str] = set()
+    protocol_broken = False
+    graph_completed = False
+    model_completed = False
+    budget_blocked = False
+    blocked_ids: set[str] = set()
+    direct_tools = {tool.name for tool in tools if tool.return_direct}
 
     try:
         async for event in agent.astream_events(
@@ -292,6 +261,8 @@ async def run_agent(
         ):
             kind = event["event"]
             run_id = str(event.get("run_id"))
+            if kind == 'on_chain_end' and not event.get('parent_ids'):
+                graph_completed = True
             if kind == _EVENT_MODEL_START:
                 next_provider_call_index += 1
                 provider_call_index[run_id] = next_provider_call_index
@@ -310,7 +281,17 @@ async def run_agent(
                     yield TextDelta(text=text)
             elif kind == _EVENT_MODEL_END:
                 output = event["data"].get("output")
-                pending_tool_calls = len(getattr(output, "tool_calls", None) or [])
+                model_completed = True
+                proposals = getattr(output, 'tool_calls', None) or []
+                ids = [call.get('id') for call in proposals]
+                if pending_ids or any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
+                    protocol_broken = True
+                pending_ids.update(value for value in ids if isinstance(value, str))
+                # 与锁定版本派发条件一致，不能通过兜底文本或 pending 数量猜测触顶。
+                budget_blocked = remaining_steps is not None and (
+                    (remaining_steps < 2 and bool(proposals)) or
+                    (remaining_steps < 1 and all(call['name'] in direct_tools for call in proposals)))
+                blocked_ids = set(ids) if budget_blocked else set()
                 stream_usage = provider_stream_usage.pop(run_id, {})
                 normalized_usage = normalize_provider_usage(output) or stream_usage
                 call_usages.append(normalized_usage)
@@ -340,7 +321,11 @@ async def run_agent(
             elif kind == _EVENT_TOOL_END:
                 call_id = str(event.get("run_id"))
                 output = event["data"].get("output")
-                pending_tool_calls = max(0, pending_tool_calls - 1)
+                provider_id = getattr(output, 'tool_call_id', None)
+                if provider_id not in pending_ids:
+                    protocol_broken = True
+                else:
+                    pending_ids.remove(provider_id)
                 tool_started = started_at.pop(call_id, None)
                 from .write_capture import take_write_capture
                 private_output = capture_output(event.get('name', ''), output)
@@ -357,42 +342,33 @@ async def run_agent(
                     private_output=private_output,
                 )
     except GraphRecursionError:
-        # 某些版本会抛异常而不是静默结束，两条路径都走同一个收尾流程。
-        logger.info("generation.recursion_limit_reached", extra={"recursion_limit": recursion_limit})
-        async for event in _wrap_up(model, messages, accumulated, call_usages, clock):
-            yield event
+        yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',
+                          undispatched_proposals=len(blocked_ids) if budget_blocked and not started_at else None)
         return
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        code = _error_code(exc)
-        active_run = max(provider_call_index, key=provider_call_index.get) if provider_call_index else None
-        active_started = provider_started_at.get(active_run) if active_run else None
-        logger.warning(
-            "provider.call_failed",
-            extra={
-                "error_code": code,
-                "error_type": type(exc).__name__,
-                "provider_call_index": provider_call_index.get(active_run) if active_run else None,
-                "ttft_ms": provider_ttft_ms.get(active_run) if active_run else None,
-                "duration_ms": int((clock() - active_started) * 1000) if active_started is not None else None,
-                "status": (
-                    "timeout" if code == "PROVIDER_TIMEOUT"
-                    else "rejected" if code in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_REQUEST"}
-                    else "failed"
-                ),
-            },
-        )
-        yield ProviderError(code=code, message=str(exc))
+        provider_failure = bool(provider_call_index)
+        code = _error_code(exc) if provider_failure else 'AGENT_PROTOCOL_ERROR'
+        if provider_failure:
+            active_run = max(provider_call_index, key=provider_call_index.get)
+            started = provider_started_at.get(active_run)
+            logger.warning('provider.call_failed', extra={
+                'error_code': code, 'error_type': type(exc).__name__,
+                'provider_call_index': provider_call_index[active_run],
+                'ttft_ms': provider_ttft_ms.get(active_run),
+                'duration_ms': int((clock() - started) * 1000) if started is not None else None,
+                'status': 'timeout' if code == 'PROVIDER_TIMEOUT' else 'rejected'
+                    if code in {'PROVIDER_AUTH_FAILED', 'PROVIDER_BAD_REQUEST'} else 'failed',
+            })
+        yield ProviderError(code=code, message=code,
+                            stop_reason='provider_failed' if provider_failure else 'protocol_error')
         return
 
-    if pending_tool_calls:
-        logger.info(
-            "tool.calls_unresolved",
-            extra={"recursion_limit": recursion_limit, "pending_tool_calls": pending_tool_calls},
-        )
-        async for event in _wrap_up(model, messages, accumulated, call_usages, clock):
-            yield event
-        return
-
-    yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages))
+    if budget_blocked and graph_completed and not protocol_broken and pending_ids == blocked_ids and not started_at:
+        yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',
+                          undispatched_proposals=len(blocked_ids))
+    elif protocol_broken or pending_ids or started_at or not graph_completed or not model_completed:
+        yield ProviderError(code='AGENT_PROTOCOL_ERROR', message='AGENT_PROTOCOL_ERROR', stop_reason='protocol_error')
+    else:
+        yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages))

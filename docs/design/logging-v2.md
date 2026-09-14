@@ -289,6 +289,7 @@ ws.subscribed                ws.unsubscribed             ws.disconnected
 generation.created           generation.started
 generation.completed         generation.failed
 generation.cancelled
+generation.budget_stopped
 generation.skipped           generation.queue_job_completed
 generation.queue_job_failed  execution.interrupted
 provider.built               provider.call_started
@@ -315,6 +316,11 @@ log.retention_skipped
 新增事件必须先登记目录并检查是否已有同义事实；不得并存 `provider.call_completed`、
 `provider.completed`、`model.call_done`、`llm.finished` 等多套表达。现有实现迁移到 v2 时需要提供旧→新
 事件映射测试，不能静默遗漏监控消费者。
+
+T1 使用 `generation.budget_stopped` 记录图预算停止的唯一终态，status=cancelled、reason=graph_budget；
+用户停止仍用 generation.cancelled。原 generation.recursion_limit_reached/tool.calls_unresolved 调试事件
+由终态原因取代，不把未配对调用记为预算耗尽。协议异常以 generation.failed/error_code=AGENT_PROTOCOL_ERROR
+收口，不伪装为 provider.call_failed。摘要内容不进日志，消息/执行身份与已有终态耗时沿用原字段。
 
 运行回收清单已持久化后，机器审计写失败不得跳过剩余目标；继续回收并把批次记录为失败，阻止尚未提交的后续资源变更。
 请求取消同样不能截断冻结清单。无法保存某项结果时保留原待处理记录，后续重试核查，不伪造完成或成功日志。
@@ -718,6 +724,9 @@ E2E summary 字段定义：
 所有 E2E 默认关闭 trace/video：认证表单、DOM 和请求数据无法保证可逆脱敏，不能为了诊断便利保存凭据。
 失败截图可以保留；Markdown/TXT/JSON 诊断附件必须读取、脱敏后再复制，ZIP/trace 不进入日志目录。
 没有产物时 `items=[]`，`artifacts/` 可以不创建。
+
+同一用例的不同附件、不同重试轮次必须使用不同文件名；文件名只包含脱敏测试身份、重试序号和附件序号，
+不得用原始附件名带入敏感信息。复制后的每条索引必须仍匹配其文件内容，不能覆盖上一张截图后留下过期 hash。
 
 `artifacts.json.items[]` 字段定义：
 

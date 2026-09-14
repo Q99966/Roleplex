@@ -315,7 +315,7 @@ function upsert(set: any, get: () => ChatState, message: Message) {
  * @param get 读取当前已选择窗口。
  * @param event 已经传输层验证归属和顺序的领域事件。
  */
-function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
+export function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
   if (event.type === 'runtime_changed') { set({ runtimeVersion: get().runtimeVersion + 1 }); return }
   if (event.type === 'approval_changed') {
     set({ approvalVersion: get().approvalVersion + 1 })
@@ -408,6 +408,9 @@ export function appendTextDelta(parts: Part[], payload: Record<string, any>): Pa
   if (typeof payload.part_id === 'string' && Number.isInteger(payload.part_index)) {
     const index = updated.findIndex((part) => part.part_id === payload.part_id && part.type === 'text')
     if (index >= 0) updated[index].text = (updated[index].text ?? '') + (payload.text ?? '')
+    else if (payload.part_index === updated.length - 1 && updated.at(-1)?.type === 'execution_summary') {
+      updated.splice(payload.part_index, 0, { type: 'text', part_id: payload.part_id, text: payload.text ?? '' })
+    }
     else if (payload.part_index === updated.length) updated.push({ type: 'text', part_id: payload.part_id, text: payload.text ?? '' })
     return updated
   }

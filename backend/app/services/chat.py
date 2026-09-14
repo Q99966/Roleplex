@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from functools import wraps
 import uuid
 from contextvars import copy_context
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from ..realtime import store as event_store
 from ..workspaces.tools import create_workspace_tools, retain_execution_workspace
 from .tool_details import update_detail
 from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
+from .execution_evidence import message_stop_reason, tool_evidence
 
 logger = logging.getLogger("roleplex.chat")
 
@@ -76,6 +78,7 @@ def message_payload(message: Message) -> dict:
         "chain_id": message.chain_id,
         "created_at": message.created_at.isoformat(),
         'timeline_version': (message.meta_json or {}).get('timeline_version', 0),
+        'stop_reason': message_stop_reason(message),
     }
 
 
@@ -216,6 +219,7 @@ def _with_text_part(parts: list[dict], text: str) -> list[dict]:
     Returns:
         已封闭文本和工具位置不变，只更新或追加末尾文本段。
     """
+    parts = [part for part in parts if part.get('type') != 'execution_summary']
     if not any(part.get('type') == 'text' and part.get('part_id') for part in parts):
         return [{"type": "text", "text": text}, *[part for part in parts if part.get("type") != "text"]]
     updated = [dict(part) for part in parts]
@@ -229,6 +233,24 @@ def _with_text_part(parts: list[dict], text: str) -> list[dict]:
     return updated
 
 
+def retry_message_write(operation):
+    """复用数据库适配层的有限锁重试，取消原样传播。
+
+    Args:
+        operation：原消息所有者的短事务操作。
+    """
+    @wraps(operation)
+    async def run(*args, **kwargs):
+        """Args:
+            args：原操作位置参数。
+            kwargs：原操作关键字参数。
+        """
+        from ..db import with_locked_retry
+        return await with_locked_retry(lambda: operation(*args, **kwargs))
+    return run
+
+
+@retry_message_write
 async def _update_tool_part(
     *,
     conversation_id: int,
@@ -264,9 +286,9 @@ async def _update_tool_part(
     """
     async with SessionLocal() as session:
         message = await session.get(Message, message_id)
-        if message is None:
+        if message is None or message.status != "generating":
             return
-        parts = [dict(part) for part in (message.parts_json or [])]
+        parts = [dict(part) for part in (message.parts_json or []) if part.get("type") != "execution_summary"]
         if accumulated_text is not None:
             parts = _with_text_part(parts, accumulated_text)
         replacement = {
@@ -287,6 +309,11 @@ async def _update_tool_part(
             replacement = {**parts[index], **replacement}
             parts[index] = replacement
         replacement.update(command_summary or {})
+        evidence = tool_evidence(tool_name, status, private_output)
+        # 已确认提交不可被迟到的空采集或取消事件降格为未知。
+        if replacement.get('effect_state') == 'applied' and evidence['effect_state'] == 'unknown':
+            evidence = {key: replacement[key] for key in ('effect_state', 'confirmed_applied_items')}
+        replacement.update(evidence)
         has_detail = await update_detail(session, message_id=message_id, call_id=call_id, tool_name=tool_name,
             status=status, execution_id=execution_id, user_id=triggered_by_user_id,
             private_input=private_input, private_output=private_output)
@@ -306,8 +333,18 @@ async def _update_tool_part(
     await event_store.publish_events(pending)
 
 
-async def _finalize(generation_id: int, status: str, text: str, error_code: str | None = None) -> dict:
-    """把生成终态写入数据库并广播，返回终态事件的可观测字段。"""
+@retry_message_write
+async def _finalize(generation_id: int, status: str, text: str, error_code: str | None = None,
+                    *, stop_reason: str | None = None) -> dict:
+    """原所有者在同一短事务保存消息终态与停止原因，重复终态不重写。
+
+    Args:
+        generation_id：持久生成身份。
+        status：已有生成终态，不新增状态值。
+        text：已观察模型正文。
+        error_code：已登记错误码。
+        stop_reason：领域停止原因，不从正文推断。
+    """
     async with SessionLocal() as session:
         generation = await session.get(Generation, generation_id)
         if generation is None or generation.status in {"completed", "stopped", "failed"}:
@@ -326,6 +363,8 @@ async def _finalize(generation_id: int, status: str, text: str, error_code: str 
             await session.execute(update(ToolExecutionDetail).where(
                 ToolExecutionDetail.message_id == message.id, ToolExecutionDetail.status == 'running',
             ).values(status='interrupted'))
+            reason = stop_reason or {'completed': None, 'stopped': 'user_cancelled', 'failed': 'provider_failed'}[status]
+            message.meta_json = {**(message.meta_json or {}), 'stop_reason': None if reason == 'completed' else reason}
             message.status = {"completed": "done", "stopped": "stopped", "failed": "error"}[status]
             message.revision += 1
             events_to_publish.append(
@@ -384,6 +423,7 @@ async def _finish_tool_event(
     })
 
 
+@retry_message_write
 async def _persist_text_delta(
     message_id: int, conversation_id: int, generation_id: int, text: str, delta: str, delta_seq: int,
 ) -> None:
@@ -399,13 +439,14 @@ async def _persist_text_delta(
     """
     async with SessionLocal() as session:
         message = await session.get(Message, message_id)
-        if message is None:
+        if message is None or message.status != 'generating':
             return
         parts = _with_text_part(message.parts_json or [], text)
         message.parts_json = parts
         message.revision += 1
+        text_index = max(index for index, part in enumerate(parts) if part.get('type') == 'text')
         pending = await event_store.append_event(session, conversation_id, 'message_delta',
-            {'message_id': message_id, 'text': delta, 'part_id': parts[-1]['part_id'], 'part_index': len(parts) - 1},
+            {'message_id': message_id, 'text': delta, 'part_id': parts[text_index]['part_id'], 'part_index': text_index},
             revision=message.revision, delta_seq=delta_seq, generation_id=generation_id)
         await session.commit()
     await event_store.publish_events(pending)
@@ -450,6 +491,35 @@ async def run_scheduled_generation(
     from ..agent.write_capture import WriteCaptureScope, write_capture_scope
     write_captures = WriteCaptureScope()
     write_capture_token = write_capture_scope.set(write_captures)
+    async def finish_pending(pending_status: str) -> None:
+        """回收后消费仍由原任务持有的凭据，不重放工具。
+
+        Args:
+            pending_status：取消或中断状态，与提交状态独立。
+        """
+        for call_id, (started_event, started_at) in list(command_calls.items()):
+            duration_ms = int((perf_counter() - started_at) * 1000)
+            await _record_tool_call(
+                ToolCallFinished(call_id, started_event.tool_name, pending_status, duration_ms, '{}'),
+                args_summary=started_event.args_summary, conversation_id=conversation_id,
+                message_id=assistant_id, role_id=target_role_id, triggered_by_user_id=triggered_by_user_id,
+                execution_id=execution_id,
+            )
+            await _update_tool_part(
+                conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
+                call_id=call_id, tool_name=started_event.tool_name, status=pending_status, duration_ms=duration_ms,
+                command_summary=({'error_code': 'EXECUTION_INTERRUPTED'} if pending_status == 'interrupted' else
+                    {'command_status': 'cancelled', 'exit_code': None} if started_event.tool_name in {'workspace_run_command', 'workspace_run_shell'} else {}),
+                accumulated_text=accumulated,
+                execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
+                private_output=write_captures.take(call_id) if started_event.tool_name in WORKSPACE_CAPTURE_TOOLS else None,
+            )
+            logger.info('tool.call_completed', extra={
+                'tool_call_id': call_id, 'tool_name': started_event.tool_name,
+                'duration_ms': duration_ms, 'status': pending_status,
+            })
+        command_calls.clear()
+
     provider_call_count = 0
     first_ttft_ms: int | None = None
     usage_summary: dict[str, int | float | None] = {
@@ -570,6 +640,7 @@ async def run_scheduled_generation(
         last_persist = asyncio.get_running_loop().time() - _PERSIST_INTERVAL_SECONDS
         pending_text = ''
         failed_code: str | None = None
+        stop_reason = 'completed'
         async for event in run_agent(
             model=model,
             tools=tools,
@@ -678,11 +749,17 @@ async def run_scheduled_generation(
                 )
             elif isinstance(event, MessageDone):
                 usage_summary.update(event.usage)
+                stop_reason = event.stop_reason
             elif isinstance(event, ProviderError):
                 failed_code = event.code
+                stop_reason = event.stop_reason
 
+        # 已派发但未收到结束事件：先消费现有凭据，不把未知副作用变成未执行。
+        if command_calls:
+            await finish_pending('interrupted')
         if failed_code:
-            terminal = await _finalize(generation_id, "failed", accumulated, error_code=failed_code)
+            terminal = await _finalize(generation_id, "failed", accumulated, error_code=failed_code,
+                                       stop_reason=stop_reason)
             logger.warning(
                 "generation.failed",
                 extra={
@@ -700,14 +777,17 @@ async def run_scheduled_generation(
             )
             return
 
-        terminal = await _finalize(generation_id, "completed", accumulated)
+        budget_stopped = stop_reason == 'graph_budget'
+        terminal = await _finalize(generation_id, "stopped" if budget_stopped else "completed", accumulated,
+                                   stop_reason=stop_reason)
         logger.info(
-            "generation.completed",
+            "generation.budget_stopped" if budget_stopped else "generation.completed",
             extra={
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
                 "delta_count": delta_seq,
-                "status": "success",
+                "status": "cancelled" if budget_stopped else "success",
+                "reason": stop_reason,
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,
                 **usage_summary,
@@ -717,7 +797,7 @@ async def run_scheduled_generation(
             },
         )
     except ContextBudgetExceeded as exc:
-        terminal = await _finalize(generation_id, "failed", "", error_code=exc.error_code)
+        terminal = await _finalize(generation_id, "failed", "", error_code=exc.error_code, stop_reason="context_rejected")
         logger.warning(
             "generation.failed",
             extra={
@@ -740,7 +820,7 @@ async def run_scheduled_generation(
         reported = str(exc)
         expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED"}
         error_code = reported if reported in expected_codes else "REQUEST_FAILED"
-        terminal = await _finalize(generation_id, "failed", "", error_code=error_code)
+        terminal = await _finalize(generation_id, "failed", "", error_code=error_code, stop_reason="context_rejected")
         log_method = logger.warning if error_code in expected_codes else logger.exception
         log_method(
             "generation.failed",
@@ -758,26 +838,7 @@ async def run_scheduled_generation(
         return
     except asyncio.CancelledError:
         # 用户主动停止属于预期结果，按 stopped 落库而不是未处理异常。
-        for call_id, (started_event, started_at) in command_calls.items():
-            duration_ms = int((perf_counter() - started_at) * 1000)
-            await _record_tool_call(
-                ToolCallFinished(call_id, started_event.tool_name, 'cancelled', duration_ms, '{}'),
-                args_summary=started_event.args_summary, conversation_id=conversation_id,
-                message_id=assistant_id, role_id=target_role_id, triggered_by_user_id=triggered_by_user_id,
-                execution_id=execution_id,
-            )
-            await _update_tool_part(
-                conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
-                call_id=call_id, tool_name=started_event.tool_name, status='cancelled', duration_ms=duration_ms,
-                command_summary={'command_status': 'cancelled', 'exit_code': None},
-                accumulated_text=accumulated,
-                execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
-                private_output=write_captures.take(call_id) if started_event.tool_name in WORKSPACE_CAPTURE_TOOLS else None,
-            )
-            logger.info('tool.call_completed', extra={
-                'tool_call_id': call_id, 'tool_name': started_event.tool_name,
-                'duration_ms': duration_ms, 'status': 'cancelled',
-            })
+        await finish_pending('cancelled')
         terminal = await _finalize(generation_id, "stopped", accumulated)
         logger.info(
             "generation.cancelled",
@@ -797,13 +858,14 @@ async def run_scheduled_generation(
         )
         raise
     except Exception:
-        terminal = await _finalize(generation_id, "failed", accumulated, error_code="PROVIDER_ERROR")
+        await finish_pending('interrupted')
+        terminal = await _finalize(generation_id, "failed", accumulated, error_code="AGENT_PROTOCOL_ERROR", stop_reason='protocol_error')
         logger.exception(
             "generation.failed",
             extra={
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
-                "error_code": "PROVIDER_ERROR",
+                "error_code": "AGENT_PROTOCOL_ERROR",
                 "status": "failed",
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,

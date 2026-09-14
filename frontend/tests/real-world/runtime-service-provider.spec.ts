@@ -8,6 +8,15 @@ import { isExpectedHeadingEdit } from '../controlled-page'
 
 test.use({ screenshot: 'off', trace: 'off', video: 'off' })
 
+/** 生成完成或明确图预算停止都可进入独立产物验收；错误不能被视作完成。
+ * @param item 服务器消息及可选系统摘要。
+ */
+function isFinishedReply(item: { sender_type: string; status: string; stop_reason?: string; parts_json?: Array<{ type: string; stop_reason?: string }> }) {
+  return item.sender_type === 'role' && (item.status === 'done' || (item.status === 'stopped'
+    && (item.stop_reason === 'graph_budget' || item.parts_json?.some((part) => part.type === 'execution_summary' && part.stop_reason === 'graph_budget'))))
+}
+
+
 test('完整工具集两轮开发：页面创建、回答后服务存续、局部修改与正常回收', async ({ page }, testInfo) => {
   test.setTimeout(300_000)
   const stamp = process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP!
@@ -116,7 +125,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
         firstChecks++
       }
       const history = await api(`/api/conversations/${cid}/messages`)
-      if (!history.active_generation_ids.length && history.items.some((item: { sender_type: string; status: string }) => item.sender_type === 'role' && item.status === 'done')) {
+      if (!history.active_generation_ids.length && history.items.some((item: { sender_type: string; status: string }) => isFinishedReply(item))) {
         firstFinished = true
         break
       }
@@ -154,7 +163,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
         if (!allowed || ++decisions > 3) throw new Error('超出本轮脚本或执行次数范围')
       }
       const history = await api(`/api/conversations/${cid}/messages`)
-      if (!history.active_generation_ids.length && history.items.some((item: { id: number; sender_type: string; status: string }) => item.id > secondUserId && item.sender_type === 'role' && item.status === 'done')) {
+      if (!history.active_generation_ids.length && history.items.some((item: { id: number; sender_type: string; status: string }) => item.id > secondUserId && isFinishedReply(item))) {
         toolPaths = [history.items.filter((item: { id: number }) => item.id < secondUserId), history.items.filter((item: { id: number }) => item.id > secondUserId)]
           .map((items) => items.flatMap((item: { parts_json: Array<{ type: string; tool_name?: string }> }) => item.parts_json.filter((part) => part.type === 'tool_call').map((part) => part.tool_name ?? 'unknown')))
         const secondCalls = history.items.filter((item: { id: number }) => item.id > secondUserId)

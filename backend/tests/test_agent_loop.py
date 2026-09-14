@@ -41,8 +41,8 @@ def wipe_disk(path: str) -> str:
 class AlwaysToolCallModel(BaseChatModel):
     """流式路径永远发起工具调用，非流式路径给出文本。
 
-    用于制造"工具轮没有收尾"的局面：锁定版本的 LangGraph 达到步数上限时不会抛异常，
-    而是直接结束事件流并留下未配对的工具调用，因此防腐层必须自己识别并补一次收尾调用；
+    用于制造"工具轮没有收尾"的局面：当前 limit=4 测例会静默结束，但原始模型回调仍有
+    未配对的工具提议；完整异常/静默退出区别由 T0 探针验证。现状防腐层会补一次收尾调用；
     收尾调用走非流式路径，所以这里可以稳定地拿到一段文本结尾。
     """
 
@@ -330,8 +330,8 @@ async def test_dangerous_tool_is_rejected_at_execution_layer():
 
 
 @pytest.mark.anyio
-async def test_step_limit_falls_back_to_wrap_up():
-    """步数上限用尽后不能留下未配对的工具调用：应追加禁用工具的收尾调用并给出文本。"""
+async def test_step_limit_stops_without_extra_model_call():
+    """图预算停止只返回领域原因，不能追加无事实的模型解释。"""
     events = await _collect(
         model=AlwaysToolCallModel(),
         tools=guard_tools([read_artifact], allow_dangerous=True),
@@ -341,7 +341,9 @@ async def test_step_limit_falls_back_to_wrap_up():
 
     assert not any(isinstance(event, ProviderError) for event in events)
     assert isinstance(events[-1], MessageDone)
-    assert events[-1].text.endswith("这是收尾答复")
+    assert events[-1].stop_reason == 'graph_budget'
+    assert events[-1].undispatched_proposals == 1
+    assert '收尾答复' not in events[-1].text
     # 收尾后不应再有悬空的工具开始事件。
     started = [event for event in events if isinstance(event, ToolCallStarted)]
     finished = [event for event in events if isinstance(event, ToolCallFinished)]

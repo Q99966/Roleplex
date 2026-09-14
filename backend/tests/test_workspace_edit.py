@@ -35,7 +35,8 @@ async def wait_reply(client, headers, cid, after_id):
     for _ in range(200):
         history = (await client.get(f'/api/conversations/{cid}/messages', headers=headers)).json()
         replies = [item for item in history['items'] if item['id'] > after_id and item['sender_type'] == 'role']
-        if not history['active_generation_ids'] and replies:
+        # 消息读取与活动列表查询可能跨越终态提交，必须同时核对本条消息状态。
+        if not history['active_generation_ids'] and replies and replies[-1]['status'] in {'done', 'error', 'stopped', 'interrupted'}:
             return replies[-1]
         await asyncio.sleep(.03)
     raise AssertionError('编辑回复未在预期时间结束')

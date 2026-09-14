@@ -41,36 +41,65 @@ async def command_conversation(root: Path):
         root：本轮独立外部目录。
     """
     from httpx import AsyncClient, ASGITransport
-    from accounts import ensure_owner_async
+    from accounts import ensure_owner_async, stable_auth_clock
     from app.main import app
     async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
-            owner = await ensure_owner_async(client)
-            headers = {'Authorization': f"Bearer {owner['access_token']}"}
-            config = await client.post('/api/model-configs', headers=headers, json={
-                'name': root.name, 'provider_type': 'openai_compatible', 'api_key': 'sk-placeholder',
-            })
-            role = await client.post('/api/roles', headers=headers, json={
-                'name': root.name, 'model_config_id': config.json()['id'], 'model_name': 'fake-model',
-                'system_prompt': '使用受控命令完成测试。',
-                'builtin_tools': ['workspace_run_command'],
-            })
-            assert role.status_code == 201
-            workspace = await client.post('/api/workspaces', headers=headers, json={
-                'display_name': root.name, 'root_path': str(root), 'acknowledge_existing_content': True,
-            })
-            assert workspace.status_code == 201
-            binding_id = workspace.json()['id']
-            enabled = await client.patch(f'/api/workspaces/{binding_id}', headers=headers, json={
-                'basic_commands_enabled': True,
-            })
-            assert enabled.json()['basic_commands_enabled'] is True
-            assert enabled.json()['file_tools_enabled'] is False
-            conversation = await client.post('/api/conversations', headers=headers, json={
-                'type': 'single', 'title': '命令测试', 'role_ids': [role.json()['id']], 'workspace_binding_id': binding_id,
-            })
-            assert conversation.status_code == 201
-            yield client, headers, conversation.json()['id'], role.json()['id'], binding_id
+        with stable_auth_clock():
+            async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+                owner = await ensure_owner_async(client)
+                headers = {'Authorization': f"Bearer {owner['access_token']}"}
+
+                async def diagnose_owner_auth(response):
+                    """仅在本轮 Owner 的 401 中记录安全分类，不记录 Token 或签名密钥。
+
+                    Args:
+                        response：测试客户端刚收到的 HTTP 响应。
+                    """
+                    if response.status_code != 401 or response.request.headers.get('authorization') != headers['Authorization']:
+                        return
+                    import jwt
+                    from datetime import datetime, timezone
+                    from app.config import settings
+                    await response.aread()
+                    failure_kind = 'claims_valid'
+                    delta = None
+                    try:
+                        jwt.decode(owner['access_token'], settings.resolved_jwt_secret(), algorithms=[settings.jwt_algorithm])
+                    except jwt.PyJWTError as exc:
+                        failure_kind = type(exc).__name__
+                        claims = jwt.decode(owner['access_token'], options={'verify_signature': False})
+                        if isinstance(claims.get('iat'), (int, float)):
+                            delta = round((datetime.now(timezone.utc).timestamp() - claims['iat']) * 1000)
+                    print('Owner fixture 401:', response.json().get('error', {}).get('code'), failure_kind, 'iat_age_ms=', delta)
+
+                client.event_hooks['response'].append(diagnose_owner_auth)
+                config = await client.post('/api/model-configs', headers=headers, json={
+                    'name': root.name, 'provider_type': 'openai_compatible', 'api_key': 'sk-placeholder',
+                })
+                role = await client.post('/api/roles', headers=headers, json={
+                    'name': root.name, 'model_config_id': config.json()['id'], 'model_name': 'fake-model',
+                    'system_prompt': '使用受控命令完成测试。',
+                    'builtin_tools': ['workspace_run_command'],
+                })
+                assert role.status_code == 201
+                workspace = await client.post('/api/workspaces', headers=headers, json={
+                    'display_name': root.name, 'root_path': str(root), 'acknowledge_existing_content': True,
+                })
+                assert workspace.status_code == 201
+                binding_id = workspace.json()['id']
+                enabled = await client.patch(f'/api/workspaces/{binding_id}', headers=headers, json={
+                    'basic_commands_enabled': True,
+                })
+                # 准备阶段失败只报告固定状态/错误码，不能用缺字段掩盖 401 或打印凭据响应。
+                assert enabled.status_code == 200, (
+                    enabled.status_code, enabled.json().get('error', {}).get('code'))
+                assert enabled.json()['basic_commands_enabled'] is True
+                assert enabled.json()['file_tools_enabled'] is False
+                conversation = await client.post('/api/conversations', headers=headers, json={
+                    'type': 'single', 'title': '命令测试', 'role_ids': [role.json()['id']], 'workspace_binding_id': binding_id,
+                })
+                assert conversation.status_code == 201
+                yield client, headers, conversation.json()['id'], role.json()['id'], binding_id
 
 
 async def send_command(client, headers, conversation_id, prompt):

@@ -151,9 +151,10 @@ async def recover_interrupted_messages() -> None:
                     part.update(status='failed', error_code='EXECUTION_INTERRUPTED', exit_code=None)
                     part.pop('command_status', None)
                     changed = True
-            if changed:
-                message.parts_json = parts
-                message.revision += 1
+            if message.sender_type in {'role', 'orchestrator'}:
+                message.meta_json = {**(message.meta_json or {}), 'stop_reason': 'interrupted'}
+            message.parts_json = parts
+            message.revision += 1
         await session.commit()
 
 

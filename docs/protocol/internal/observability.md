@@ -4,14 +4,16 @@
 |---|---|
 | 受众 | 内部开发、测试与本机运维 |
 | 状态 | 已实现（日志 schema v2） |
-| 协议版本 | 7 |
+| 协议版本 | 8 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/app/config/logging.py`、`backend/app/config/log_archive.py`、`backend/tests/reporting.py`、`frontend/tests/log-reporter.ts` |
 | 详细规范 | [日志目录与字段规范 v2](../../design/logging-v2.md) |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-14 |
 
 本文说明当前代码已落地的观测行为。目录、完整字段表、事件目录、轮转、pytest/E2E schema 和归档算法
 统一引用详细规范，不在本文复制第二份权威定义。
+
+T1 图预算终态与协议异常的事件映射见详细规范；安全执行摘要只保存在消息中，不进入机器日志。
 
 ## 输出布局
 

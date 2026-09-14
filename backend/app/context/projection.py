@@ -25,6 +25,8 @@ def parts_text(parts: list[dict[str, Any]]) -> str:
                  *[part for part in parts if part.get('type') != 'text']]
     for part in parts or []:
         part_type = str(part.get("type", "unknown"))
+        if part_type == "execution_summary":
+            continue
         if part_type == "text":
             fragments.append(str(part.get("text", "")))
         elif part_type == "code":
@@ -45,13 +47,17 @@ def project_message(message: Message, *, target_role_id: int) -> BaseMessage | N
         message：按 ID 读取的数据库消息。
         target_role_id：本轮执行角色，用于识别其自身历史回复。
     """
-    if message.status not in {"done", "stopped"}:
+    from ..services.execution_evidence import message_stop_reason
+    if message.status not in {'done', 'stopped'}:
         return None
     text = parts_text(message.parts_json or [])
     if not text:
         return None
-    if message.status == "stopped":
-        text = f"{text}\n{_STOPPED_MARKER}"
+    if message.status == 'stopped':
+        reason = message_stop_reason(message)
+        marker = '[该回复因执行步数上限停止]' if reason == 'graph_budget' else (
+            _STOPPED_MARKER if reason == 'user_cancelled' else '[该回复已停止]')
+        text = f'{text}\n{marker}'
     if message.sender_type == "role" and message.sender_id == target_role_id:
         return AIMessage(content=text)
     identity = f"[{message.sender_type}:{message.sender_id}]" if message.sender_id is not None else f"[{message.sender_type}]"

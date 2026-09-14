@@ -39,7 +39,9 @@ export type Role = { id: number; name: string; avatar: string | null; descriptio
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; workspace_binding_id: number | null; role_ids: number[]; revision: number; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
-export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number }
+export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number; stop_reason?: StopReason | null }
+/** 服务器保存的停止原因，不包含回合统计或私有工具内容。 */
+export type StopReason = 'user_cancelled' | 'graph_budget' | 'provider_failed' | 'protocol_error' | 'interrupted' | 'context_rejected'
 export type ToolCapture = { text: string; bytes: number; truncated: boolean }
 export type FileDiffLine = {
   kind: 'context' | 'insert' | 'delete'; old_line: number | null; new_line: number | null;

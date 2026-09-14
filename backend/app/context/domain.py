@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from langchain_core.messages import BaseMessage
 
 
-# v2 保留非空正文的外围空白；投影变化必须使稳定前缀版本同步变化。
-CONTEXT_SCHEMA_VERSION = 2
+# v4 移除历史统计摘要注入，保留原正文、工具占位与准确的停止标记。
+CONTEXT_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)

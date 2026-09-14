@@ -48,6 +48,20 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+T1 调用证据与中断处理（新回复不生成统计摘要、不注入历史）：`pytest tests/test_execution_summary.py tests/test_tool_reliability_t0.py -q`；
+浏览器 `npm run test:e2e:commands -- execution-summary.spec.ts`。完整回归、真实 Provider 命令、实际用量、
+截图和人工验收见[T1 验证记录](tool-reliability-t1.md)。沿用命令类别/轮次/用例隔离，普通回归仍固定 fake。
+后端隔离命令 fixture 的 JWT 签发/校验共用单调推进的 UTC，以隔离已观察到的宿主墙钟回退；
+不增加认证容差，显式未来签发与过期 Token 仍须被拒绝，产品和真实浏览器认证时钟不变。
+
+T0 工具可靠性探针：`pytest tests/test_tool_reliability_t0.py -q`，只使用离线模型；
+完整组合命令、框架版本结论、缺陷复现与 T1 验收关口见[T0 验证记录](tool-reliability-t0.md)。
+现状断言通过不代表修复，T1 实施时须替换相应缺陷断言。T0 没有新增用户界面，不要求浏览器流程。
+用户追加授权的 T0 真实验证：backend 中显式运行
+`pytest tests/contract/test_tool_reliability_real.py -m contract -k openai_compatible -q -s --tb=no`，
+并复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`；两者联网计费，结论及未覆盖项见同一验证记录。
+前者只保存受控状态/回执比对和厂商 usage，使用既有命令类别/轮次/用例目录，不保存模型原始输入输出。
+
 S2 写入拒绝诊断：`pytest tests/test_write_diagnostics.py -q`；浏览器 `npm run test:e2e:commands -- write-diagnostics.spec.ts`。
 覆盖单项/批次可用性、清理优先级、跨会话明细隐藏、当前权限与实际暴露工具交集、身份失败无资源信息、
 以及已提交首项后的新阻塞。浏览器使用真实服务，检查 Owner 原位私有原因/建议、正常停服后继续修改、历史不重建及 Guest 隔离，
