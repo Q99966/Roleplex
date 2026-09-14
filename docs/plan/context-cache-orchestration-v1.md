@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | Roleplex 架构、后端、前端与测试维护者 |
-| 状态 | C0-C2、M4a、W0、E0、W1a、W1b 已完成并经人工验收；W1c 尚未开始 |
+| 状态 | C0-C2、M4a 已验收；工作区与 T 系列当前进度以关联独立计划为准 |
 | 计划版本 | 1 |
 | 参考设计 | [多 Agent 群聊平台 Prompt Cache 优化计划](../design/cache-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-09 |
+| 复核日期 | 2026-09-14 |
 
 本文把 Prompt Cache 参考设计适配到 Roleplex 当前真实架构，并重排群聊、Orchestrator、Checkpoint、
 Shared Memory、会话导出/导入和世界分发的实施顺序。本文是该阶段的范围与验收权威；参考设计用于解释
@@ -512,9 +512,14 @@ cache_hit_ratio
 
 > **已确认实施顺序**：先按[Agent 仓库工作区计划](agent-repository-workspaces-v1.md)完成 W0 设置契约，再
 > 独立完成 10.2 的 E0 单表持久执行树；W1a/W1b/W1c 依次完成原生文件、结构化命令和审批 Shell，验收后
-> 才进入 W2a Repository Binding、W2b 只读文件/Git 和 W3 worktree/补丁。所有阶段分别
+> 才进入 W2a Repository Binding、W2b Repository 文件适配/Git 和 W3 worktree/补丁。所有阶段分别
 > 人工验收后，才实施
 > 10.1、10.3-10.6 的 M4b fan-out。
+
+2026-09-14 工作区文件能力排期调整：managed_directory 的搜索定位与按行读取前移为完整 T2 切片，
+见[可靠性路线第六节](tool-reliability-capability-roadmap-v1.md#六t2搜索定位与范围读取含实际预算与有界排队)。
+W2b 在 T2/W2a 后复用文件能力并增加 Repository 适配与 Git 只读查询；W3/M4b 的资源隔离前置不变。
+本调整不涉及 Memory 搜索、C3 历史压缩或中断后自动恢复。
 
 ### 10.1 产品入口与公开行为
 
@@ -635,7 +640,7 @@ M4b 编码前再更新 Agent 内部协议、公开会话/消息/WS 协议和错�
    Owner 审批 Shell；不接 Git 或 worktree，每个切片独立人工验收和提交。W1a 必须同时通过 fake
    managed-world 与专用真实 Provider managed-world 工具闭环；测试工作区使用外部 testworkspace，但产品
    Workspace 根由各 World Owner 在前端独立配置，不设全局 allowed-root 限制。不得把真实 API 验证推迟到 W1c。
-3. **W2a/W2b/W3 代码协作扩展**：按独立计划依次完成 Repository Binding、只读文件/Git 和 worktree/补丁；
+3. **W2a/W2b/W3 代码协作扩展**：按独立计划依次完成 Repository Binding、复用 T2 的仓库文件适配/Git 和 worktree/补丁；
    每个切片独立人工验收和提交。
 4. **M4b-1 确定性 fan-out**：领域 dispatch 请求、防腐层映射、稳定占位顺序、共同 base boundary、最大 4 并行。
 5. **M4b-2 重试与汇总**：按错误码重试一次、失败摘要、最终 Orchestrator 流式消息、停止整树。
@@ -907,6 +912,9 @@ revision 语义，如确需改变必须先更新本计划、公开协议与回�
 
 ## 十九、最终实施顺序
 
+W1 后续切片和 T 系列的细分排期、批准关口以[工作区计划](agent-repository-workspaces-v1.md)与
+[工具可靠性路线](tool-reliability-capability-roadmap-v1.md)为准；T2 先于 W2a，W2b 复用其搜索/范围读取成果。
+
 ```text
 C0 基线与内部契约
 → C1 ContextBuilder、历史正确性、稳定前缀与硬预算
@@ -917,8 +925,9 @@ C0 基线与内部契约
 → W1a 当前 World 工作区列表与原生文件读写
 → W1b 无任意 Shell 的结构化命令
 → W1c 任意 Shell 与 Owner 审批
+→ W1 后续独立切片与 T0–T4 工具可靠性（T2 搜索定位＋范围读取）
 → W2a Repository Binding
-→ W2b 只读文件与 Git 工具
+→ W2b Repository 文件适配与 Git 只读工具
 → W3 Git Worktree 与补丁写入
 → M4b Orchestrator 并行编排
 → C3 阶段式 Checkpoint

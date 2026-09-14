@@ -2,4 +2,4 @@
 
 WORKSPACE_MUTATION_TOOLS = ('workspace_write', 'workspace_edit')
 WORKSPACE_CAPTURE_TOOLS = (*WORKSPACE_MUTATION_TOOLS, 'workspace_read')
-WORKSPACE_FILE_TOOLS = ('workspace_list', 'workspace_read', *WORKSPACE_MUTATION_TOOLS)
+WORKSPACE_FILE_TOOLS = ('workspace_list', 'workspace_read', 'workspace_search', *WORKSPACE_MUTATION_TOOLS)

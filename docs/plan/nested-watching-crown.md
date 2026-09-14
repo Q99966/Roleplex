@@ -33,12 +33,13 @@ Shell 逐层跑通单聊角色；之后才进入 Repository、只读代码工具
 
 当前建议主线：
 
-W1d 的最新配额、生命周期和验收以页首链接的已批准计划为准。
+W1d 的最新配额、生命周期和验收以页首链接的已批准计划为准；T 系列的范围、前置与批准关口以
+[工具可靠性路线](tool-reliability-capability-roadmap-v1.md)为准，本次 T2 调整不自动授权其他阶段实施。
 
 ```text
 C0 基线 → C1 ContextBuilder → C2 缓存观测 → M4a 群聊
-→ W0 设置 → E0 Execution → W1a 文件 → W1b 结构化命令 → W1c Shell → W1d 后台服务 → W2a Repository
-→ W2b 文件/Git → W3 Worktree/补丁
+→ W0 设置 → E0 Execution → W1a 文件 → W1b 结构化命令 → W1c Shell → W1d 后台服务 → T0–T4 工具可靠性（T2 搜索定位＋范围读取）
+→ W2a Repository → W2b 仓库文件适配/Git → W3 Worktree/补丁
 → M4b Orchestrator
 → C3 Checkpoint → C4 真实缓存验收 → 会话导出/导入 → 世界分发
 ```
@@ -612,8 +613,9 @@ M0/M1 功能已经通过构建、API smoke test 和 Playwright 浏览器测试�
 | **W1a 原生文件** | 前端当前 World 工作区列表、single 绑定、list/read/write、原子写与 expected hash | fake managed-world 完成创建/读取/更新；越界和跨 World 拒绝；不启动子进程 |
 | **W1b 结构化命令** | 稳定 command ID、专用参数 schema、cwd/环境/输出/超时/取消/进程树 | 无任意 shell fallback；fake 浏览器在测试工作区完成 pwd/list/read/count |
 | **W1c 任意 Shell** | Owner 逐次审批、stdin/no-profile、拒绝/过期/重启和真实 Provider | fake 与真实 Provider 均跑通简单 Shell；不接 Git、不创建 worktree |
+| **T2 搜索定位与范围读取** | managed_directory 的原生搜索＋按行读取，含实际预算与有界排队；[范围与验收](tool-reliability-capability-roadmap-v1.md#六t2搜索定位与范围读取含实际预算与有界排队) | 先于 W2a；搜索到未知行号后读取核验，大文件小范围、版本变化与权限路径通过 |
 | **W2a Repository Binding** | Owner 注册/复核仓库、会话绑定、主机迁移后重绑定、dirty 保护 | Guest 不见宿主路径；dirty 仓库只读可用但写执行拒绝；World 不复制外部仓库 |
-| **W2b 文件/Git 工具** | 原生 list/read/search/status/diff、路径与敏感内容边界 | 临时仓库内可重复读取；越界、符号链接、凭据文件、超限和 Guest 调用均由服务端拒绝 |
+| **W2b Repository 文件/Git 工具** | 复用 T2 list/read/search 并适配仓库，新增 Git 只读查询 | T2/W2a 完成后验证仓库隔离、路径/敏感内容及 Owner/Guest 边界 |
 | **W3 Worktree/补丁** | execution worktree、补丁、命令 profile、复用 W1b/W1c 运行器、保留清理 | 两写 execution 隔离；补丁可验证；dirty worktree 保留；不自动 commit/merge/push |
 | **M4b Orchestrator** | 开关+模板角色、dispatch 并行、失败重试/降级、汇总 | 2 子任务并行流式；人为致 1 个失败→重试→降级汇总；子角色确无 dispatch 工具 |
 | **M5 MCP** | 宿主任务池、MCP 配置表单+测试连接、工具接入循环、工具分级标注 | stdio+streamable-http 各接一个真实 server 可调用；server 挂掉角色降级回复 |

@@ -4,6 +4,7 @@ import { api, type Part, type ToolCapture, type ToolDetails } from '../api/clien
 import { useChatStore } from '../store/chat'
 import { visibleScript } from './ShellApprovals'
 import { ReadBatch } from './ReadBatch'
+import { RangeReadDetails, SearchDetails } from './SearchReadDetails'
 import { WriteDiagnosticNote } from './WriteDiagnosticNote'
 
 const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).WriteDiff }))
@@ -66,8 +67,11 @@ function ShellDetails({ value }: { value: NonNullable<ToolDetails['shell']> }) {
  * @param isOwner 当前账号能否请求 Owner 接口。
  */
 export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
+
   part: Part; conversationId: number; messageId: number; isOwner: boolean
 }) {
+  const preflightRejected = ['WORKSPACE_READ_ARGUMENT_INVALID', 'WORKSPACE_SEARCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_ARGUMENT_INVALID',
+    'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_SCAN_BUSY', 'WORKSPACE_SCAN_QUEUE_TIMEOUT', 'WORKSPACE_SCAN_CLOSED'].includes(part.error_code ?? '')
   const fileWrite = part.tool_name === 'workspace_write' || part.tool_name === 'workspace_edit'
   const [open, setOpen] = useState(fileWrite && isOwner)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -104,7 +108,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
     }).catch(() => { if (active) setFailed(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false; controller.abort() }
   }, [open, isOwner, conversationId, messageId, callId, part.status, canLoad, approvalVersion, fileWrite, seen])
-  const status = part.error_code === 'WORKSPACE_BATCH_PARTIAL' ? '部分完成'
+  const status = part.tool_name === 'workspace_search' && part.truncated ? '部分范围已搜索' : part.error_code === 'WORKSPACE_BATCH_PARTIAL' ? '部分完成'
     : part.error_code === 'WORKSPACE_BATCH_WRITE_UNCONFIRMED' ? '结果未确认'
     : part.error_code === 'EXECUTION_INTERRUPTED' ? '已中断' : STATUS[part.status ?? ''] ?? '状态未知'
   return <div ref={cardRef} data-testid="tool-call-card" className="my-3 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/60 text-xs">
@@ -120,7 +124,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
       {part.command && <span>命令 {part.command}</span>}
       {typeof part.duration_ms === 'number' && <span>{shell ? '调用总耗时' : '耗时'} {part.duration_ms}ms</span>}
       {typeof part.exit_code === 'number' && <span>退出码 {part.exit_code}</span>}
-      {part.truncated && <span className="text-amber-400">输出已截断</span>}
+      {part.truncated && <span className="text-amber-400">{part.tool_name === 'workspace_search' ? '搜索未覆盖全部范围' : '输出已截断'}</span>}
       {part.command_status === 'timed_out' && <span className="text-amber-400">命令超时，进程已回收</span>}
       {part.error_code && <span className="text-red-400">{part.error_code}</span>}
     </div>
@@ -136,9 +140,14 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
           <p>开始：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
           <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
           {detail.diagnostic && <WriteDiagnosticNote value={detail.diagnostic} />}
-          {'read_batch' in detail ? (detail.read_batch
+          {detail.budget_error && <p className="text-amber-300">{detail.budget_error.phase === 'precheck' ? '预检未通过，尚未读取' : '扫描达到限制'}：
+            实际 {detail.budget_error.actual} / 上限 {detail.budget_error.limit} {detail.budget_error.unit === 'seconds' ? '秒' : '字节'}</p>}
+          {'search' in detail ? (detail.search ? <SearchDetails value={detail.search} input={detail.input} /> : <p>{preflightRejected ? '请求在预检或准入时拒绝，未开始搜索。' : '本次没有可展示的搜索结果，请查看调用状态。'}</p>)
+            : 'read_range' in detail ? (detail.read_range ? <RangeReadDetails value={detail.read_range} /> : <p>{preflightRejected ? '请求在预检或准入时拒绝，未开始读取。' : '本次没有可展示的读取结果，请查看调用状态。'}</p>)
+            : 'read_batch' in detail ? (detail.read_batch
             ? <ReadBatch value={detail.read_batch} />
-            : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : 'write_batch' in detail ? (detail.write_batch
+            : <p className="mt-2">{part.status === 'running' ? '等待读取结束后保存逐项结果。' : preflightRejected
+              ? '请求在预检或准入时拒绝，未开始读取。' : '此调用的逐项结果未记录，不会重新读取文件补回。'}</p>) : 'write_batch' in detail ? (detail.write_batch
             ? <Suspense fallback={<p role="status">正在加载差异视图…</p>}><BatchMutation value={detail.write_batch} /></Suspense>
             : <p className="mt-2 text-amber-300">{part.status === 'running' ? '等待批次结束后保存逐项结果。' : part.status === 'rejected'
               ? '本批请求已拒绝，未开始修改；逐项详情未记录。' : '逐项写入结果未确认，文件可能已修改；不会自动重写或补造历史。'}</p>) : fileWrite ? (detail.write

@@ -10,7 +10,14 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import BaseMessage
 from sqlalchemy import select
 
-from accounts import ensure_owner_async
+from accounts import ensure_owner_async, stable_auth_clock
+
+
+@pytest.fixture(autouse=True)
+def group_auth_clock():
+    """群聊测试沿用隔离 JWT 时钟，防止宿主墙钟回退造成准备请求偶发 401。"""
+    with stable_auth_clock():
+        yield
 
 
 async def _create_group(

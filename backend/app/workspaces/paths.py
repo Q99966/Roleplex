@@ -34,6 +34,10 @@ def normalize_relative_path(value: str, *, allow_root: bool = False) -> str:
     """
     if not isinstance(value, str) or not value or len(value) > MAX_RELATIVE_PATH_CHARS:
         raise WorkspacePathError("WORKSPACE_PATH_INVALID")
+    try:
+        value.encode('utf-8')
+    except UnicodeError:
+        raise WorkspacePathError('WORKSPACE_PATH_INVALID') from None
     if "\x00" in value or "\\" in value or value.startswith(("/", "//", "~")) or _DRIVE.match(value):
         raise WorkspacePathError("WORKSPACE_PATH_INVALID")
     if _ENVIRONMENT.search(value) or any(char in value for char in _GLOB_CHARS):

@@ -269,13 +269,13 @@ async def test_locked_graph_rejects_unpaired_provider_history():
 
 
 @pytest.mark.anyio
-async def test_current_small_files_preflight_leaves_no_read_batch(command_root, isolated_command_database, monkeypatch):
-    """两个小文件的大额度申请在读取前被拒绝，私有详情未形成逐项结果。
+async def test_small_files_large_allowance_reaches_real_reads(command_root, isolated_command_database, monkeypatch):
+    """两个小文件的大额度申请应完成读取，保留各项真实结果。
 
     Args:
         command_root：本轮两个不同的小文件目录。
         isolated_command_database：由迁移创建的本用例独立数据库。
-        monkeypatch：注入确定性模型和禁止读取的探针。
+        monkeypatch：注入确定性模型并计量实际读取次数。
     """
     from app.services import chat
     from app.workspaces.files import WorkspaceFileService
@@ -284,22 +284,23 @@ async def test_current_small_files_preflight_leaves_no_read_batch(command_root, 
         (command_root / name).write_text('tiny', encoding='utf-8')
     reads = []
 
-    async def unexpected_read(*args, **kwargs):
-        """预检应先于任何文件读取，若进入则记录并使后续断言失败。
+    original_read = WorkspaceFileService.read
+    async def observed_read(*args, **kwargs):
+        """记录实际文件调用，仍使用真实执行层。
 
         Args:
             args：实例和相对路径。
             kwargs：读取预算及游标。
         """
         reads.append(True)
-        raise AssertionError('preflight must precede file reads')
+        return await original_read(*args, **kwargs)
 
     model = ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{
         'name': 'workspace_read', 'args': {'items': [
             {'path': name, 'max_bytes': 32768} for name in ['first.txt', 'second.txt']]}, 'id': 'read-budget',
     }]), ScriptedTurn(text='probe-completed')], delay=0)
     monkeypatch.setattr(chat, 'fake_reply_model', lambda *args, **kwargs: model)
-    monkeypatch.setattr(WorkspaceFileService, 'read', unexpected_read)
+    monkeypatch.setattr(WorkspaceFileService, 'read', observed_read)
     async with command_conversation(command_root) as (client, headers, cid, rid, wid):
         role = next(row for row in (await client.get('/api/roles', headers=headers)).json() if row['id'] == rid)
         assert (await client.put(f'/api/roles/{rid}', headers=headers,
@@ -309,9 +310,8 @@ async def test_current_small_files_preflight_leaves_no_read_batch(command_root, 
         sent = await send_command(client, headers, cid, 'probe')
         message = await wait_reply(client, headers, cid, sent['message']['id'])
         call = next(part for part in message['parts_json'] if part.get('tool_name') == 'workspace_read')
-        assert call['status'] == 'rejected'
-        assert call['error_code'] == 'WORKSPACE_BATCH_INPUT_TOO_LARGE'
+        assert call['status'] == 'success'
         response = await client.get(f"/api/conversations/{cid}/messages/{message['id']}/tools/{call['call_id']}", headers=headers)
         assert response.status_code == 200
-        assert response.json()['read_batch'] is None
-        assert reads == []
+        assert [node['result']['text'] for node in response.json()['read_batch']['items']] == ['tiny', 'tiny']
+        assert len(reads) == 2

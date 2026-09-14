@@ -294,16 +294,74 @@ class BatchReadResultView(BaseModel):
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
+class LineReadResultView(BaseModel):
+    """完整行范围结果；版本与扫描量不等同于返回正文大小。"""
+    model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
+    mode: Literal['lines']
+    text: str = Field(max_length=65536)
+    bytes: int = Field(ge=0, le=65536)
+    start_line: int = Field(ge=1)
+    start_offset: int | None = Field(default=None, ge=0)
+    end_line: int | None = Field(ge=1)
+    next_line: int = Field(ge=1)
+    eof: bool
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    scanned_bytes: int = Field(ge=0, le=64 * 1024 * 1024)
+    limited_reason: Literal['line_too_long', 'content_budget', 'json_budget'] | None
+
+
+class SearchContextView(BaseModel):
+    """只供 Owner/模型查看的有界行片段。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    line_number: int = Field(ge=1)
+    text: str = Field(max_length=512)
+    truncated: bool
+
+
+class SearchMatchView(BaseModel):
+    """搜索命中，文件名匹配不得伪造行号或完整版本。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    path: str = Field(max_length=1024)
+    line_number: int | None = Field(ge=1)
+    text: str | None = Field(max_length=512)
+    truncated: bool = False
+    context_before: list[SearchContextView] = Field(max_length=3)
+    context_after: list[SearchContextView] = Field(max_length=3)
+    sha256: str | None = Field(pattern=r'^[a-f0-9]{64}$')
+    version_confirmed: bool
+    matched_queries: list[int] = Field(default_factory=list, max_length=8)
+
+
+class SearchIssueView(BaseModel):
+    """受限扫描的原因，长路径可省略但不伪造截断后的目标身份。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    reason: str = Field(max_length=80)
+    path: str | None = Field(max_length=1024)
+
+
+class SearchResultView(BaseModel):
+    """完整 JSON 再经 64 KiB 校验的搜索结果。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    version: Literal[1]
+    status: Literal['complete', 'partial']
+    matches: list[SearchMatchView] = Field(max_length=200)
+    issues: list[SearchIssueView] = Field(max_length=8)
+    truncated: bool
+    scanned_files: int = Field(ge=0, le=500)
+    scanned_bytes: int = Field(ge=0, le=256 * 1024 * 1024 + 1)
+    visited_entries: int = Field(ge=0, le=10001)
+
+
 class BatchReadItemView(BaseModel):
     """本次调用中的稳定文件节点，失败/未开始没有伪造读取结果。"""
     model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
     id: str = Field(pattern=r'^item-[0-7]$')
     operation: Literal['read']
     path: str = Field(max_length=1024)
-    status: Literal['pending', 'running', 'success', 'failed', 'rejected', 'cancelled', 'not_executed']
+    status: Literal['pending', 'running', 'success', 'failed', 'rejected', 'cancelled', 'not_executed', 'budget_exhausted']
     error_code: str | None = Field(max_length=80)
     output_limited: bool
-    result: BatchReadResultView | None
+    result: BatchReadResultView | LineReadResultView | None
 
 
 class BatchReadDetailView(BaseModel):

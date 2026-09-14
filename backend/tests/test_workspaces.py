@@ -53,7 +53,7 @@ async def test_owner_can_register_multiple_absolute_workspace_roots_and_guest_ca
             base_capabilities = {
                 "world_name": settings.world_name,
                 "workspace_kinds": ["managed_directory"],
-                "file_tools": ["workspace_list", "workspace_read", "workspace_write", "workspace_edit"],
+                "file_tools": ["workspace_list", "workspace_read", "workspace_search", "workspace_write", "workspace_edit"],
                 "basic_commands_available": True,
             }
             assert {key: capabilities.json()[key] for key in base_capabilities} == base_capabilities
@@ -345,6 +345,8 @@ async def test_fake_agent_uses_bound_workspace_tools_and_retains_execution_lease
             assert "W1a 工作区工具闭环完成" in "".join(
                 part.get("text", "") for part in assistant["parts_json"] if part["type"] == "text"
             )
+            from test_workspace_commands import wait_retained_workspace
+            await wait_retained_workspace(workspace_id)
             async with SessionLocal() as session:
                 calls = (await session.scalars(select(ToolCall).where(
                     ToolCall.conversation_id == conversation.json()["id"],

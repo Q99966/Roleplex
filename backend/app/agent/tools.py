@@ -148,6 +148,12 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
         if type(args.get('limit')) is int and 1 <= args['limit'] <= 100:
             summary['limit'] = args['limit']
         return json.dumps(summary, separators=(',', ':'))
+    if tool_name == 'workspace_search':
+        terms = [args['query']] if isinstance(args.get('query'), str) else args.get('queries', [])
+        # 多词只汇总字节数，不把查询内容写入共享日志。
+        query_bytes = sum(len(term.encode('utf-8', errors='replace')) for term in terms if isinstance(term, str)) if isinstance(terms, list) else 0
+        return json.dumps({'mode': args.get('mode', 'text') if args.get('mode', 'text') in ('text', 'files') else 'unknown',
+                           'query_bytes': query_bytes})
     if tool_name in WORKSPACE_FILE_TOOLS:
         if tool_name in {'workspace_read', 'workspace_write', 'workspace_edit'} and 'items' in args:
             items = args.get('items')
@@ -155,7 +161,7 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
         path = args.get("path")
         summary: dict[str, int | str | bool] = {}
         if isinstance(path, str):
-            summary["path_fingerprint"] = hashlib.sha256(path.encode("utf-8")).hexdigest()
+            summary["path_fingerprint"] = hashlib.sha256(path.encode("utf-8", errors="replace")).hexdigest()
         if tool_name == "workspace_list":
             limit = args.get("limit")
             if isinstance(limit, int) and not isinstance(limit, bool):
@@ -209,7 +215,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read', 'workspace_service_status'}:
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read', 'workspace_search', 'workspace_service_status'}:
         return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
@@ -229,10 +235,16 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         allowed = {'RUNTIME_ARGUMENT_INVALID', 'RUNTIME_NOT_FOUND', 'RUNTIME_QUERY_CURSOR_INVALID',
             'RUNTIME_QUERY_CURSOR_EXPIRED', 'RUNTIME_QUERY_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE'}
         return {'error_code': code} if isinstance(code, str) and code in allowed else {}
-    if tool_name == 'workspace_read':
+    if tool_name == 'workspace_search' and result.get('version') == 1 and result.get('status') in {'complete', 'partial'}:
+        return {'truncated': result.get('truncated') is True}
+    if tool_name in {'workspace_read', 'workspace_search'}:
         code = result.get('error_code')
         allowed = {'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_BATCH_BUSY',
-            'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE', 'WORKSPACE_READ_ARGUMENT_INVALID'}
+            'WORKSPACE_BATCH_PARTIAL', 'WORKSPACE_BATCH_FAILED', 'WORKSPACE_TOOL_NOT_AVAILABLE', 'WORKSPACE_READ_ARGUMENT_INVALID',
+            'WORKSPACE_SCAN_BUSY', 'WORKSPACE_SCAN_QUEUE_TIMEOUT', 'WORKSPACE_SCAN_CLOSED', 'WORKSPACE_SCAN_LIMIT_EXCEEDED',
+            'WORKSPACE_READ_BUDGET_EXHAUSTED', 'WORKSPACE_SEARCH_ARGUMENT_INVALID', 'WORKSPACE_FILE_REVISION_CONFLICT',
+            'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_SENSITIVE', 'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_FILE_NOT_FOUND',
+            'WORKSPACE_FILE_TOO_LARGE', 'WORKSPACE_FILE_NOT_TEXT', 'WORKSPACE_READ_FAILED'}
         return {'error_code': code} if isinstance(code, str) and code in allowed else {}
     if tool_name in {'workspace_write', 'workspace_edit'}:
         from ..workspaces.diagnostics import DENIAL_CODES

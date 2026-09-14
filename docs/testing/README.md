@@ -48,10 +48,16 @@ python scripts/check_migrations.py
 
 ## 二、测试层级与边界
 
+T2 搜索与范围读取：`pytest tests/test_workspace_search_read.py tests/test_workspace_read_many.py -q`；
+浏览器 `npm run test:e2e:commands -- search-read.spec.ts read-many.spec.ts exploration.spec.ts`。
+离线基准 `python scripts/benchmark_workspace_scan.py`，只生成占位文件，按 data/scan-benchmarks/时间戳/files 分层，保留五轮。
+真实验收显式使用 `npm run test:e2e:real-world -- search-read-provider.spec.ts runtime-service-provider.spec.ts`，会联网计费，
+关闭真实截图/trace/video，原 Key 仍只在后端加密播种。数值、结果与未覆盖项见[T2 测试记录](tool-reliability-t2.md)。
+
 T1 调用证据与中断处理（新回复不生成统计摘要、不注入历史）：`pytest tests/test_execution_summary.py tests/test_tool_reliability_t0.py -q`；
 浏览器 `npm run test:e2e:commands -- execution-summary.spec.ts`。完整回归、真实 Provider 命令、实际用量、
 截图和人工验收见[T1 验证记录](tool-reliability-t1.md)。沿用命令类别/轮次/用例隔离，普通回归仍固定 fake。
-后端隔离命令 fixture 的 JWT 签发/校验共用单调推进的 UTC，以隔离已观察到的宿主墙钟回退；
+后端隔离命令与群聊 fixture 的 JWT 签发/校验共用单调推进的 UTC，以隔离已观察到的宿主墙钟回退；
 不增加认证容差，显式未来签发与过期 Token 仍须被拒绝，产品和真实浏览器认证时钟不变。
 
 T0 工具可靠性探针：`pytest tests/test_tool_reliability_t0.py -q`，只使用离线模型；

@@ -1,7 +1,7 @@
 import type { Message, Part } from '../api/client'
 
 export type PartGroup = { kind: 'part' | 'exploration'; key: string; index: number; parts: Part[] }
-const READ_TOOLS = new Set(['workspace_read', 'workspace_list'])
+const READ_TOOLS = new Set(['workspace_read', 'workspace_list', 'workspace_search'])
 
 /** 只将同一消息中连续的原生只读调用归为展示段，不改变执行事实或创建批量调用。
  * @param message 服务端完整有序消息；旧版、未知版及重复调用身份保守逐项展示。
@@ -29,12 +29,13 @@ export function groupMessageParts(message: Message): PartGroup[] {
  * @param parts 本组只读调用的安全元数据，不读取任何私有参数。
  */
 export function explorationSummary(parts: Part[]): string {
-  const labels: Record<string, string> = { running: '执行中', failed: '失败', rejected: '已拒绝',
+  const labels: Record<string, string> = { partial: '未完整覆盖', running: '执行中', failed: '失败', rejected: '已拒绝',
     cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' }
   const reads = parts.filter((part) => part.tool_name === 'workspace_read').length
-  const lists = parts.length - reads
-  const operations = [reads && `读取 ${reads} 次`, lists && `列目录 ${lists} 次`].filter(Boolean)
-  const states = parts.map((part) => part.error_code === 'EXECUTION_INTERRUPTED' ? 'interrupted'
+  const lists = parts.filter((part) => part.tool_name === 'workspace_list').length
+  const searches = parts.filter((part) => part.tool_name === 'workspace_search').length
+  const operations = [reads && `读取 ${reads} 次`, lists && `列目录 ${lists} 次`, searches && `搜索 ${searches} 次`].filter(Boolean)
+  const states = parts.map((part) => part.tool_name === 'workspace_search' && part.truncated ? 'partial' : part.error_code === 'EXECUTION_INTERRUPTED' ? 'interrupted'
     : part.status === 'success' ? 'success' : part.status && labels[part.status] ? part.status : 'unknown')
   const counts = Object.entries(labels).map(([state, label]) => {
     const count = states.filter((value) => value === state).length

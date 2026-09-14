@@ -296,6 +296,7 @@ provider.built               provider.call_started
 provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed
 tool.call_failed
+tool.scan_completed
 tool.approval_requested      tool.approval_resolved
 runtime.reserved            runtime.state_changed
 runtime.quota_changed       runtime.cleanup_started
@@ -316,6 +317,11 @@ log.retention_skipped
 新增事件必须先登记目录并检查是否已有同义事实；不得并存 `provider.call_completed`、
 `provider.completed`、`model.call_done`、`llm.finished` 等多套表达。现有实现迁移到 v2 时需要提供旧→新
 事件映射测试，不能静默遗漏监控消费者。
+
+T2 tool.scan_completed 是一次宿主只读调用的扫描阶段记录，沿用 tool_call_id/Trace，包含 queue_wait_ms、
+scan_duration_ms、scanned_bytes 和固定 status。不逐文件/逐块刷日志，不记录查询、路径、匹配正文或 hash。
+T2 搜索安全输入摘要的 query_bytes 表示 query 或 queries 中全部字符串的 UTF-8 字节数之和；不保存关键词、表达式或路径原文。
+仅工具调用作用域产生日志，底层基准测试不伪造调用身份；未取得准入时 scan_duration_ms/scanned_bytes 为 0。
 
 T1 使用 `generation.budget_stopped` 记录图预算停止的唯一终态，status=cancelled、reason=graph_budget；
 用户停止仍用 generation.cancelled。原 generation.recursion_limit_reached/tool.calls_unresolved 调试事件

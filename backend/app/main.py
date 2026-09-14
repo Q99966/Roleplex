@@ -118,6 +118,8 @@ async def lifespan(_app: FastAPI):
         finally:
             try:
                 await conversation_scheduler.shutdown()
+                from .workspaces.scan_admission import close_current_pool as close_scan_pool
+                await close_scan_pool()
                 from .workspaces.diffs import close_current_pool
                 await close_current_pool()
                 if runtime_manager.stop_jobs:

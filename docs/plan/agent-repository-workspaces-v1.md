@@ -8,7 +8,7 @@
 | 上游计划 | [上下文、Prompt Cache、群聊与 Orchestrator 实施计划 v1](context-cache-orchestration-v1.md) |
 | 关联主计划 | [Roleplex 总体实施计划](nested-watching-crown.md) |
 | 维护者 | Roleplex |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-14 |
 
 本文定义 Orchestrator fan-out 之前必须具备的代码协作基础：持久 execution 身份、Owner 授权的本地 Git
 仓库、受边界约束的文件/Git 工具、命令执行和每次写执行独占的 Git worktree。本文是这些能力的范围、
@@ -19,7 +19,8 @@
 
 针对实际使用问题，[工具可靠性路线](tool-reliability-capability-roadmap-v1.md)的 T0 已于 2026-09-14 获用户授权，
 先于 W2a 推进；T0 已取证，T1 已实现并通过人工验收，后续范围与关口只在该路线维护。
-不提前实现 W2b 搜索/Git、W3 或 Orchestrator。
+2026-09-14 已授权调整 T2 计划，将 managed_directory 搜索定位与按行读取配套前移；范围与验收仅在
+[可靠性路线第六节](tool-reliability-capability-roadmap-v1.md#六t2搜索定位与范围读取含实际预算与有界排队)维护。W2b 的 Repository 适配/Git、W3 与 Orchestrator 保持原前置。
 
 当前 Agent 循环和工具领域事件已经存在，W1a 已把当前 World Workspace Binding 与原生文件工具接入单角色
 链路；W1b 已增加固定结构化命令，MCP manager 仍只完成生命周期风险验证，仓库绑定与 Git worktree 尚未实现。此时先实现
@@ -48,7 +49,7 @@ W0 当前只固定设置、权限和运行契约；E0 提供命令审计与取�
 2026-09-11 新增的[代码 diff 与多行输入计划](code-diff-multiline-v1.md)已获用户批准，在 W1d 后、W2a 前分阶段独立验收；
 具体工具职责关口与停服编辑策略以该计划为准，不改变本计划的 Git/worktree 范围；M 多行输入已实现并通过人工验收。
 该计划 v1.3 已纳入 E1 后、W2a 前的 E2 批量文件操作与调用归组；批量 managed_directory 操作不提前开放
-本计划 W2b 的原生搜索或 W3 的 worktree 补丁、删除/重命名能力，具体范围和验收仅在该计划维护。
+本计划的 Git 或 W3 worktree 补丁、删除/重命名能力。原生搜索随后按 T2 调整前移，具体范围与验收以可靠性路线为准。
 M4b 的 planning/final 与并行子任务在 W3 验收之后实现。不得把基础 Shell、仓库绑定、worktree 和 M4b
 堆成一个故障时无法定位层级的大改动。
 
@@ -531,17 +532,18 @@ stash、reset 或复制未提交改动；Owner 必须自行形成干净 base com
 - 获得 repository 能力的工作区行增加 Git/base/dirty 状态，不创建第二套选择器。
 - 注册和绑定接口使用稳定错误码，不把 Git stderr 或宿主路径原样回显给 Guest。
 
-## 七、W2b：只读文件与 Git 工具
+## 七、W2b：Repository 文件适配与 Git 只读工具
 
 ### 7.1 首版工具集合
 
-W2b 复用 W1a 已验收的 `workspace_list/read` 路径与输出契约，但绑定 Git Repository 时继续禁用直接
-`workspace_write`，直到 W3 创建 worktree。W2b 新增 search 和 Git 只读能力，不依赖 MCP：
+W2b 在 W2a Repository Binding 与 T2 搜索/范围读取验收后，复用统一 list/read/search 文件能力并适配仓库身份，
+不重新实现搜索或引入第二套读取参数。绑定 Git Repository 时继续禁用直接 `workspace_write`，直到 W3 创建 worktree。
+原生搜索的 managed_directory 首版已前移到 T2；本阶段新增 Git 只读能力，不依赖 MCP：
 
 | 工具 | 行为 |
 |---|---|
-| `workspace_list` / `workspace_read` | 复用 W1a；工作目录改为绑定 Repository，schema 不变 |
-| `workspace_search` | 使用服务端固定参数搜索文件名或文本，返回有界匹配 |
+| `workspace_list` / `workspace_read` | 复用 W1a/T2（含按行读取）；工作目录适配已绑定 Repository，不另建 schema |
+| `workspace_search` | 复用 T2 文件名/文本定位与预算，在 Repository 归属和路径边界下执行 |
 | `git_status` | 返回 porcelain 状态的结构化摘要 |
 | `git_diff` | 返回指定路径范围的有界 diff；W2 主要用于人工已有改动检查 |
 
@@ -555,8 +557,8 @@ W2b 复用 W1a 已验收的 `workspace_list/read` 路径与输出契约，但绑
 - 每次操作都对最终路径做 canonical containment 检查；符号链接、junction 或 reparse point 指向根外时拒绝。
 - 通用文件工具禁止读取 `.git/`、真实 `.env`、私钥、凭据存储和 Roleplex secret 目录；Owner 可以扩展拒绝
   pattern，但不能通过模型参数缩小系统拒绝集。`.env.example` 等无凭据模板需使用精确规则单独允许。
-- 首版拒绝二进制文件；单次读取最多 64 KiB、单文件最多 1 MiB，搜索最多 200 个匹配且总输出最多
-  64 KiB。达到限制返回 `truncated=true`，不能静默当成完整结果。
+- 文件 search/read 的扫描、范围、版本和输出限制沿用 T2 定稿的领域协议；本篇不再另定 1 MiB/64 KiB/200 条
+  作为仓库文件工具默认值。达到限制明确报告截断/未覆盖，不能静默当成完整结果。Git diff 的独立输出预算在本阶段复核。
 - Git 工具固定 argv、禁用 pager/color/ext-diff 和外部 textconv，不加载模型提供的 Git 配置或 alias。
 
 文件正文、diff 和搜索结果只能作为当前工具返回值进入模型上下文与会话工具流程；正式日志、E2E summary、
@@ -631,7 +633,7 @@ W3 通过后，M4b 才能把一次 dispatch 绑定到 Repository Binding 和 Exe
 - W1b：稳定 command ID、参数 schema、子进程输出/超时/取消领域事件；
 - W1c：Shell 工具、审批 API/WS 事件和重启过期状态；
 - W2a：Repository 数据模型、Owner 仓库 API、会话绑定 API、`conversation_updated` WS 行为；
-- W2b：内部文件/Git 工具协议、工具危险级别、公开工具过程卡的安全字段；
+- W2b：复用 T2 文件协议，补 Repository 适配/Git 只读协议、工具危险级别和公开过程卡安全字段；
 - W3：git worktree、补丁、命令 profile 和 retained/clean 清理状态；
 - M4b：dispatch/final 和父子 execution 协议引用本文 workspace 身份。
 
@@ -695,7 +697,7 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 - **W1c**：Shell 审批、stdin/no-profile、拒绝/过期/重启和真实 Provider smoke 通过，独立提交。
 - **W2a**：Owner 仓库注册/复核/绑定、群聊 Workspace Binding、所有聊天标题区的工作区摘要与 Owner
   更换/解绑入口、主机迁移 unavailable 和 dirty 提示通过，独立提交。
-- **W2b**：只读文件/Git 工具及路径、敏感内容、Owner/Guest 边界通过，独立提交。
+- **W2b**：在 W2a 与 T2 完成后，复用文件搜索/范围读取并验证 Repository 隔离，Git 只读查询及 Owner/Guest 边界通过，独立提交。
 - **W3**：worktree 隔离、补丁、命令 profile、复用 Shell 运行器、retained/clean 清理通过，独立提交。
 - **M4b**：最后验收并行代码协作，不把 W1a/W1b/W1c/W2a/W2b/W3 和 Orchestrator 堆成一个提交。
 
@@ -726,7 +728,7 @@ execution/workspace ID、相对路径指纹、base commit、分支安全标识�
 
 1. W0/W1b/W1c：默认 30 秒/硬上限 300 秒、默认 64 KiB/硬上限 1 MiB，以及 Shell 审批 5 分钟过期。
 2. W2a：主机本地绝对路径随 World 移动后标记 unavailable、由 Owner 重新绑定。
-3. W2b：64 KiB 读取/结果、1 MiB 单文件、200 条搜索结果的首版上限及系统敏感路径集合。
+3. W2b：文件工具沿用 T2 验收后的限制与敏感路径规则；另复核 Repository 适配、Git 查询范围及输出上限。
 4. W3：dirty base 一律禁止写执行；Agent 不获得 commit/merge/push，dirty worktree 永不自动删除。
 
 用户确认本次拆分后，先完成 W0 文档门槛，再从 E0、W1a 逐阶段实施和人工验收；不得直接跳到

@@ -3,18 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+from time import monotonic
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .files import WorkspaceFileError, WorkspaceFileService
 
 MAX_BATCH_ITEMS = 8
 MAX_BATCH_INPUT = 16384
-MAX_BATCH_READ = 32768
+MAX_BATCH_READ = 65536
 MAX_BATCH_OUTPUT = 65536
-_active_batches = 0
 
 
 class ReadItemInput(BaseModel):
@@ -22,7 +22,31 @@ class ReadItemInput(BaseModel):
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
     path: str = Field(min_length=1, max_length=1024)
     offset_bytes: int = Field(default=0, ge=0, le=2**63 - 1)
-    max_bytes: int = Field(default=4096, ge=1, le=32768)
+    max_bytes: int = Field(default=65536, ge=1, le=65536)
+    start_line: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    end_line: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+
+    @model_validator(mode='before')
+    @classmethod
+    def exclusive_range(cls, value):
+        """Args:
+            value：单节点原始参数；显式 null 不能冒充另一模式。
+        """
+        if isinstance(value, dict):
+            if 'start_line' in value:
+                if value['start_line'] is None or 'offset_bytes' in value or 'max_bytes' in value:
+                    raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+            elif 'end_line' in value:
+                raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        return value
+
+    @model_validator(mode='after')
+    def bounded_range(self):
+        """行范围包含两端，最多 2000 行。"""
+        if self.start_line is not None and self.end_line is not None and not self.start_line <= self.end_line < self.start_line + 2000:
+            raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        return self
 
 
 class BatchReadInput(BaseModel):
@@ -45,12 +69,13 @@ def validate_items(items: list) -> list[dict]:
         items：模型请求或测试直接调用的逐文件输入。
     """
     try:
-        value = BatchReadInput(items=items).model_dump()
+        value = BatchReadInput(items=items).model_dump(exclude_unset=True)
         size = len(encode(value).encode('utf-8'))
     except (ValidationError, UnicodeError, TypeError, ValueError):
         raise WorkspaceFileError('WORKSPACE_BATCH_ARGUMENT_INVALID') from None
-    if size > MAX_BATCH_INPUT or sum(item['max_bytes'] for item in value['items']) > MAX_BATCH_READ:
-        raise WorkspaceFileError('WORKSPACE_BATCH_INPUT_TOO_LARGE')
+    if size > MAX_BATCH_INPUT:
+        raise WorkspaceFileError('WORKSPACE_BATCH_INPUT_TOO_LARGE',
+            {'phase': 'precheck', 'actual': size, 'limit': MAX_BATCH_INPUT, 'unit': 'utf8_bytes'})
     return value['items']
 
 
@@ -76,100 +101,73 @@ class ReadBatchReceipt:
         return {'format': 'read-batch-v1', 'batch': self.value}
 
 
-def _fit_node(node: dict, result: dict, offset: int, budget: int) -> None:
-    """只缩短正文以适应 JSON 转义后的真实字节数，永不截坏 hash 或游标字段。
-
-    Args:
-        node：按固定输入顺序分配的私有节点。
-        result：一次完整授权读取取得的结果。
-        offset：本次请求的原始字节偏移。
-        budget：本项含路径及元数据的 JSON 字节份额。
-    """
-    node.update(status='success', result=result)
-    if len(encode(node).encode()) <= budget:
-        return
-    original = result['text']
-    node['output_limited'] = True
-    low, high = 0, len(original)
-    while low < high:
-        count = (low + high + 1) // 2
-        text = original[:count]
-        size = len(text.encode())
-        node['result'] = {**result, 'text': text, 'bytes': size, 'next_offset': offset + size, 'eof': False}
-        if len(encode(node).encode()) <= budget:
-            low = count
-        else:
-            high = count - 1
-    text = original[:low]
-    size = len(text.encode())
-    node['result'] = {**result, 'text': text, 'bytes': size, 'next_offset': offset + size, 'eof': False}
-
-
 async def read_many(items: list, *, authorize: Callable[[], Awaitable[WorkspaceFileService | None]],
                     receipt: ReadBatchReceipt) -> str:
-    """接纳最多两批、每批最多两项，错误相互隔离；取消时等待自身任务收尾。
+    """按实际结果依序分配内容/JSON 预算；整批共用一次准入和扫描计量。
 
     Args:
-        items：校验后的请求，每项仍由既有文件服务检查路径/大小/编码。
-        authorize：绑定宿主身份的实时权限复核，不接受模型覆盖。
-        receipt：当前真实调用的私有采集容器，取消时保留已观察结果。
+        items：模型请求，先全批预检。
+        authorize：每项开始与返回前的实时权限检查。
+        receipt：原调用的私有节点容器，取消保留已观察结果。
     """
-    global _active_batches
+    from ..config import settings
+    from .scanning import ScanBudget
+    from .scan_admission import admitted
     items = validate_items(items)
-    if _active_batches >= 2:
-        receipt.value.update(status='rejected', error_code='WORKSPACE_BATCH_BUSY')
-        for node in receipt.value['items']:
-            node['status'] = 'not_executed'
-        return encode(receipt.value)
-    # 在首次 await 前完成准入；等待任务只有已接纳批次内的至多八项，不建立无界队列。
-    _active_batches += 1
-    semaphore = asyncio.Semaphore(2)
-    node_budget = (MAX_BATCH_OUTPUT - 256) // len(items)
-
-    async def run_item(index: int, item: dict) -> None:
-        """Args:
-            index：固定子项序号，不按完成顺序排列。
-            item：该子项的路径及游标。
-        """
-        node = receipt.value['items'][index]
-        try:
-            async with semaphore:
-                node['status'] = 'running'
-                service = await authorize()
-                if service is None:
-                    node.update(status='rejected', error_code='WORKSPACE_TOOL_NOT_AVAILABLE')
-                    return
-                result = await service.read(item['path'], offset_bytes=item['offset_bytes'], max_bytes=item['max_bytes'])
-                _fit_node(node, asdict(result), item['offset_bytes'], node_budget)
-        except asyncio.CancelledError:
-            node['status'] = 'not_executed' if node['status'] == 'pending' else 'cancelled'
-            raise
-        except WorkspaceFileError as exc:
-            node.update(status='failed', error_code=exc.code)
-        except Exception:
-            node.update(status='failed', error_code='WORKSPACE_READ_FAILED')
-
-    tasks = [asyncio.create_task(run_item(index, item)) for index, item in enumerate(items)]
+    remaining = settings.workspace_read_content_bytes
     try:
-        await asyncio.gather(*tasks)
+        async with admitted(len(encode({'items': items}).encode())):
+            budget = ScanBudget()
+            for node, item in zip(receipt.value['items'], items):
+                if budget.scanned >= budget.limit or monotonic() >= budget.deadline:
+                    node.update(status='budget_exhausted', error_code='WORKSPACE_SCAN_LIMIT_EXCEEDED')
+                    continue
+                result_budget = MAX_BATCH_OUTPUT - len(encode(receipt.value).encode()) - 1024
+                if remaining < 1 or result_budget < 512:
+                    node.update(status='budget_exhausted', error_code='WORKSPACE_READ_BUDGET_EXHAUSTED')
+                    continue
+                try:
+                    node['status'] = 'running'
+                    service = await authorize()
+                    if service is None:
+                        raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                    if 'start_line' in item:
+                        result = await service.read_lines(item['path'], start_line=item['start_line'], end_line=item.get('end_line'),
+                            expected_sha256=item.get('expected_sha256'), budget=budget, content_budget=remaining, json_budget=result_budget)
+                        limited = result['limited_reason'] is not None
+                    else:
+                        requested = item.get('max_bytes', 65536)
+                        result = asdict(await service.read(item['path'], offset_bytes=item.get('offset_bytes', 0),
+                            max_bytes=min(requested, remaining), expected_sha256=item.get('expected_sha256'), budget=budget,
+                            strict_budget=True, json_budget=result_budget))
+                        limited = not result['eof'] and result['bytes'] < requested
+                    node.update(status='success', result=result, output_limited=limited)
+                    if await authorize() is None:
+                        raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                    remaining -= result['bytes']
+                except WorkspaceFileError as exc:
+                    node.update(status='rejected' if exc.code == 'WORKSPACE_TOOL_NOT_AVAILABLE' else
+                        'budget_exhausted' if exc.code == 'WORKSPACE_READ_BUDGET_EXHAUSTED' else 'failed',
+                        error_code=exc.code, result=None)
+                except asyncio.CancelledError:
+                    if node['status'] == 'running':
+                        node['status'] = 'cancelled'
+                    raise
+                except Exception:
+                    node.update(status='failed', error_code='WORKSPACE_READ_FAILED', result=None)
         states = [node['status'] for node in receipt.value['items']]
-        status = ('success' if all(state == 'success' for state in states) else 'partial' if 'success' in states
-                  else 'rejected' if all(state == 'rejected' for state in states) else 'failed')
+        status = ('success' if all(state == 'success' for state in states) and not any(node['output_limited'] for node in receipt.value['items']) else
+                  'partial' if 'success' in states else 'rejected' if all(state == 'rejected' for state in states) else 'failed')
         code = {'success': None, 'partial': 'WORKSPACE_BATCH_PARTIAL', 'failed': 'WORKSPACE_BATCH_FAILED',
                 'rejected': 'WORKSPACE_TOOL_NOT_AVAILABLE'}[status]
         receipt.value.update(status=status, error_code=code)
-        return encode(receipt.value)
+    except WorkspaceFileError as exc:
+        receipt.value.update(status='rejected', error_code=exc.code)
     except asyncio.CancelledError:
         receipt.value.update(status='cancelled', error_code=None)
         raise
     finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        try:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            for node in receipt.value['items']:
-                if node['status'] in {'pending', 'running'}:
-                    node['status'] = 'not_executed' if node['status'] == 'pending' else 'cancelled'
-            _active_batches -= 1
+        for node in receipt.value['items']:
+            if node['status'] in {'pending', 'running'}:
+                node['status'] = 'not_executed' if node['status'] == 'pending' else 'cancelled'
+    return encode(receipt.value)

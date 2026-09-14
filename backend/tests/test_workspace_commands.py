@@ -117,6 +117,25 @@ async def send_command(client, headers, conversation_id, prompt):
     return sent.json()
 
 
+async def wait_retained_workspace(binding_id: int):
+    """等待消息结束后的实际租用收口，不用消息终态代替资源终态。
+
+    Args:
+        binding_id：本用例已登记的工作区 ID。
+    """
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app.models import ExecutionWorkspace
+    for _ in range(300):
+        async with SessionLocal() as session:
+            leases = (await session.scalars(select(ExecutionWorkspace).where(
+                ExecutionWorkspace.workspace_binding_id == binding_id))).all()
+            if leases and all(row.status == 'retained' and row.ended_at is not None for row in leases):
+                return leases
+        await asyncio.sleep(.01)
+    raise AssertionError('工作区租用未在预期时间收口')
+
+
 async def wait_command_messages(client, headers, conversation_id):
     """等待生成与工具卡完成落库。
 
@@ -153,6 +172,7 @@ async def test_command_tool_loop_exposes_safe_cards_and_audit(command_root):
         assert all(part['status'] == 'success' and part['exit_code'] == 0 for part in cards)
         assert str(command_root) not in json.dumps(cards)
         assert 'bounded-placeholder-content' not in json.dumps(cards)
+        await wait_retained_workspace(binding_id)
         async with SessionLocal() as session:
             calls = (await session.scalars(select(ToolCall).where(ToolCall.conversation_id == conversation_id))).all()
             leases = (await session.scalars(select(ExecutionWorkspace).where(

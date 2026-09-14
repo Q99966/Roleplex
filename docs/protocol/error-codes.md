@@ -228,6 +228,20 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 
 适用接口和路径隐藏规则见 [当前 World 工作区](public/rest/workspaces.md)。
 
+
+### T2 扫描与范围读取
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `WORKSPACE_SCAN_BUSY` | 已实现 | 工具/WS | — | rejected | conditional | 准入队列已满，尚未扫描；稍后有界重试 |
+| `WORKSPACE_SCAN_QUEUE_TIMEOUT` | 已实现 | 工具/WS | — | rejected | conditional | 排队超时，尚未扫描；缩小并发或稍后重试 |
+| `WORKSPACE_SCAN_CLOSED` | 已实现 | 工具/WS | — | rejected | conditional | 扫描器关闭，等待服务恢复；活跃任务仍以取消收口 |
+| `WORKSPACE_SCAN_LIMIT_EXCEEDED` | 已实现 | 工具子项/WS | — | failed/budget_exhausted | conditional | 扫描字节/时间触顶，没有完整版本证据；缩小范围或调整主机扫描配置，后续未读取项明确标预算未覆盖 |
+| `WORKSPACE_READ_BUDGET_EXHAUSTED` | 已实现 | 工具子项/WS | — | budget_exhausted | conditional | 内容/JSON 剩余额度不足，未读取或无法推进完整字符；分拆请求 |
+| `WORKSPACE_SEARCH_ARGUMENT_INVALID` | 已实现 | 工具/WS | — | rejected | no | 搜索参数非法；修正参数，不原样重试 |
+
+上述工具错误不新增 REST endpoint，整批部分完成继续使用原 WORKSPACE_BATCH_PARTIAL；详情可附带安全预算数字。
+
 ## 九、Provider 与生成错误码
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |

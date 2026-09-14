@@ -24,9 +24,14 @@ _WRITE_LOCKS: dict[str, asyncio.Lock] = {}
 class WorkspaceFileError(ValueError):
     """携带稳定错误码的原生文件工具失败。"""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, details: dict | None = None):
+        """Args:
+            code：稳定错误码。
+            details：执行层批准的安全预算数字，不放入异常文本。
+        """
         super().__init__(code)
         self.code = code
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,8 @@ class WorkspaceFileService:
             )
         except WorkspacePathError as exc:
             raise _translate(exc) from None
+        except (OSError, RuntimeError):
+            raise WorkspaceFileError('WORKSPACE_PATH_INVALID') from None
 
     async def list(self, path: str = ".", *, after_name: str | None = None, limit: int = 200) -> WorkspaceListResult:
         """列出目录一页；symlink 只报告身份，不读取目标。"""
@@ -139,60 +146,65 @@ class WorkspaceFileService:
             next_after_name=selected[-1] if truncated and selected else None,
         )
 
-    async def read(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 65_536) -> WorkspaceReadResult:
-        """读取 UTF-8 普通文件的一段，并返回全文件 hash。"""
-        if isinstance(offset_bytes, bool) or offset_bytes < 0:
-            raise WorkspaceFileError("WORKSPACE_PATH_INVALID")
-        if isinstance(max_bytes, bool) or max_bytes < 1 or max_bytes > MAX_READ_BYTES:
-            raise WorkspaceFileError("WORKSPACE_PATH_INVALID")
-        target = self._resolve(path)
-        if not target.is_file():
-            raise WorkspaceFileError("WORKSPACE_FILE_NOT_TEXT")
-        if target.stat().st_size > MAX_FILE_BYTES:
-            raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
-        # stat 后外部程序可能扩写；读取本身也必须有界，批量调用不能放大瞬时分配。
-        with target.open('rb') as stream:
-            data = stream.read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
-            raise WorkspaceFileError("WORKSPACE_FILE_TOO_LARGE")
-        try:
-            data.decode("utf-8")
-            data[:offset_bytes].decode("utf-8")
-        except UnicodeDecodeError:
-            raise WorkspaceFileError("WORKSPACE_FILE_NOT_TEXT") from None
-        if offset_bytes > len(data):
-            raise WorkspaceFileError("WORKSPACE_PATH_INVALID")
-        if offset_bytes == len(data):
-            return WorkspaceReadResult(
-                text="", bytes=0, eof=True, next_offset=offset_bytes, sha256=_sha256(data),
-            )
-        requested_end = min(len(data), offset_bytes + max_bytes)
-        end = requested_end
-        while end > offset_bytes:
-            try:
-                text = data[offset_bytes:end].decode("utf-8")
-                break
-            except UnicodeDecodeError:
-                end -= 1
-        else:
-            # max_bytes 可能小于下一个 UTF-8 字符；向前最多补齐 3 字节，保证游标始终推进。
-            text = ""
-            for candidate_end in range(requested_end + 1, min(len(data), requested_end + 3) + 1):
-                try:
-                    text = data[offset_bytes:candidate_end].decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
-                end = candidate_end
-                break
-            if not text:
-                raise WorkspaceFileError("WORKSPACE_FILE_NOT_TEXT") from None
-        return WorkspaceReadResult(
-            text=text,
-            bytes=end - offset_bytes,
-            eof=end == len(data),
-            next_offset=end,
-            sha256=_sha256(data),
-        )
+    async def read(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 65536,
+                   expected_sha256: str | None = None, budget=None, strict_budget: bool = False,
+                   json_budget: int = 65536) -> WorkspaceReadResult:
+        """增量扫描完整版本，仅保留有界片段；旧五字段响应保持不变。
+
+        Args:
+            path：绑定根内的 UTF-8 普通文件。
+            offset_bytes：本次字节起点。
+            max_bytes：期望返回额度，仍受主机预算控制。
+            expected_sha256：可选全文件版本约束。
+            budget：批次共享扫描计量。
+            strict_budget：不允许为了补齐字符超出批次剩余量。
+            json_budget：完整结果可占用的 JSON 字节数。
+        """
+        from .scan_admission import admitted
+        from .scanning import read_bytes
+        async with admitted():
+            return WorkspaceReadResult(**await read_bytes(self, path, offset_bytes=offset_bytes, max_bytes=max_bytes,
+                expected_sha256=expected_sha256, budget=budget, strict_budget=strict_budget, json_budget=json_budget))
+
+    async def read_lines(self, path: str, *, start_line: int, end_line: int | None = None,
+                         expected_sha256: str | None = None, budget=None, content_budget=None,
+                         json_budget: int = 65536) -> dict:
+        """按实际行范围读取，返回全文件 hash 和可继续的下一行。
+
+        Args:
+            path：绑定根内路径。
+            start_line：包含的起始行，从 1 开始。
+            end_line：包含的结束行，省略最多 200 行。
+            expected_sha256：已知完整版本，不接受片段 hash。
+            budget：共享扫描预算。
+            content_budget：本次剩余内容额度。
+            json_budget：本项完整结果额度。
+        """
+        from .scan_admission import admitted
+        from .scanning import read_lines
+        async with admitted():
+            return await read_lines(self, path, start_line=start_line, end_line=end_line, expected_sha256=expected_sha256,
+                budget=budget, content_budget=content_budget, json_budget=json_budget)
+
+    async def search(self, *, query: str | None = None, mode: str = 'text', path: str = '.', limit: int = 100,
+                     context_lines: int = 1, queries: list[str] | None = None, match: str = 'any', authorize=None) -> dict:
+        """在绑定根内搜索，路径和查询不解释为 Shell。
+
+        Args:
+            query：单个字面文本或文件名模式。
+            queries：多个字面词，与 query 互斥。
+            match：any/all，同一行的匹配条件。
+            mode：text/files。
+            path：相对扫描范围。
+            limit：结果数量上限。
+            context_lines：匹配行前后片段数。
+            authorize：工厂的实时授权复核回调。
+        """
+        from .scan_admission import admitted
+        from .scanning import search
+        async with admitted():
+            return await search(self, query=query, mode=mode, path=path, limit=limit,
+                                context_lines=context_lines, queries=queries, match=match, authorize=authorize)
 
     async def write(self, path: str, content: str, *, expected_sha256: str | None = None,
                     capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:

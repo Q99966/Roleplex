@@ -266,7 +266,7 @@ attempt 和后续 M4b 父子关系；queue payload 和日志都不能替代本�
 | `display_name` | Owner 可读名称；active 行按 Owner 唯一 |
 | `root_path` | 当前主机的规范绝对根；当前 World 内唯一，不能进入日志或 Guest 响应 |
 | `workspace_kind` | W1a 固定 `managed_directory` |
-| `file_tools_enabled` | 是否允许满足完整执行授权矩阵的原生文件工具，含 E1 局部编辑；角色仍须逐工具显式启用 |
+| `file_tools_enabled` | 是否允许满足完整执行授权矩阵的原生文件工具，含 E1 局部编辑和 T2 搜索/范围读取；角色仍须逐工具显式启用 |
 | `basic_commands_enabled` | 默认 false，W1b 起可单独启用结构化命令，与文件能力独立 |
 | `shell_enabled` | 默认 false；W1c 可启用，仍要求每次脚本独立审批 |
 | `active` | 停用后不能绑定新会话或继续执行工具调用 |

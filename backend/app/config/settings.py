@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     workspace_command_timeout_seconds: float = Field(default=30, gt=0, le=300)
     workspace_command_output_bytes: int = Field(default=65_536, ge=1, le=1_048_576)
     workspace_shell_kind: Literal['auto', 'bash', 'powershell'] = 'auto'
+    workspace_read_content_bytes: int = Field(default=65536, ge=1024, le=65536)
+    workspace_scan_file_bytes: int = Field(default=16 * 1024 * 1024, ge=1024 * 1024, le=64 * 1024 * 1024)
+    workspace_scan_total_bytes: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024, le=256 * 1024 * 1024)
+    workspace_scan_seconds: float = Field(default=3, ge=0.05, le=30)
     runtime_ready_timeout_seconds: float = Field(default=30, gt=0, le=120)
     log_dir: str = str(LOG_DIR)
     log_level: str = "INFO"

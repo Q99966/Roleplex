@@ -805,17 +805,20 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
               <span className="text-slate-400 font-medium">绑定内置运行工具 (Builtin Tools)</span>
               <div className="mt-2 flex flex-wrap gap-2">
                 {([
-                  ['workspace_list', '列出工作区'],
-                  ['workspace_read', '读取工作区文件'],
-                  ['workspace_write', '写入工作区文件'],
-                  ['workspace_edit', '局部编辑工作区文件'],
-                  ['workspace_run_command', '工作区结构化命令'],
-                  ['workspace_run_shell', '工作区 Shell（Owner 逐次审批）'],
-                  ['workspace_start_service', '启动后台 HTTP 服务（Owner 逐次审批）'],
-                  ['workspace_service_status', '查询当前会话服务状态'],
-                  ['workspace_service_logs', '读取当前会话服务日志'],
-                  ['workspace_stop_service', '停止当前会话服务'],
-                ] as const).map(([tool, label]) => (
+                  ['文件操作', [
+                    ['workspace_list', '列出工作区'], ['workspace_search', '搜索工作区文件'],
+                    ['workspace_read', '读取文件（字节 / 行范围）'], ['workspace_write', '写入工作区文件'], ['workspace_edit', '局部编辑工作区文件'],
+                  ]],
+                  ['命令执行', [
+                    ['workspace_run_command', '工作区结构化命令'], ['workspace_run_shell', '工作区 Shell（Owner 逐次审批）'],
+                  ]],
+                  ['后台服务', [
+                    ['workspace_start_service', '启动后台 HTTP 服务（Owner 逐次审批）'], ['workspace_service_status', '查询当前会话服务状态'],
+                    ['workspace_service_logs', '读取当前会话服务日志'], ['workspace_stop_service', '停止当前会话服务'],
+                  ]],
+                ] as const).map(([group, tools]) => <fieldset key={group} className="w-full rounded border border-slate-800 p-2">
+                  <legend className="px-1 text-xs text-slate-400">{group}</legend>
+                  <div className="flex flex-wrap gap-2">{tools.map(([tool, label]) => (
                   <button
                     key={tool}
                     type="button"
@@ -829,7 +832,8 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                   >
                     {label} ({tool})
                   </button>
-                ))}
+                  ))}</div>
+                </fieldset>)}
               </div>
             </div>
 

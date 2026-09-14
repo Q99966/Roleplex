@@ -65,12 +65,23 @@ export type ShellApproval = {
   active_service_count?: number
   runtime_id?: string; port?: number; health_path?: string; lifetime_seconds?: number; ready_timeout_seconds?: number
 }
+export type LineReadResult = {
+  mode: 'lines'; text: string; bytes: number; eof: boolean; start_line: number; start_offset?: number | null; end_line: number | null;
+  next_line: number; sha256: string; scanned_bytes: number; limited_reason: 'line_too_long' | 'content_budget' | 'json_budget' | null
+}
+export type SearchSnippet = { line_number: number; text: string; truncated: boolean }
+export type SearchResult = {
+  version: number; status: 'complete' | 'partial'; truncated: boolean;
+  matches: Array<{ path: string; line_number: number | null; text: string | null; truncated: boolean;
+    context_before: SearchSnippet[]; context_after: SearchSnippet[]; sha256: string | null; version_confirmed: boolean; matched_queries?: number[] }>;
+  issues: Array<{ reason: string; path: string | null }>; scanned_files: number; scanned_bytes: number; visited_entries: number
+}
 export type ReadBatchDetails = {
   version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'rejected'; error_code: string | null
   items: Array<{ id: string; operation: 'read'; path: string;
-    status: 'pending' | 'running' | 'success' | 'failed' | 'rejected' | 'cancelled' | 'not_executed';
+    status: 'pending' | 'running' | 'success' | 'failed' | 'rejected' | 'cancelled' | 'not_executed' | 'budget_exhausted';
     error_code: string | null; output_limited: boolean;
-    result: { text: string; bytes: number; eof: boolean; next_offset: number; sha256: string } | null }>
+    result: { text: string; bytes: number; eof: boolean; next_offset: number; sha256: string } | LineReadResult | null }>
 }
 export type WriteDiagnostic = {
   version: number; reason: string; scope: 'world' | 'workspace' | 'conversation' | 'tool'; executed: false;
@@ -91,6 +102,9 @@ export type ToolDetails = {
   input: ToolCapture | null; output: ToolCapture | null
   write?: WriteDetails | null
   read_batch?: ReadBatchDetails | null
+  read_range?: LineReadResult | null
+  search?: SearchResult | null
+  budget_error?: { phase: string; actual: number; limit: number; unit: string }
   write_batch?: BatchMutationDetails | null
   diagnostic?: WriteDiagnostic | null
   shell?: {
@@ -127,7 +141,7 @@ export type WorkspaceBinding = {
 export type WorkspaceCapabilities = {
   world_name: string
   workspace_kinds: Array<'managed_directory'>
-  file_tools: Array<'workspace_list' | 'workspace_read' | 'workspace_write' | 'workspace_edit'>
+  file_tools: Array<'workspace_list' | 'workspace_read' | 'workspace_search' | 'workspace_write' | 'workspace_edit'>
   basic_commands_available: boolean
   shell_available: boolean
   shell_kind: 'bash' | 'powershell' | null

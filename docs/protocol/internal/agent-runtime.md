@@ -47,7 +47,7 @@ E1 编辑工具只提取 path_fingerprint、old_text_bytes、new_text_bytes、ha
 结果仅向共享工具卡增加显式白名单中的固定错误码。匹配/参数/版本拒绝是正常 rejected 终态，不记录片段、路径或异常原文。
 工作区策略版本随工具集合/说明升级；仅在实际暴露 workspace_edit 时向 write 的说明追加局部编辑建议。
 E2 workspace_read 的 items 形式参数审计只含 item_count，不提取私有路径/内容；共享结果只含固定读取/批量错误码。
-工具策略版本升级为 12，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
+工具策略版本升级为 13，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
 S2 原生修改以类型化拒绝交付准确原因；身份/归属失败仍不披露资源信息，能力与服务/清理门槛分别判断。
 诊断推荐工具取本轮实际暴露集合与当前权限的交集；完整诊断仅供模型与 Owner 详情，审计/共享事件只提取固定错误码。
 S1 workspace_service_status 的工厂与策略描述独立于文件 lease/启动开关，仍要求当前 Owner single 与角色显式权限。
@@ -75,6 +75,13 @@ M 多行输入将内部 context schema 从 1 升为 2：非空正文的首尾空
 M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同一 chain 中已经提交的前序角色终态回复；
 后一个角色只有在前一个 `message_done` 提交后才开始 build。其他 chain、generating 占位和失败半成品仍不可见，
 单聊继续保持原有严格截止边界。
+
+## T2 搜索与范围读取
+
+workspace_search 按现有 Owner single/dangerous 边界独立启用，查询参数审计只提取 mode/query_bytes。
+read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后及返回前复核权限，逐项结果只给模型和 Owner 加密详情。
+工具策略和真实工具说明同步包含主机正文/扫描预算，规则见[搜索与范围读取](workspace-search-read.md)。
+扫描阶段在同一 tool_call_id/Trace 下记录队列与扫描耗时/字节，不生成每轮统计摘要或额外模型请求。
 
 ## M4a 会话串行调度
 

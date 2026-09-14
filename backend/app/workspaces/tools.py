@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Annotated, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -33,10 +34,12 @@ from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocke
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 12
+WORKSPACE_TOOL_POLICY_VERSION = 14
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
-    'workspace_read': '读取绑定工作区的 UTF-8 文件，优先使用 items 数组：一项是单文件，多项是批量，最多8项，每项默认4096字节，max_bytes 合计最多32768字节；输入 JSON 最多16 KiB，输出 JSON 最多64 KiB。各项独立授权、结果、全文件 sha256 与 next_offset；output_limited 表示正文为输出预算缩短。跨段 hash 改变时重新读取，不拼接不同版本。兼容旧 path/offset_bytes/max_bytes 单文件形式（默认65536字节、返回原五字段），但与 items 严格互斥，不能同时传入。重复读取是新的观察，不保证相同版本，不写文件。',
+    'workspace_read': '读取绑定工作区的 UTF-8 文件。可用 path+start_line/end_line 按行读取（从1开始、含两端，默认200行、最多2000行）；与 offset_bytes/max_bytes 字节模式互斥。兼容旧 path 字节形式，默认最多65536字节，返回原五字段。items 一次最多8项，各项默认65536字节，按实际返回量分享主机内容预算；不因申请值相加拒绝。参数JSON最多16 KiB，完整结果最多64 KiB，预算未覆盖项保留状态。所有成功读取给出全文件sha256；可传 expected_sha256 校验搜索/续读版本，不拼接不同版本。行模式只返回完整行，line_too_long时可用返回的start_offset作为offset_bytes改用字节模式。读取支持更大文件的有界扫描，写入上限仍为1 MiB。繁忙时工具内部有界排队，不需要查询队列。',
+    'workspace_search': '在绑定工作区定位文件和代码。query为区分大小写的字面文本，mode=text（默认）返回相对路径、匹配行号、少量上下文和确认后的全文件sha256；mode=files使用文件名fnmatch模式（如*.py），不提供内容版本。path默认根目录，可缩小到子目录/文件；limit默认100最多200，context_lines默认1最多3。系统敏感路径、链接、依赖缓存和构建目录排除。扫描/结果达到预算时status=partial，不等于全工作区无匹配。text可用queries数组（1..8词，每词1..256字符）替代query，match=any表示OR，all要求同一行含全部词；多个已知关键词合并一次扫描，matched_queries返回从0开始的命中词索引，|和&仍是字面字符。已知小文件可直接读取；未知位置先搜索，再用workspace_read按行读取；读取传已知expected_sha256，变化后重新定位。不是Shell、正则或语义索引，不获得额外资源权限。',
+
     "workspace_write": "普通源码创建或整文件替换优先使用本工具，更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
     'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；两片段合计最多 64 KiB。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
@@ -58,6 +61,11 @@ def _tool_description(name: str, *, edit_available: bool = False) -> str:
         edit_available：本次实际工具集合是否包含 edit，禁止向模型推荐未暴露工具。
     """
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
+    if name in {'workspace_read', 'workspace_search'}:
+        from ..config import settings
+        description += (f' 当前主机正文额度 {settings.workspace_read_content_bytes} 字节，单文件扫描上限 '
+                        f'{settings.workspace_scan_file_bytes} 字节，单次扫描总量 {settings.workspace_scan_total_bytes} 字节，'
+                        f'扫描时限 {settings.workspace_scan_seconds} 秒。')
     if name == 'workspace_write' and edit_available:
         description += ' 局部修改可优先使用本轮已启用的 workspace_edit，避免重传整份文件。'
     if name in WORKSPACE_MUTATION_TOOLS:
@@ -144,6 +152,9 @@ class WorkspaceReadInput(BaseModel):
     offset_bytes: int = Field(default=0, ge=0)
     max_bytes: int = Field(default=65_536, ge=1, le=65_536)
     items: list[ReadItemInput] | None = Field(default=None, min_length=1, max_length=8)
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
+    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
     @model_validator(mode='before')
     @classmethod
@@ -154,11 +165,25 @@ class WorkspaceReadInput(BaseModel):
         if not isinstance(value, dict):
             raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
         if 'items' in value:
-            if value['items'] is None or any(key in value for key in ('path', 'offset_bytes', 'max_bytes')):
+            if value['items'] is None or any(key in value for key in ('path', 'offset_bytes', 'max_bytes', 'start_line', 'end_line', 'expected_sha256')):
                 raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
         elif value.get('path') is None:
             raise ValueError('WORKSPACE_READ_ARGUMENT_INVALID')
+        else:
+            ReadItemInput.model_validate(value)
         return value
+
+
+class WorkspaceSearchInput(BaseModel):
+    """搜索参数只表达绑定根内的定位任务，不接受执行身份或任意命令。"""
+    model_config = ConfigDict(extra='forbid', strict=True, hide_input_in_errors=True)
+    query: str | None = Field(default=None, min_length=1, max_length=256)
+    queries: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(default=None, min_length=1, max_length=8)
+    match: Literal['any', 'all'] = 'any'
+    mode: Literal['text', 'files'] = 'text'
+    path: str = Field(default='.', max_length=1024)
+    limit: int = Field(default=100, ge=1, le=200)
+    context_lines: int = Field(default=1, ge=0, le=3)
 
 
 class WorkspaceWriteInput(BaseModel):
@@ -393,15 +418,29 @@ async def _authorized_service(**identity) -> WorkspaceFileService | None:
     return (await _service_decision(**identity)).service
 
 
-def _error_result(code: str, *, rejected: bool = False, diagnostic: dict | None = None) -> str:
+def _read_rejected(code: str) -> bool:
+    """区分预检/授权/准入拒绝与真实读取失败，保留旧文件错误的终态。
+
+    Args:
+        code：已登记的读取/搜索错误码。
+    """
+    return code in {'WORKSPACE_READ_ARGUMENT_INVALID', 'WORKSPACE_SEARCH_ARGUMENT_INVALID',
+        'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_TOOL_NOT_AVAILABLE',
+        'WORKSPACE_SCAN_BUSY', 'WORKSPACE_SCAN_QUEUE_TIMEOUT', 'WORKSPACE_SCAN_CLOSED',
+        'WORKSPACE_READ_BUDGET_EXHAUSTED', 'WORKSPACE_FILE_REVISION_CONFLICT'}
+
+
+def _error_result(code: str, *, rejected: bool = False, diagnostic: dict | None = None, details: dict | None = None) -> str:
     """返回给模型的结构化文件失败，不泄露路径或宿主异常。
 
     Args:
         code：固定错误码。
         rejected：原生文件工具的预期输入/匹配拒绝；默认保持旧工具响应语义。
         diagnostic：已鉴权且有界的本项拒绝事实，仅用于模型与 Owner 详情。
+        details：扫描层生成的安全预算/阶段信息。
     """
-    body = json.dumps({"ok": False, "error_code": code, **({'diagnostic': diagnostic} if diagnostic is not None else {})}, ensure_ascii=False, separators=(",", ":"))
+    body = json.dumps({"ok": False, "error_code": code, **({'diagnostic': diagnostic} if diagnostic is not None else {}),
+        **({'details': details} if details is not None else {})}, ensure_ascii=False, separators=(",", ":"))
     return f"{REJECTED_OUTPUT_PREFIX if rejected else FAILED_OUTPUT_PREFIX} {body}"
 
 
@@ -497,26 +536,75 @@ async def create_workspace_tools(
         except WorkspaceFileError as exc:
             return _error_result(exc.code)
 
-    async def workspace_read(path: str | None = None, offset_bytes: int = 0, max_bytes: int = 65_536, items: list | None = None) -> str:
-        """统一读取入口，保留旧调用的结果格式。
+    async def workspace_read(path: str | None = None, offset_bytes: int = 0, max_bytes: int = 65536, items: list | None = None,
+                             start_line: int | None = None, end_line: int | None = None, expected_sha256: str | None = None) -> str:
+        """先获得扫描准入再授权，保留旧单项格式并支持按行读取。
 
         Args:
-            path：旧形式的单文件相对路径，与 items 互斥。
-            offset_bytes：旧形式的字节游标。
-            max_bytes：旧形式的读取上限。
-            items：新形式的逐文件参数，含一项也保持批量结果契约。
+            path：单文件相对路径，与 items 互斥。
+            offset_bytes：旧字节起点。
+            max_bytes：字节返回期望上限。
+            items：逐文件参数，允许每项选择一种读取模式。
+            start_line：行模式起点。
+            end_line：包含的结束行。
+            expected_sha256：可选完整版本约束。
         """
-        if items is not None:
-            return await read_items(items)
-        authorized = await service("workspace_read")
-        if authorized is None:
-            return f"{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE"
+        from .scan_admission import admitted
         try:
-            return authorized.json_result(
-                await authorized.read(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
-            )
+            if items is not None:
+                items = [item.model_dump(exclude_unset=True) if isinstance(item, BaseModel) else item for item in items]
+            size = len(json.dumps({'path': path, 'items': items}, ensure_ascii=False).encode())
+            if size > 16384:
+                raise WorkspaceFileError('WORKSPACE_BATCH_INPUT_TOO_LARGE',
+                    {'phase': 'precheck', 'actual': size, 'limit': 16384, 'unit': 'utf8_bytes'})
+            # 批次先登记未开始节点，再由 read_many 取得同一准入；排队取消也有准确的私有状态。
+            if items is not None:
+                return await read_items(items)
+            async with admitted(size):
+                authorized = await service('workspace_read')
+                if authorized is None:
+                    raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                if start_line is not None:
+                    result = json.dumps(await authorized.read_lines(path, start_line=start_line, end_line=end_line,
+                        expected_sha256=expected_sha256), ensure_ascii=False, separators=(',', ':'))
+                else:
+                    result = authorized.json_result(await authorized.read(path, offset_bytes=offset_bytes, max_bytes=max_bytes,
+                        expected_sha256=expected_sha256))
+                if await service('workspace_read') is None:
+                    raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                return result
+        except UnicodeError:
+            return _error_result('WORKSPACE_READ_ARGUMENT_INVALID', rejected=True)
         except WorkspaceFileError as exc:
-            return _error_result(exc.code)
+            return _error_result(exc.code, rejected=_read_rejected(exc.code), details=exc.details)
+
+    async def workspace_search(query: str | None = None, mode: str = 'text', path: str = '.', limit: int = 100, context_lines: int = 1, queries: list[str] | None = None, match: str = 'any') -> str:
+        """获得准入后重新校验权限，搜索原文只进入模型与 Owner 详情。
+
+        Args:
+            query：单个字面内容或文件名模式。
+            queries：多个字面词，与 query 互斥。
+            match：any/all，同一行的匹配条件。
+            mode：text/files。
+            path：绑定根内扫描范围。
+            limit：匹配数量上限。
+            context_lines：命中前后上下文行数。
+        """
+        from .scan_admission import admitted
+        try:
+            async with admitted(len(json.dumps({'query': query, 'queries': queries, 'match': match, 'path': path}, ensure_ascii=False).encode())):
+                authorized = await service('workspace_search')
+                if authorized is None:
+                    raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                result = await authorized.search(query=query, queries=queries, match=match, mode=mode, path=path, limit=limit, context_lines=context_lines,
+                                                authorize=lambda: service('workspace_search'))
+                if await service('workspace_search') is None:
+                    raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                return json.dumps(result, ensure_ascii=False, separators=(',', ':'))
+        except UnicodeError:
+            return _error_result('WORKSPACE_SEARCH_ARGUMENT_INVALID', rejected=True)
+        except WorkspaceFileError as exc:
+            return _error_result(exc.code, rejected=_read_rejected(exc.code), details=exc.details)
 
     async def mutate_file(tool_name: str, path: str, arguments: dict) -> str:
         """write/edit 共用授权、私有采集和锁外计算，不接受模型指定工具名。
@@ -561,10 +649,12 @@ async def create_workspace_tools(
             receipt = scope.begin_read_batch(call_id, values) if scope and call_id else None
             receipt = receipt or ReadBatchReceipt(values)
             result = await read_many(values, authorize=lambda: service('workspace_read'), receipt=receipt)
+            if await service('workspace_read') is None:
+                raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
             status = receipt.value['status']
             return result if status == 'success' else f'{REJECTED_OUTPUT_PREFIX if status == "rejected" else FAILED_OUTPUT_PREFIX} {result}'
         except WorkspaceFileError as exc:
-            return _error_result(exc.code, rejected=True)
+            return _error_result(exc.code, rejected=True, details=exc.details)
 
     async def mutate_items(tool_name: str, items: list) -> str:
         """Args:
@@ -585,7 +675,7 @@ async def create_workspace_tools(
             status = receipt.value['status']
             return result if status == 'success' else f'{REJECTED_OUTPUT_PREFIX if status == "rejected" else FAILED_OUTPUT_PREFIX} {result}'
         except WorkspaceFileError as exc:
-            return _error_result(exc.code, rejected=True)
+            return _error_result(exc.code, rejected=True, details=exc.details)
 
     async def workspace_write(path: str | None = None, content: str | None = None, expected_sha256: str | None = None, items: list | None = None) -> str:
         """新建或整文件替换。
@@ -713,6 +803,9 @@ async def create_workspace_tools(
             return _command_result({'error_code': exc.code})
 
     raw: dict[str, BaseTool] = {
+        'workspace_search': StructuredTool.from_function(coroutine=workspace_search, name='workspace_search',
+            description=_tool_description('workspace_search'), args_schema=WorkspaceSearchInput,
+            handle_validation_error=lambda _error: _error_result('WORKSPACE_SEARCH_ARGUMENT_INVALID', rejected=True)),
         'workspace_run_shell': StructuredTool.from_function(coroutine=workspace_run_shell, name='workspace_run_shell',
             description=_tool_description('workspace_run_shell'), args_schema=WorkspaceShellInput,
             handle_validation_error=lambda _error: _command_result({'ok': False, 'error_code': 'SHELL_ARGUMENT_INVALID'})),
@@ -730,7 +823,7 @@ async def create_workspace_tools(
         "workspace_read": StructuredTool.from_function(
             coroutine=workspace_read,
             name="workspace_read",
-            description=WORKSPACE_TOOL_DESCRIPTIONS["workspace_read"],
+            description=_tool_description("workspace_read"),
             args_schema=WorkspaceReadInput,
             handle_validation_error=lambda _error: _error_result('WORKSPACE_READ_ARGUMENT_INVALID', rejected=True),
         ),

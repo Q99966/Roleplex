@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ..schemas import StopReason
 
-READ_ONLY = frozenset({'workspace_list', 'workspace_read', 'workspace_run_command',
+READ_ONLY = frozenset({'workspace_list', 'workspace_read', 'workspace_search', 'workspace_run_command',
                        'workspace_service_status', 'workspace_service_logs'})
 STOP_REASONS = frozenset({'user_cancelled', 'graph_budget', 'provider_failed', 'protocol_error', 'interrupted', 'context_rejected'})
 

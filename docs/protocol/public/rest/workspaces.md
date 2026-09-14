@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | W1a/W1b/W1c/E1/E2 与 S2 拒绝诊断已验收；群聊绑定与聊天标题区摘要属于 W2a |
+| 状态 | W1a/W1b/W1c/E1/E2/S2 已验收；T2 搜索与范围读取已实现并通过人工验收；群聊绑定属于 W2a |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-13 |
+| 复核日期 | 2026-09-14 |
 
 ## 范围与安全边界
 
@@ -56,7 +56,7 @@ GET /api/workspaces/capabilities
 {
   "world_name": "default",
   "workspace_kinds": ["managed_directory"],
-  "file_tools": ["workspace_list","workspace_read","workspace_write","workspace_edit"],
+  "file_tools": ["workspace_list","workspace_read","workspace_search","workspace_write","workspace_edit"],
   "basic_commands_available": true,
   "shell_available": true,
   "shell_kind": "bash",
@@ -128,7 +128,7 @@ S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无
 | 工具 | 输入 | 结果 |
 |---|---|---|
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
-| `workspace_read` | 旧 `path/offset_bytes/max_bytes`，或新 `items`，两种互斥 | 旧形式保留 `text/bytes/eof/next_offset/sha256`；items 形式返回下述逐项结果，含一项也不改变结果形态 |
+| `workspace_read` / `workspace_search` | T2 字节/行范围读取与文件名/文本定位 | [搜索与范围读取权威契约](../../internal/workspace-search-read.md)；旧单文件五字段响应兼容 |
 | `workspace_write` | 旧 `path/content/expected_sha256?` 或新 `items` | 旧形式保留 `created/bytes/sha256`；批次结果见下文；新建要求不存在，更新要求旧 hash |
 | `workspace_edit` | 旧 `path/old_text/new_text/expected_sha256` 或新 `items` | 旧形式保留 `created=false/bytes/sha256`；批次结果见下文；唯一字面替换已有 UTF-8 文件 |
 
@@ -144,33 +144,13 @@ schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/
 差异采集、预算、取消和 Owner 展示复用[工具详情](../messaging/tool-details.md)的 write 对象，不新增独立 diff 协议。
 大文件小修改允许执行，但超过 D 的前后合计计算预算时 diff 仍明确降级，不在 E1 偷偷提高预算。
 
-### E2 多文件读取（已人工验收，内部工具契约）
+### T2 搜索、范围读取与统一准入
 
-workspace_read 同时支持旧单文件形式和新 items 形式，共用原角色 read 权限、工作区 file_tools_enabled 和 Owner single lease。
-旧形式 path 必填，offset_bytes 默认 0，max_bytes 默认 65536，范围及原五字段响应不变；items 即使仅一项也返回批次结果。
-items 与任何顶层 path/offset_bytes/max_bytes 键严格互斥（包含 null/默认值），缺失模式、items=null、未知字段或非法类型
-返回 WORKSPACE_READ_ARGUMENT_INVALID；嵌套 items 严格整数。旧实验 workspace_read_many 不再暴露/执行，旧角色如仅勾选
-实验工具需手动开启 workspace_read，不静默转换权限。历史工具身份不改写，Owner 仍可读取已保存实验记录。
-items 长度 1..8，每项 path 长度 1..1024、offset_bytes 默认 0 且 0..2^63-1、max_bytes 默认 4096 且 1..32768；
-整数不接受 bool/字符串，未知参数拒绝。标准化输入紧凑 UTF-8 JSON 最大 16384 字节，max_bytes 合计最大 32768。
-宿主同时最多 2 批，每批最多 2 项进入授权/读取，不设批次等待队列；其余拒绝 WORKSPACE_BATCH_BUSY。
-每项复用完整的路径/敏感文件/链接/UTF-8/1 MiB 文件限制；stat 后实际读取也有 1 MiB+1 字节硬上限。
-读取原语不使用新线程池，不承诺磁盘并行加速；逻辑在途读取最多 4 个 1 MiB 文件，保留结果每批最大 64 KiB，
-Python 编码对象和临时 JSON 另有开销，不把逻辑字节预算宣传为进程 RSS 上限。
-
-结果为紧凑 JSON：version=1、status、error_code（可空）、items。子项按输入顺序，含 id=item-0..item-7、
-operation=read、path、status、error_code、output_limited、result（失败/未执行为 null；成功为单项 read 的五字段）。
-子状态 pending/running/success/failed/rejected/cancelled/not_executed；父状态 running/success/partial/failed/cancelled/rejected。
-失败与部分完成用既有工具失败前缀，准入/形态拒绝用拒绝前缀；共享工具卡只取得固定顶层错误码，不含逐文件清单。
-每项进入读取前重新授权，一项失败继续其他项。输出 JSON 总量不超过 65536 UTF-8 字节，按项等分扣除信封后的预算；
-仅当转义后超额时缩短 text，按实际 UTF-8 字节重算 bytes/next_offset、eof=false，output_limited=true，sha256 不变。
-不能用截断 JSON 的方式丢失 hash 或游标；单字节预算必要时沿用单文件最多补齐 3 字节的字符边界规则。
-
-取消等待已启动任务收尾，保留已观察成功/失败，未开始为 not_executed、已开始但未返回为 cancelled。
-私有逐项结果复用 generation 文件采集作用域，在工具结束或正常取消收尾时由消息所有者加密落库。
-进程崩溃时未落库的逐项事实不补造，显示中断和逐项结果未记录；不自动重启 generation 或重读文件补历史。
-重复路径/请求允许新的独立观察，hash 可能变化，不是同一时刻快照或历史幂等缓存；只读重试不会写文件，
-不得把这种重试方式用于批量写入。Owner 展示契约见[工具详情](../messaging/tool-details.md)。
+T2 复用 workspace_read 与原工作区文件开关，新增角色显式 workspace_search 开关，默认不为旧角色启用。
+扫描/内容/完整 JSON 预算、按行/字节模式、expected_sha256、批次状态、排队与取消以
+[搜索与范围读取协议](../../internal/workspace-search-read.md)为唯一权威。本篇不再重复旧 E2 的 4 KiB/32 KiB 申请值预算。
+Owner 逐项/行范围/搜索详情以[工具详情](../messaging/tool-details.md)为准，Guest 不获得查询、路径或正文。
+原实验 workspace_read_many 不再暴露，旧记录仍只读兼容；不把只读重试规则用于写入或自动恢复已中断执行。
 
 ### E2 多文件写入/编辑（已人工验收，内部工具契约）
 

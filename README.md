@@ -4,6 +4,8 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 
 ## 当前阶段
 
+T2 人工验收补充：搜索支持多个字面关键词的 OR/同行 AND；Owner 结果按文件归组，批量行读取标题显示实际范围。见[搜索与范围读取协议](docs/protocol/internal/workspace-search-read.md)。
+
 已完成 M0/M1 基础骨架、M2 单聊闭环、M4a 群聊、E0 持久 execution 身份和 W1a 当前 World 工作区与
 单聊原生文件工具，以及已通过人工验收的 W1b 结构化命令：
 
@@ -84,8 +86,15 @@ E2 批量写入/编辑已通过人工验收：原 `workspace_write`／`workspace
 T0 已完成离线与真实 Provider 问题取证，见[T0 验证记录](docs/testing/tool-reliability-t0.md)。
 T1 中断处理已实现并通过人工验收：保留工具执行证据并准确记录停止原因，图预算停止不再追加缺少事实的模型收尾；
 不生成每轮统计摘要，不向历史注入摘要。原工具卡和 Owner 私有详情按原权限与期限保存，中断后恢复工作尚未实现。
-验证与人工检查见[T1 验证记录](docs/testing/tool-reliability-t1.md)。读取排队、多片段编辑与可配置执行预算尚未实现，
+验证与人工检查见[T1 验证记录](docs/testing/tool-reliability-t1.md)。T2 搜索定位、按行读取、实际预算与有界排队已实现并通过人工验收，见[T2 测试记录](docs/testing/tool-reliability-t2.md)。
+多片段编辑与可配置执行预算尚未实现，
 现行图上限、工具权限和停服规则不变。
+
+T2 在角色“文件操作”中单独开启“搜索工作区文件”，沿用工作区原生文件开关；旧角色不会自动获得搜索。
+支持先搜索文件/文本定位行号，再按行读取大文件的小范围。读取默认每次/每批分享 64 KiB 实际内容额度，
+完整结果另有 64 KiB 上限；单文件扫描默认 16 MiB，write/edit 仍限 1 MiB。主机可通过
+`WORKSPACE_READ_CONTENT_BYTES`、`WORKSPACE_SCAN_FILE_BYTES`、`WORKSPACE_SCAN_TOTAL_BYTES`、`WORKSPACE_SCAN_SECONDS`
+调整范围内预算，配置边界见[读取契约](docs/protocol/internal/workspace-search-read.md)。
 
 ### 模型 provider 开关与契约测试
 

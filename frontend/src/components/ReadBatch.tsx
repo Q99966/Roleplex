@@ -1,7 +1,7 @@
 import type { ReadBatchDetails } from '../api/client'
 
 const STATUS: Record<string, string> = { pending: '未开始', running: '读取中', success: '已读取',
-  failed: '失败', rejected: '已拒绝', cancelled: '已取消', not_executed: '未执行' }
+  failed: '失败', rejected: '已拒绝', cancelled: '已取消', not_executed: '未执行', budget_exhausted: '本批预算未覆盖，未读取' }
 
 /** 私有文件名/正文中的控制字符可见转义，保持纯文本，不执行 HTML。
  * @param text Owner 详情返回的原文。
@@ -21,13 +21,15 @@ export function ReadBatch({ value }: { value: ReadBatchDetails }) {
     {value.status === 'cancelled' && <p className="text-amber-300">批量读取已取消，仅保留已观察到的逐项结果。</p>}
     {value.items.map((item) => <details key={item.id} className="min-w-0 overflow-hidden rounded-lg border border-slate-700">
       <summary className="cursor-pointer break-all px-3 py-2 text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
-        {visible(item.path)} · {STATUS[item.status] ?? '状态未知'}
+        {visible(item.path)}{item.result && 'next_line' in item.result ? ` · ${item.result.start_line}～${item.result.end_line ?? '无完整行'} 行` : ''} · {STATUS[item.status] ?? '状态未知'}
         {item.error_code && <span className="ml-2 text-red-300">{item.error_code}</span>}
       </summary>
       <div className="space-y-2 border-t border-slate-800 p-3">
         {item.result ? <>
-          <p>{item.result.bytes} 字节 · {item.result.eof ? '已到文件末尾' : `续读偏移 ${item.result.next_offset}`}</p>
-          {item.output_limited && <p className="text-amber-300">为满足整批 JSON 预算，正文已缩短；hash 与续读游标保留。</p>}
+          <p>{item.result.bytes} 字节 · {item.result.eof ? '已到文件末尾' : 'next_line' in item.result ? `续读行号 ${item.result.next_line}` : `续读偏移 ${item.result.next_offset}`}</p>
+          {item.output_limited && <p className="text-amber-300">内容受本批预算限制；hash 与续读位置保留。</p>}
+          {'next_line' in item.result && <p>实际行范围：{item.result.start_line}～{item.result.end_line ?? '无完整行'} · 扫描 {item.result.scanned_bytes} 字节</p>}
+          {'limited_reason' in item.result && item.result.limited_reason === 'line_too_long' && <p>该行超过本次额度，请按字节分段读取。</p>}
           <p className="break-all font-mono">全文件 SHA-256：{item.result.sha256}</p>
           <pre role="region" aria-label={`读取内容：${visible(item.path)}`}
             className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-slate-950 p-2 font-mono text-xs">{visible(item.result.text) || '（空内容）'}</pre>

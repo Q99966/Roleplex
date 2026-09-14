@@ -111,3 +111,5 @@ W1c 继续复用上述执行事实；审批生命周期新增 tool.approval_requ
 - `backend/tests/test_reporting.py`：pytest scope、安全身份和 captured 尾部。
 - `backend/tests/test_log_archive.py`：tar.gz manifest、失败保源、30 天/容量淘汰、running 保护与审计。
 - Playwright 普通、世界切换和真实 provider 配置：run 目录、summary、环境/provider 信息与脱敏产物。
+
+T2 扫描沿用既有工具/执行身份，新增 tool.scan_completed 的字段与语义见日志 v2；不逐块记录，不保存查询或匹配正文。

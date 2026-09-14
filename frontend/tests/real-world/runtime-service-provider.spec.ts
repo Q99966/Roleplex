@@ -87,7 +87,7 @@ test('完整工具集两轮开发：页面创建、回答后服务存续、局�
       await request(`/api/workspaces/${workspace.id}`, { shell_enabled: true, file_tools_enabled: true, basic_commands_enabled: true }, 'PATCH')
       const role = await request('/api/roles', { name: `服务助手 ${stamp}`, system_prompt: '根据用户目标和实际工具结果完成开发。尊重审批与服务占用规则，不换工具规避拒绝。不猜测文件或页面内容。',
         model_config_id: seed.model_config_id, model_name: seed.model_name, params: { max_tokens: 4096 },
-        builtin_tools: ['workspace_list', 'workspace_read', 'workspace_write', 'workspace_edit', 'workspace_run_command', 'workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
+        builtin_tools: ['workspace_list', 'workspace_search', 'workspace_read', 'workspace_write', 'workspace_edit', 'workspace_run_command', 'workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service', 'workspace_run_shell'] })
       return (await request('/api/conversations', { title, type: 'single', role_ids: [role.id], workspace_binding_id: workspace.id })).id as number
     }, { base, root, title, stamp })
     await page.reload()

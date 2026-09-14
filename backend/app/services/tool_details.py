@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -132,6 +132,21 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     try:
         output = _decrypt(row, row.output_encrypted)
         payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
+        if row.tool_name in {'workspace_read', 'workspace_search'} and output and isinstance(output.get('text'), str):
+            from ..agent.tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX
+            raw = output['text']
+            for prefix in (FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX):
+                if raw.startswith(prefix):
+                    raw = raw[len(prefix):].strip()
+                    break
+            try:
+                import math
+                budget = json.loads(raw).get('details')
+                if isinstance(budget, dict) and budget.get('phase') in {'precheck', 'scanning', 'queue'} and budget.get('unit') in {'bytes', 'utf8_bytes', 'seconds'} and all(
+                    type(budget.get(key)) in {int, float} and math.isfinite(budget[key]) and budget[key] >= 0 for key in ('actual', 'limit')):
+                    payload['budget_error'] = {key: budget[key] for key in ('phase', 'actual', 'limit', 'unit')}
+            except (ValueError, TypeError, AttributeError):
+                pass
         # 原单文件详情仍返回原 input/output；模式只决定展示，不由输入猜测执行结果。
         batch_mode = row.tool_name == 'workspace_read_many' or bool(output and output.get('format') == 'read-batch-v1')
         if row.tool_name == 'workspace_read' and payload['input']:
@@ -148,6 +163,24 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                 if len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > 65536:
                     raise ValueError('TOOL_DETAILS_UNAVAILABLE')
                 payload['read_batch'] = value
+        if row.tool_name == 'workspace_search' or (row.tool_name == 'workspace_read' and not batch_mode):
+            try:
+                parameters = json.loads(payload['input']['text']) if payload['input'] else {}
+                structured = row.tool_name == 'workspace_search' or 'start_line' in parameters
+                if structured:
+                    field = 'search' if row.tool_name == 'workspace_search' else 'read_range'
+                    payload[field] = None
+                    payload['output'] = None
+                    if output and not output.get('truncated'):
+                        parsed = json.loads(output['text'])
+                        schema = SearchResultView if field == 'search' else LineReadResultView
+                        value = schema.model_validate(parsed).model_dump()
+                        if len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > 65536:
+                            raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                        payload[field] = value
+            except (ValueError, KeyError, TypeError):
+                # 拒绝文本不是成功的结构化结果；不从参数补造未读取的数据。
+                pass
         if row.tool_name in WORKSPACE_MUTATION_TOOLS:
             mutation_batch = bool(output and output.get('format') == 'write-batch-v1')
             if payload['input']:

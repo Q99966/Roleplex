@@ -13,7 +13,7 @@ def test_read_schema_accepts_legacy_or_items_but_never_mixed():
     from pydantic import ValidationError
     from app.workspaces.tools import WorkspaceReadInput
     assert WorkspaceReadInput(path='a.txt').max_bytes == 65536
-    assert WorkspaceReadInput(items=[{'path': 'a.txt'}]).items[0].max_bytes == 4096
+    assert WorkspaceReadInput(items=[{'path': 'a.txt'}]).items[0].max_bytes == 65536
     for value in [{}, {'items': None}, {'path': None}, {'path': 'a.txt', 'items': [{'path': 'a.txt'}]},
                   {'items': [{'path': 'a.txt'}], 'offset_bytes': 0}, {'items': [{'path': 'a.txt'}], 'path': None},
                   {'items': [{'path': 'a.txt'}], 'max_bytes': 4}]:
@@ -102,38 +102,39 @@ async def test_read_many_cancel_drains_owned_tasks_and_preserves_finished_items(
 @pytest.mark.anyio
 async def test_read_many_rechecks_permissions_and_bounds_batch_admission(command_root):
     """Args:
-        command_root：本轮隔离目录。
+        command_root：隔离根，第三批由同一调用排队而非要求模型重试。
     """
     from app.workspaces.batch_read import read_many, ReadBatchReceipt
     from app.workspaces.files import WorkspaceFileService
+    from app.workspaces.scan_admission import current_pool
     (command_root / 'a.txt').write_text('read')
     service = WorkspaceFileService(root=command_root, execution_id='test')
-    entered = asyncio.Event()
-    proceed = asyncio.Event()
-    active = peak = calls = 0
+    entered, proceed = asyncio.Event(), asyncio.Event()
+    count = 0
     async def authorize():
-        """占满两批四项的授权槽，不创建进程或无界等待者。"""
-        nonlocal active, peak, calls
-        active += 1
-        peak = max(peak, active)
-        calls += 1
-        if active == 4:
+        """同时持有两个准入槽，释放后后续调用公平获得执行机会。"""
+        nonlocal count
+        count += 1
+        if count == 2:
             entered.set()
-        try:
-            await proceed.wait()
-            return service if calls <= 4 else None
-        finally:
-            active -= 1
-    items = [{'path': 'a.txt'}] * 8
+        await proceed.wait()
+        return service
+    items = [{'path': 'a.txt'}]
     tasks = [asyncio.create_task(read_many(items, authorize=authorize, receipt=ReadBatchReceipt(items))) for _ in range(2)]
-    await entered.wait()
-    refused = json.loads(await read_many(items, authorize=authorize, receipt=ReadBatchReceipt(items)))
-    assert refused['error_code'] == 'WORKSPACE_BATCH_BUSY'
-    assert all(item['status'] == 'not_executed' for item in refused['items'])
-    proceed.set()
-    results = [json.loads(value) for value in await asyncio.gather(*tasks)]
-    assert peak <= 4 and active == 0
-    assert any(item['status'] == 'rejected' for value in results for item in value['items'])
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        third = asyncio.create_task(read_many(items, authorize=authorize, receipt=ReadBatchReceipt(items)))
+        tasks.append(third)
+        await asyncio.sleep(0)
+        assert len(current_pool().queue) == 1 and not third.done()
+        proceed.set()
+        results = [json.loads(value) for value in await asyncio.gather(*tasks)]
+        assert all(value['status'] == 'success' for value in results)
+        assert not current_pool().active and not current_pool().queue
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize('items,code', [
@@ -142,9 +143,8 @@ async def test_read_many_rechecks_permissions_and_bounds_batch_admission(command
     ([{'path': 'a', 'max_bytes': True}], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
     ([{'path': 'a', 'offset_bytes': '0'}], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
     ([{'path': 'a', 'content': 'not allowed'}], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
-    ([{'path': 'a', 'max_bytes': 32768}] * 2, 'WORKSPACE_BATCH_INPUT_TOO_LARGE'),
     ([{'path': '中' * 1000}] * 8, 'WORKSPACE_BATCH_INPUT_TOO_LARGE'),
-], ids=['empty', 'count', 'bool', 'coercion', 'extra', 'read-budget', 'utf8-input-budget'])
+], ids=['empty', 'count', 'bool', 'coercion', 'extra', 'utf8-input-budget'])
 def test_read_many_rejects_invalid_batch_before_any_io(items, code):
     """Args:
         items：受控无效请求。
@@ -197,14 +197,14 @@ async def test_read_many_file_boundaries_and_repeat_observation(command_root):
     from app.workspaces.batch_read import read_many, ReadBatchReceipt
     from app.workspaces.files import WorkspaceFileService
     (command_root / 'a.txt').write_text('🙂')
-    (command_root / 'large.txt').write_bytes(b'x' * (1024 * 1024 + 1))
+    (command_root / 'large.txt').write_bytes(b'x' * (16 * 1024 * 1024 + 1))
     (command_root / 'binary.txt').write_bytes(b'\xff')
     (command_root / 'link.txt').symlink_to(command_root / 'a.txt')
     service = WorkspaceFileService(root=command_root, execution_id='test')
     async def authorize():
         """复用已绑定服务。"""
         return service
-    items = [{'path': name, 'max_bytes': 1} for name in ['a.txt', '../escape', '.env', 'link.txt', 'large.txt', 'binary.txt']]
+    items = [{'path': name, 'max_bytes': 4} for name in ['a.txt', '../escape', '.env', 'link.txt', 'large.txt', 'binary.txt']]
     value = json.loads(await read_many(items, authorize=authorize, receipt=ReadBatchReceipt(items)))
     assert [node['error_code'] for node in value['items']] == [None, 'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_SENSITIVE',
         'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_FILE_TOO_LARGE', 'WORKSPACE_FILE_NOT_TEXT']
@@ -307,7 +307,9 @@ async def test_read_many_maximum_batch_keeps_serialized_bound(command_root):
     output = await read_many(items, authorize=authorize, receipt=receipt)
     assert len(output.encode()) <= 65536
     assert len(json.dumps(BatchReadDetailView.model_validate(receipt.value).model_dump(), ensure_ascii=False, separators=(',', ':')).encode()) <= 65536
-    assert all(node['output_limited'] and node['result']['next_offset'] > 0 for node in receipt.value['items'])
+    assert receipt.value['items'][0]['output_limited'] and receipt.value['items'][0]['result']['next_offset'] > 0
+    assert any(node['status'] == 'budget_exhausted' for node in receipt.value['items'])
+    assert sum(node['result']['bytes'] for node in receipt.value['items'] if node['result']) <= 65536
 
 
 @pytest.mark.anyio

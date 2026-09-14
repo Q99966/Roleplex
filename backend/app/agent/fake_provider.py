@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 # M2 起沿用的回复文案，端到端测试依赖其前缀，修改会导致浏览器断言失效。
 FAKE_REPLY_TEMPLATE = "已收到你的消息：{prompt}\n\n这是 M2 fake provider 的确定性回复。"
@@ -101,6 +101,45 @@ class ScriptedChatModel(BaseChatModel):
         ]
 
 
+class SearchReadModel(ScriptedChatModel):
+    """T2 浏览器模型按真实搜索结果生成行读取请求，不预埋目标行号。"""
+    _hit: dict = PrivateAttr(default_factory=dict)
+    stale: bool = False
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        """按实际 ToolMessage 定位，后续仍交给真实工具执行。
+
+        Args:
+            messages：框架传入的本轮消息与真实工具结果。
+            stop：模型接口停止条件。
+            run_manager：框架回调。
+            kwargs：兼容附加参数，不转发到外部服务。
+        """
+        if self.index == 0:
+            turn = ScriptedTurn(tool_calls=[{'name': 'workspace_search', 'args': {'queries': ['TARGET_FUNCTION', 'SECOND_TARGET'], 'match': 'any'}, 'id': 't2-search'}])
+        elif self.index == 1:
+            outputs = [message for message in messages if isinstance(message, ToolMessage)]
+            try:
+                self._hit = json.loads(outputs[-1].content)['matches'][0]
+                turn = ScriptedTurn(tool_calls=[{'name': 'workspace_read', 'args': {
+                    'path': self._hit['path'], 'start_line': self._hit['line_number'], 'end_line': self._hit['line_number'] + 1,
+                    'expected_sha256': '0' * 64 if self.stale else self._hit['sha256']}, 'id': 't2-range'}])
+            except (ValueError, KeyError, IndexError):
+                turn = ScriptedTurn(text='没有获得可用搜索定位结果。')
+        elif self.index == 2 and self._hit and not self.stale:
+            turn = ScriptedTurn(tool_calls=[{'name': 'workspace_read', 'args': {'items': [
+                {'path': self._hit['path'], 'start_line': self._hit['line_number'], 'end_line': self._hit['line_number'] + 1},
+                {'path': self._hit['path'], 'start_line': self._hit['line_number'] + 2, 'end_line': self._hit['line_number'] + 2},
+                {'path': 'missing.txt'}, {'path': 'small.txt', 'max_bytes': 32768},
+            ]}, 'id': 't2-batch'}])
+        else:
+            turn = ScriptedTurn(text='版本冲突已确认，未修改文件。' if self.stale else '搜索与范围读取完成。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """构造只产出固定回复文案的 fake 模型。
 
@@ -108,6 +147,8 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:
+        return SearchReadModel(delay=delay, stale='[SEARCH_STALE_FAKE]' in prompt)
     if '[EXECUTION_FACTS_FAKE]' in prompt:
         # 默认图预算内先真实写入，再持续只读以确定性触顶；不修改生产预算。
         return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{

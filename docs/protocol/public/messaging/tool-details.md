@@ -131,21 +131,30 @@ E1 workspace_edit（已人工验收）复用上述 write-v1 加密格式及公�
 刷新重新默认展开，调用顺序及既有阅读锚点可恢复，折叠隐藏锚点回退至组标题。
 归组不主动预取路径、参数或文件内容，Owner 按需读取原详情端点，Guest 不请求私有详情；权限及保留期限不变。
 
-### E2 批量读取详情（已人工验收）
+### 批量读取、搜索与范围详情（E2 已验收，T2 待人工验收）
 
 同一 Owner 端点兼容增加 read_batch（可空）；workspace_read 的 items 形式使用，旧 path 形式仍返回原 input/output，
 不增加 read_batch 字段。字段等同该工具已校验的
-version/status/error_code/items，逐项结果、字节预算、续读与取消语义以[工作区工具契约](../rest/workspaces.md)为准。
-items 形式 output=null，不重复传输第二份大 JSON；input 仅采集 items 的 path/offset_bytes/max_bytes，未知嵌套字段不保存。
+version/status/error_code/items，逐项结果、字节预算、续读与取消语义以[T2 读取契约](../../internal/workspace-search-read.md)为准。
+items 形式 output=null，不重复传输第二份大 JSON；input 仅采集已登记的 path/offset_bytes/max_bytes/start_line/end_line/expected_sha256，未知嵌套字段不保存。
 无批次输出时仅用已保存输入识别展示模式，不由输入推断执行结果；旧实验 workspace_read_many 历史记录继续只读兼容。
 执行处在既有 generation 文件采集作用域保留结果，由原消息所有者加密保存 read-batch-v1 到 output_encrypted，
 不新增数据表、Trace 或子调用。详情读取校验 schema 与紧凑 UTF-8 JSON 64 KiB 上限；密文保存失败降级 read_batch=null，
-不保存明文、不重新读取。重启前未落库的子项状态不从输入推断；read_batch=null 显示逐项结果未记录或仍等待结束。
+不保存明文、不重新读取。重启前未落库的子项状态不从输入推断；read_batch=null 时，明确的预检/准入拒绝显示未开始读取，其他缺失结果不能冒充未执行。
 
 批量读取卡仍由 Owner 主动展开，展开后显示按输入顺序的文件节点，每项可独立展开文本/hash/续读游标；
 items 形式不显示原始输入/输出 JSON；可按 workspace_read 的连续只读规则参与探索归组，仍保留每个调用的文件节点，
 也不把多次观察当成文件净变化。部分失败在外层标“部分完成”，
 保留所有成功与失败节点。Guest 不获取文件清单/正文，七天保留、密文身份绑定、历史不重建规则不变。
+
+T2 同一 Owner 端点兼容新增 search 与 read_range，分别使用搜索结果和单文件行范围结果 schema，完整 JSON 均限 64 KiB。
+已知行模式/搜索模式不重复返回第二份原始 output。批次 result 可为旧字节结果或行结果，budget_exhausted 表示未被本批预算覆盖。
+数值预算拒绝可增加 budget_error（phase/actual/limit/unit），仅提取批准的有限非负数字，不保存异常对象或原始参数。
+
+搜索结果显示路径、匹配行号、上下文、完整 hash 或版本未确认；行范围显示实际起止、下一行、扫描量与内容。
+query/匹配路径/正文只保存到身份绑定的 Owner 密文中，不进入共享工具卡；共享 search 卡可兼容携带 truncated 布尔值，
+表示搜索未覆盖全部范围。连续 search/read/list 共用探索归组，部分覆盖不能显示成完整成功。
+所有权限、七天期限、关闭/切换时清空私有内容和历史不重建规则不变。
 
 ### E2 批量修改详情（已人工验收）
 
@@ -164,3 +173,5 @@ write_batch=null 在 running 时表示等待；明确 rejected 时显示写前�
 
 Owner 修改卡默认展开并沿用视口内加载；一个节点直接显示 diff，多节点默认展开、可逐文件折叠。
 不显示原始输入输出，不提供自动回滚按钮；失败/未执行/未确认节点始终保留。Guest 不请求私有节点。
+
+T2 搜索命中兼容增加 matched_queries（零基词索引，旧记录默认空数组）；query/queries/match 仅从 Owner 私有输入读取。具体语义以[搜索协议](../../internal/workspace-search-read.md)为准。
