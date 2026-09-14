@@ -17,6 +17,9 @@
 
 ## 一、调整原因与当前事实
 
+针对实际使用问题，另有[工具可靠性与能力库路线草案](tool-reliability-capability-roadmap-v1.md)，建议先修正收尾、读取与编辑体验，
+再继续本主线；顺序调整待用户确认，不提前实现 W2b 搜索/Git、W3 或 Orchestrator。
+
 当前 Agent 循环和工具领域事件已经存在，W1a 已把当前 World Workspace Binding 与原生文件工具接入单角色
 链路；W1b 已增加固定结构化命令，MCP manager 仍只完成生命周期风险验证，仓库绑定与 Git worktree 尚未实现。此时先实现
 M4b 仍只能并行生成有限文字/文件意见，不能形成“读取代码 →

@@ -35,7 +35,7 @@ Roleplex 是运行在 Owner 本机上的个人多 Agent 群聊协作服务：Own
 - Alembic 迁移覆盖全部表结构，可在 SQLite 与 PostgreSQL 方言上重放
 - React + TypeScript + Vite + Tailwind + zustand 的登录/工作台 UI 与实时聊天界面
 - M 多行输入已实现并通过人工验收：Enter 发送、Shift+Enter 换行、按内容增高、光标位置 @ 补全；
-  发送失败保留当前草稿，发送和模型输入保留代码缩进与换行。范围与验收见[输入与 diff 计划](docs/plan/code-diff-multiline-v1.md)，代码 diff 尚未实施
+  发送失败保留当前草稿，发送和模型输入保留代码缩进与换行。范围与验收见[输入与 diff 计划](docs/plan/code-diff-multiline-v1.md)；代码 diff 已实现并验收，详见下文 D/E 阶段
 
 M0 风险验证已补齐（只做验证，未接入产品页面）：LangGraph 防腐层与统一领域事件、工具危险
 分级与执行层拦截、工具调用审计、取消传播、Windows stdio MCP 生命周期与进程树清理、
@@ -79,6 +79,9 @@ E2 批量写入/编辑已通过人工验收：原 `workspace_write`／`workspace
 旧单文件参数和展示兼容，范围与验收见[实施计划](docs/plan/code-diff-multiline-v1.md)。
 
 完整测试分层、命令、端口、数据留存、账号和日志排查见 [Roleplex 测试指南](docs/testing/README.md)。
+
+近期工具可靠性修正及长期角色能力库的建议路线见[完整方案草案](docs/plan/tool-reliability-capability-roadmap-v1.md)。
+该草案待确认，不代表其中的收尾修复、读取排队、多片段编辑或预留工具已经实现，也不自动改变现行权限和停服规则。
 
 ### 模型 provider 开关与契约测试
 
