@@ -95,7 +95,7 @@ async def test_budget_reason_and_tool_evidence_persist_without_summary(command_r
         message = await wait_reply(client, headers, cid, sent['message']['id'])
         assert message['status'] == 'stopped'
         assert (command_root / 'facts-proof.txt').read_text() == 'controlled-facts'
-        assert message['stop_reason'] == 'graph_budget'
+        assert message['stop_reason'] == 'decision_budget'
         assert not any(part['type'] == 'execution_summary' for part in message['parts_json'])
         call = next(part for part in message['parts_json'] if part.get('tool_name') == 'workspace_write')
         assert call['confirmed_applied_items'] == 1 and call['effect_state'] == 'applied'
@@ -203,12 +203,14 @@ def test_directory_side_effect_is_not_reported_as_no_effect():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('failure', ['known', 'unknown'])
-async def test_partial_commit_and_budget_undispatched_are_distinct(command_root, isolated_command_database, monkeypatch, failure):
+@pytest.mark.parametrize('budget_kind', ['graph', 'decision'])
+async def test_partial_commit_and_budget_undispatched_are_distinct(command_root, isolated_command_database, monkeypatch, failure, budget_kind):
     """Args:
         command_root：本轮隔离目录。
         isolated_command_database：逐轮迁移数据库。
         monkeypatch：固定低图预算并在第二文件注入可分类失败。
         failure：已知未提交或无法确认的执行异常。
+        budget_kind：兼容图保护及新决策停止均保留真实结果。
     """
     from app.services import chat
     from app.workspaces.files import WorkspaceFileService, WorkspaceFileError
@@ -222,7 +224,8 @@ async def test_partial_commit_and_budget_undispatched_are_distinct(command_root,
         """Args:
             kwargs：原循环输入，只有本测试图预算为四步。
         """
-        async for event in original_loop(**{**kwargs, 'recursion_limit': 4}):
+        budget = {'recursion_limit': 4} if budget_kind == 'graph' else {'decision_limit': 1}
+        async for event in original_loop(**{**kwargs, **budget}):
             yield event
     async def write(service, path, content, **kwargs):
         """Args:
@@ -242,9 +245,10 @@ async def test_partial_commit_and_budget_undispatched_are_distinct(command_root,
         await enable_write(client, headers, rid, wid)
         sent = await send_command(client, headers, cid, '受控部分提交与预算停止')
         reply = await wait_reply(client, headers, cid, sent['message']['id'])
-        assert reply['stop_reason'] == 'graph_budget' and model.index == 2
+        assert reply['stop_reason'] == ('graph_budget' if budget_kind == 'graph' else 'decision_budget')
+        assert model.index == (2 if budget_kind == 'graph' else 1)
         calls = [part for part in reply['parts_json'] if part['type'] == 'tool_call']
-        assert len(calls) == 3 and calls[0]['confirmed_applied_items'] == 1
+        assert len(calls) == (3 if budget_kind == 'graph' else 1) and calls[0]['confirmed_applied_items'] == 1
         assert (command_root / 'first.txt').read_text() == 'confirmed'
         for name in ['second.txt', 'blocked-0.txt', 'blocked-1.txt']:
             assert not (command_root / name).exists()

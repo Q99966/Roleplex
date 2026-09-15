@@ -77,14 +77,14 @@ class MessageDone:
 
 @dataclass(frozen=True)
 class ProviderCallStarted:
-    """一次模型厂商 API 调用已经开始。"""
+    """一次框架模型调用开始；SDK 内部 HTTP 重试不另产生此事件。"""
 
     call_index: int
 
 
 @dataclass(frozen=True)
 class ProviderCallCompleted:
-    """一次模型厂商 API 调用完成后的归一化性能与用量摘要。"""
+    """一次框架模型调用成功完成的性能与用量；不代表逐次 HTTP 尝试统计。"""
 
     call_index: int
     ttft_ms: int | None

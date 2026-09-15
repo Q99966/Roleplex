@@ -802,7 +802,7 @@ async def run_scheduled_generation(
             )
             return
 
-        budget_stopped = stop_reason == 'graph_budget'
+        budget_stopped = stop_reason in {'graph_budget', 'decision_budget'}
         terminal = await _finalize(generation_id, "stopped" if budget_stopped else "completed", accumulated,
                                    stop_reason=stop_reason)
         logger.info(

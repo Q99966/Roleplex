@@ -228,7 +228,7 @@ class Part(BaseModel):
 
 
 # 仅由服务器写入消息元数据，正常结束由已有 status=done 表达。
-StopReason = Literal['user_cancelled', 'graph_budget', 'provider_failed', 'protocol_error', 'interrupted', 'context_rejected']
+StopReason = Literal['user_cancelled', 'graph_budget', 'decision_budget', 'provider_failed', 'protocol_error', 'interrupted', 'context_rejected']
 
 
 class MessageCreate(BaseModel):

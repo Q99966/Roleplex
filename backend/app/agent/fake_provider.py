@@ -185,14 +185,15 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         return ReplacementsModel(delay=delay, invalid='[REPLACEMENTS_BAD_FAKE]' in prompt)
     if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:
         return SearchReadModel(delay=delay, stale='[SEARCH_STALE_FAKE]' in prompt)
-    if '[BUDGET_PROPOSALS_FAKE]' in prompt:
-        # 默认预算的前七轮只创建不同的小文件；第八轮的两项只能记录为未派发。
+    if '[BUDGET_PROPOSALS_FAKE]' in prompt or '[BUDGET_FINAL_FAKE]' in prompt:
+        # 第八次决策可完成回答或提交最后两项，之后不得请求第九次决策。
+        final = ScriptedTurn(text='预算边界任务完成。') if '[BUDGET_FINAL_FAKE]' in prompt else ScriptedTurn(tool_calls=[
+            {'name': 'workspace_write', 'id': f'last-{index}',
+             'args': {'path': f'last-{index}.txt', 'content': 'confirmed'}} for index in range(2)])
         return ScriptedChatModel(turns=[*[ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'budget-{index}',
-            'args': {'path': f'created-{index}.txt', 'content': 'confirmed'}}]) for index in range(7)],
-            ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'blocked-{index}',
-                'args': {'path': f'not-created-{index}.txt', 'content': 'must-not-write'}} for index in range(2)])], delay=delay)
+            'args': {'path': f'created-{index}.txt', 'content': 'confirmed'}}]) for index in range(7)], final], delay=delay)
     if '[EXECUTION_FACTS_FAKE]' in prompt:
-        # 默认图预算内先真实写入，再持续只读以确定性触顶；不修改生产预算。
+        # 默认决策预算内先真实写入，再持续只读以确定性触顶。
         return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{
             'name': 'workspace_write', 'args': {'path': 'facts-proof.txt', 'content': 'controlled-facts'}, 'id': 'facts-write',
         }]), *[ScriptedTurn(tool_calls=[{'name': 'workspace_list', 'args': {}, 'id': f'facts-list-{index}'}])

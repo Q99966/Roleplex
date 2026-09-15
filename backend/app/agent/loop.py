@@ -16,7 +16,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
-from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import create_react_agent, ToolNode
 
 from .domain import ToolCallsNotDispatched, UndispatchedTool, AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from .tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output, command_result_summary
@@ -25,7 +25,8 @@ from .tool_capture import capture_input, capture_output
 logger = logging.getLogger("roleplex.agent.loop")
 
 # 图步数上限不是工具次数；触顶只交付系统事实，不追加收费模型请求。
-DEFAULT_RECURSION_LIMIT = 15
+DEFAULT_RECURSION_LIMIT = 15  # 仅保留旧图保护基线供诊断。
+DEFAULT_DECISION_LIMIT = 8
 
 # 框架事件名集中在此，业务层不感知。
 _EVENT_MODEL_STREAM = "on_chat_model_stream"
@@ -33,6 +34,59 @@ _EVENT_MODEL_START = "on_chat_model_start"
 _EVENT_MODEL_END = "on_chat_model_end"
 _EVENT_TOOL_START = "on_tool_start"
 _EVENT_TOOL_END = "on_tool_end"
+
+
+class _DecisionBudgetReached(Exception):
+    """图准备再次调用模型时，直接计数已耗尽。"""
+
+
+class _InvalidResponse(Exception):
+    """响应不能用于派发工具，只携带稳定错误码。"""
+
+    def __init__(self, code: str):
+        """Args:
+            code：白名单错误码，不包含模型正文。
+        """
+        self.code = code
+        super().__init__(code)
+
+
+def _response_error(output: Any) -> str | None:
+    """判断显式不完整响应，不从自然语言或 Token 数猜测终态。
+
+    Args:
+        output：框架归一化模型响应；只检查元数据及工具结构。
+    """
+    metadata = getattr(output, 'response_metadata', None) or {}
+    reason = metadata.get('finish_reason') or metadata.get('stop_reason')
+    if reason in {'length', 'max_tokens', 'content_filter', 'model_context_window_exceeded'} or metadata.get('status') == 'incomplete':
+        return 'PROVIDER_RESPONSE_INCOMPLETE'
+    if getattr(output, 'invalid_tool_calls', None):
+        return 'AGENT_PROTOCOL_ERROR'
+    proposals = getattr(output, 'tool_calls', None) or []
+    ids = [call.get('id') for call in proposals]
+    if any(not isinstance(value, str) or not value for value in ids) or len(ids) != len(set(ids)):
+        return 'AGENT_PROTOCOL_ERROR'
+    if reason in {'tool_calls', 'tool_use'} and not proposals:
+        return 'AGENT_PROTOCOL_ERROR'
+    return None
+
+
+class _CheckedToolNode(ToolNode):
+    """在工具执行任务内复核响应，不能靠异步事件消费者抢先阻止副作用。"""
+
+    async def ainvoke(self, input, config=None, **kwargs):
+        """Args:
+            input：图传入的当前消息状态。
+            config：继承的框架执行配置。
+            kwargs：框架附加调用选项。
+        """
+        messages = input.get('messages', []) if isinstance(input, dict) else input
+        if messages:
+            code = _response_error(messages[-1])
+            if code:
+                raise _InvalidResponse(code)
+        return await super().ainvoke(input, config, **kwargs)
 
 
 def _error_code(exc: Exception) -> str:
@@ -202,7 +256,8 @@ async def run_agent(
     prompt: str,
     system_prompt: str | None = None,
     history: Sequence[BaseMessage] | None = None,
-    recursion_limit: int = DEFAULT_RECURSION_LIMIT,
+    recursion_limit: int | None = None,
+    decision_limit: int = DEFAULT_DECISION_LIMIT,
     time_source: Callable[[], float] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """执行一次 Agent 循环，按领域事件流式产出结果。
@@ -213,7 +268,8 @@ async def run_agent(
         prompt：触发本轮的用户文本。
         system_prompt：角色的系统提示词。
         history：更早的对话历史，按框架消息类型传入。
-        recursion_limit：react 循环步数上限。
+        recursion_limit：内部强制图保护；省略时按当前拓扑为决策和结果交接预留空间。
+        decision_limit：本轮冻结的实际模型决策上限，1..256，默认过渡值 8。
         time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
 
     Yields:
@@ -225,19 +281,28 @@ async def run_agent(
         asyncio.CancelledError：调用方取消本次生成时原样向上传播，
             由调度层按 stopped 收尾，不在此处伪装成错误事件。
     """
+    if isinstance(decision_limit, bool) or not isinstance(decision_limit, int) or not 1 <= decision_limit <= 256:
+        raise ValueError('decision_limit must be an integer in 1..256')
+    if recursion_limit is not None and (isinstance(recursion_limit, bool) or not isinstance(recursion_limit, int) or recursion_limit < 1):
+        raise ValueError('recursion_limit must be a positive integer')
+    graph_limit = recursion_limit if recursion_limit is not None else 2 * decision_limit + 2
+    decisions = 0
     remaining_steps: int | None = None
 
     def graph_prompt(state: dict) -> list:
         """在防腐层观察锁定图版本的派发预算，不把框架状态暴露给业务层。
 
         Args:
-            state：每次模型调用前的图状态；只读取预算并保留原消息。
+            state：每次模型调用前的图状态；检查决策额度、读取图余量并保留原消息。
         """
-        nonlocal remaining_steps
+        nonlocal remaining_steps, decisions
+        if decisions >= decision_limit:
+            raise _DecisionBudgetReached()
+        decisions += 1
         remaining_steps = state.get('remaining_steps')
         return [*([SystemMessage(content=system_prompt)] if system_prompt else []), *state['messages']]
 
-    agent = create_react_agent(model, list(tools), prompt=graph_prompt)
+    agent = create_react_agent(model, _CheckedToolNode(list(tools)), prompt=graph_prompt)
     messages: list[Any] = [*(history or []), ("user", prompt)]
     accumulated = ""
     clock = time_source or loop_time
@@ -252,15 +317,16 @@ async def run_agent(
     protocol_broken = False
     graph_completed = False
     model_completed = False
+    last_response_has_tools = False
+    response_error: str | None = None
     budget_blocked = False
     blocked_ids: set[str] = set()
     blocked_calls: tuple[UndispatchedTool, ...] = ()
     known_tools = {tool.name for tool in tools}
-    direct_tools = {tool.name for tool in tools if tool.return_direct}
 
     try:
         async for event in agent.astream_events(
-            {"messages": messages}, version="v2", config={"recursion_limit": recursion_limit}
+            {"messages": messages}, version="v2", config={"recursion_limit": graph_limit}
         ):
             kind = event["event"]
             run_id = str(event.get("run_id"))
@@ -285,15 +351,15 @@ async def run_agent(
             elif kind == _EVENT_MODEL_END:
                 output = event["data"].get("output")
                 model_completed = True
+                response_error = _response_error(output)
                 proposals = getattr(output, 'tool_calls', None) or []
+                last_response_has_tools = bool(proposals)
                 ids = [call.get('id') for call in proposals]
                 if pending_ids or any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
                     protocol_broken = True
                 pending_ids.update(value for value in ids if isinstance(value, str))
                 # 与锁定版本派发条件一致，不能通过兜底文本或 pending 数量猜测触顶。
-                budget_blocked = remaining_steps is not None and (
-                    (remaining_steps < 2 and bool(proposals)) or
-                    (remaining_steps < 1 and all(call['name'] in direct_tools for call in proposals)))
+                budget_blocked = remaining_steps is not None and bool(proposals) and remaining_steps < 2
                 blocked_ids = set(ids) if budget_blocked else set()
                 blocked_calls = tuple(UndispatchedTool(
                     call_id=uuid4().hex,
@@ -350,9 +416,28 @@ async def run_agent(
                     command_summary=command_result_summary(event.get('name', ''), output),
                     private_output=private_output,
                 )
+    except _DecisionBudgetReached:
+        if response_error or protocol_broken or pending_ids or started_at or provider_call_index:
+            code = response_error or 'AGENT_PROTOCOL_ERROR'
+            yield ProviderError(code=code, message=code, stop_reason='protocol_error' if code == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+        else:
+            yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='decision_budget')
+        return
+    except _InvalidResponse as exc:
+        yield ProviderError(code=exc.code, message=exc.code,
+                            stop_reason='protocol_error' if exc.code == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+        return
     except GraphRecursionError:
+        if response_error:
+            yield ProviderError(code=response_error, message=response_error,
+                                stop_reason='protocol_error' if response_error == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+            return
         if protocol_broken:
             yield ProviderError(code='AGENT_PROTOCOL_ERROR', message='AGENT_PROTOCOL_ERROR', stop_reason='protocol_error')
+            return
+        # 框架在最后一个 super-step 后抛出上限异常，不能覆盖已完整返回的无工具终态。
+        if model_completed and not last_response_has_tools and not pending_ids and not started_at and not provider_call_index:
+            yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages))
             return
         if blocked_calls and not started_at and pending_ids == blocked_ids:
             yield ToolCallsNotDispatched(blocked_calls)
@@ -379,7 +464,10 @@ async def run_agent(
                             stop_reason='provider_failed' if provider_failure else 'protocol_error')
         return
 
-    if budget_blocked and graph_completed and not protocol_broken and pending_ids == blocked_ids and not started_at:
+    if response_error:
+        yield ProviderError(code=response_error, message=response_error,
+                            stop_reason='protocol_error' if response_error == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+    elif budget_blocked and graph_completed and not protocol_broken and pending_ids == blocked_ids and not started_at:
         if blocked_calls:
             yield ToolCallsNotDispatched(blocked_calls)
         yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',

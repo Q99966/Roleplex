@@ -529,3 +529,9 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 小阶段 5 的预算未派发记录、部分提交/未知结果、取消竞争与独立真实 Provider 验证见[预算停止事实验证](budget-stop-facts.md)。
 
 T3 单文件多片段编辑的确定性、浏览器及独立真实 Provider 验证见[T3 验证记录](tool-reliability-t3.md)。
+
+T4.1 的图步数、模型决策、批次节点、SDK 重试与最后纯文本停止边界见[预算口径验证](agent-budget-t41.md)。
+
+Token Rhythm 中转的最小请求、流式和工具往返已单独核验，配置来源与历史失败边界见[中转接口核验](tokenrhythm-contract-check.md)。
+
+T4.2 的直接决策计数、最后工具交接、正常终态及中转真实 Provider 验证见[准确停止验证](agent-budget-t42.md)。

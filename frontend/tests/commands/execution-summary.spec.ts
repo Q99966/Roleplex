@@ -39,7 +39,7 @@ test('隐藏执行摘要但保留工具卡与后台事实，断线刷新及 Gues
   const reply = page.getByTestId('chat-message').nth(1)
   await expect(reply.getByTestId('tool-call-card').first()).toBeVisible()
   await page.evaluate(() => (window as any).__factSockets.at(-1).close())
-  await expect(reply.getByText('达到本轮执行步数上限', { exact: true })).toBeVisible({ timeout: 20000 })
+  await expect(reply.getByText('达到本轮决策上限', { exact: true })).toBeVisible({ timeout: 20000 })
   await expect(summary).toHaveCount(0)
   await expect(reply).not.toContainText('已确认文件提交')
   await expect(reply).not.toContainText('未确认不等于未执行')
@@ -52,7 +52,7 @@ test('隐藏执行摘要但保留工具卡与后台事实，断线刷新及 Gues
     const call = message.parts_json.find((part: { tool_name?: string }) => part.tool_name === 'workspace_write')
     return { messageId: message.id, callId: call.call_id, revision: message.revision, stopReason: message.stop_reason, hasSummary, applied: call.confirmed_applied_items }
   }, cid)
-  expect(saved.stopReason).toBe('graph_budget')
+  expect(saved.stopReason).toBe('decision_budget')
   expect(saved.applied).toBe(1)
   expect(saved.hasSummary).toBe(false)
   for (const width of [1280, 390]) {
@@ -77,7 +77,7 @@ test('隐藏执行摘要但保留工具卡与后台事实，断线刷新及 Gues
     applyEvent(useChatStore.setState, useChatStore.getState, { type: 'message_part_update', conversation_id: cid,
       revision: saved.revision - 1, payload: { message: { ...current, revision: saved.revision - 1, parts_json: [] } } })
   }, { cid, saved })
-  await expect(reply.getByText('达到本轮执行步数上限', { exact: true })).toBeVisible()
+  await expect(reply.getByText('达到本轮决策上限', { exact: true })).toBeVisible()
   const database = path.resolve(process.cwd(), '..', process.env.ROLEPLEX_E2E_WORLDS!.split(',')[0], 'roleplex.db')
   execFileSync('python', ['tests/seed_tool_viewer.py', database, String(cid)], { cwd: path.resolve(process.cwd(), '../backend') })
   await page.evaluate(async ({ cid, stamp }) => {

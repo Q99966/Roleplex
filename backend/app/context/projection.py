@@ -55,7 +55,7 @@ def project_message(message: Message, *, target_role_id: int) -> BaseMessage | N
         return None
     if message.status == 'stopped':
         reason = message_stop_reason(message)
-        marker = '[该回复因执行步数上限停止]' if reason == 'graph_budget' else (
+        marker = '[该回复因决策上限停止]' if reason == 'decision_budget' else '[该回复因执行步数上限停止]' if reason == 'graph_budget' else (
             _STOPPED_MARKER if reason == 'user_cancelled' else '[该回复已停止]')
         text = f'{text}\n{marker}'
     if message.sender_type == "role" and message.sender_id == target_role_id:

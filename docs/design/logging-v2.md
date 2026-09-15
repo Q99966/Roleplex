@@ -367,11 +367,14 @@ status 只用于终态或策略决策：`success | failed | cancelled | timeout 
 
 ### 6.4 `agent.jsonl`
 
+现有 provider.call_* 与 provider_call_count 使用框架模型调用口径，SDK 内部 HTTP 重试未逐次计数；
+不得将其解释为实际传输次数。T4.1 取证及后续计数边界见[执行预算与计数](../protocol/internal/agent-budget.md)，本次不改变日志 schema。
+
 `provider.call_completed` 必须包含：
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `provider_call_index` | integer | 本轮第几次模型调用 |
+| `provider_call_index` | integer | 本轮第几次框架模型调用，不是逐次 HTTP 尝试 |
 | `provider_mode` | string | `fake/real` |
 | `provider_type` | string（可选） | `anthropic/openai_compatible` 等 |
 | `base_url` | string | 本次实际使用的脱敏 Provider 基址；fake 为 `fake://local` |
@@ -948,3 +951,5 @@ tool.write_wait_completed 记录写入准入结束的固定 status、queue_wait_
 tool.call_not_dispatched 只记录宿主确认未派发的工具名、调用身份、status=not_executed、reason=graph_budget；不伪造 tool.call_started/completed，不记录参数或模型原文。
 
 T3 workspace_edit 的 replacements 只允许记录 replacement_count 与合计 old_text_bytes/new_text_bytes；批次沿用 item_count。不得记录匹配片段或返回原始替换内容。
+
+T4.2 沿用 generation.budget_stopped，reason 兼容新增 decision_budget；provider.call_completed 仍只表示调用返回，响应完整性失败随后以 generation.failed / PROVIDER_RESPONSE_INCOMPLETE 记录，不增加原始响应日志。

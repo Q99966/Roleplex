@@ -185,3 +185,44 @@ async def test_real_budget_records_proposal_without_executing(vendor):
     except Exception:
         pytest.fail('真实预算未派发验证失败；不输出原始异常或响应', pytrace=False)
     assert passed
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('mode', ['tool', 'text'])
+async def test_real_last_decision_terminal(vendor, command_root, mode):
+    """Args:
+        vendor：显式选择的真实 Provider 配置。
+        command_root：本轮隔离目录，独立核对实际文件。
+        mode：最后允许响应是工具提议或纯文本。
+    """
+    from app.workspaces.files import WorkspaceFileService
+    from app.agent.domain import ProviderCallStarted, ToolCallFinished
+    service = WorkspaceFileService(root=command_root, execution_id='real-last-decision')
+    committed = []
+
+    @tool
+    async def write_budget_proof() -> str:
+        """在隔离目录创建一个固定测试文件，不需要参数。"""
+        await service.write('proof.txt', 'controlled-proof', capture_applied=lambda before, after: committed.append(True))
+        return '文件已创建。'
+
+    observation = {'mode': mode, 'passed': False}
+    try:
+        model = vendor.build_model(params={'max_tokens': 512})
+        events = [event async for event in loop.run_agent(model=model, tools=[write_budget_proof] if mode == 'tool' else [],
+            prompt='请调用一次 write_budget_proof，不要直接回答。' if mode == 'tool' else '请仅回答：你好。', decision_limit=1)]
+        calls = [e for e in events if isinstance(e, ProviderCallCompleted)]
+        finished = [e for e in events if isinstance(e, ToolCallFinished)]
+        observed_reason = getattr(events[-1], 'stop_reason', None)
+        file_matches = (command_root / 'proof.txt').is_file() and (command_root / 'proof.txt').read_bytes() == b'controlled-proof'
+        passed = len([e for e in events if isinstance(e, ProviderCallStarted)]) == 1 and len(calls) == 1
+        passed = passed and isinstance(events[-1], MessageDone) and observed_reason == ('decision_budget' if mode == 'tool' else 'completed')
+        passed = passed and (bool(committed) and file_matches and len(finished) == 1 if mode == 'tool' else not finished and not file_matches)
+        observation.update(passed=passed, stop_reason=observed_reason, provider_calls=len(calls), tools_finished=len(finished),
+            file_matches=file_matches, model=vendor.model_name, output_tokens=calls[0].output_tokens if calls else None)
+    except Exception:
+        observation['failed'] = True
+    (command_root / 'last-decision-observation.json').write_text(json.dumps(observation, ensure_ascii=False), encoding='utf-8')
+    print(json.dumps(observation, ensure_ascii=False))
+    if not observation['passed']:
+        pytest.fail('真实最后决策验证失败，仅保留有界观察数据', pytrace=False)

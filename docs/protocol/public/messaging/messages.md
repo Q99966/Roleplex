@@ -172,7 +172,7 @@ Orchestrator 分派、附件、Artifact part 和重新生成尚未实现。`repl
 
 ## T1 收窄：停止原因与证据保留
 
-消息响应兼容新增 `stop_reason`，无确定异常原因时为 null；可取 user_cancelled、graph_budget、provider_failed、
+消息响应兼容新增 `stop_reason`，无确定异常原因时为 null；可取 user_cancelled、graph_budget、decision_budget、provider_failed、
 protocol_error、interrupted、context_rejected。字段由服务器保存的 meta_json.stop_reason 提供，旧 T1 记录可从
 原服务器摘要兼容读取；用户发送内容不能指定此元数据。原 message/generation 状态、鉴权和 revision 规则不变。
 
@@ -180,3 +180,5 @@ protocol_error、interrupted、context_rejected。字段由服务器保存的 me
 及原加密详情继续保留。历史中的旧摘要不显示、不投影给模型，不重写已经结束的历史记录。
 Context schema 4 恢复原正常正文与工具占位投影；stopped 仅加简短、准确的停止标记，error/interrupted 正文不进入历史。
 不再提供 facts-only 预算降级，按原消息边界裁剪，不改变上下文窗口预算。停止原因不会成为正常历史的新增前缀。
+
+T4.2 兼容新增 decision_budget，表示已接纳工具结果保存后，无额度开始下一次模型决策；status=stopped，不代表任务失败或已验收，也不承诺自动恢复。graph_budget 保留底层保护含义。未知停止原因按通用停止显示。

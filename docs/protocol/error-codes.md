@@ -250,6 +250,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `PROVIDER_RATE_LIMITED` | 已实现 | Agent/WS/数据库/日志 | — | failed | yes | 厂商返回 429 或限流类异常，应退避后有限重试 |
 | `PROVIDER_AUTH_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商凭据无效或没有权限，必须修正模型配置 |
 | `PROVIDER_BAD_REQUEST` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商拒绝请求结构或参数，原请求不应原样重试 |
+| `PROVIDER_RESPONSE_INCOMPLETE` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 响应明确截断或内容过滤；不派发其中工具，不自动重试 |
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
 | `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
 | `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 可裁剪历史全部移除后，必要规则、当前可见工具、当前消息与输出预留仍超过角色有效窗口；不调用 Provider |

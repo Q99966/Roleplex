@@ -22,8 +22,8 @@
 | `TextDelta` | 模型输出的一段文本增量 | `text` |
 | `ToolCallStarted` | 一次工具调用开始 | `call_id`、`tool_name`、`args_summary` |
 | `ToolCallFinished` | 一次工具调用结束 | `call_id`、`status`、`duration_ms`、`output_summary`；W1b 可选 `command_summary`，见 [命令契约](workspace-commands.md) |
-| `ProviderCallStarted` | 一次模型 API 调用开始 | `call_index` |
-| `ProviderCallCompleted` | 一次模型 API 调用结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存读写 token 与可选命中比 |
+| `ProviderCallStarted` | 一次框架模型调用开始（不等于逐次 HTTP 尝试） | `call_index` |
+| `ProviderCallCompleted` | 一次框架模型调用成功结束 | `call_index`、`ttft_ms`、`duration_ms`、输入/输出/缓存读写 token 与可选命中比 |
 | `MessageDone` | 本轮正常或预算停止收口 | `text`、`usage`、`stop_reason`、`undispatched_proposals`；见[执行事实](execution-facts.md) |
 | `ProviderError` | 本轮 Provider 或协议失败 | `code`、安全 `message`、`stop_reason` |
 
@@ -173,7 +173,7 @@ trace/video，具体运行与留存约定见 README。
   `cache_hit_tokens`、`cache_write_tokens` 和可选 `cache_hit_ratio`。Anthropic 原始 `input_tokens` 不含
   cache read/create，防腐层恢复为完整输入口径；DeepSeek 的 `prompt_cache_miss_tokens` 只表示未命中，
   不冒充厂商没有报告的缓存写入。厂商未报告的字段保持为空，不按字符数估算。多轮工具调用会为每次模型
-  请求产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
+  调用成功时产生一个 `ProviderCallCompleted`，`MessageDone.usage` 只在每次调用都报告对应字段时才汇总。
 - **厂商错误信息本身可能带打码后的 Key 片段**，所以错误信息只能按稳定错误码消费，
   不得原样回显给客户端，日志侧也保留脱敏处理。
 - **两轮真实历史与缓存复核（2026-08-28）**：浏览器第一轮要求模型记住随机验证码，第二轮能准确回显，
@@ -245,3 +245,5 @@ Windows 实测结论（mcp 1.2.1）：
 小阶段 5 增加 ToolCallsNotDispatched 领域事件：同响应未派发提议整体交接，不伪造工具开始；状态、私有输入与取消边界见[执行事实](execution-facts.md#小阶段-5图预算阻止派发的提议)。
 
 T3 将文件工具策略版本递增至 17，使工具定义缓存更新；workspace_edit 的兼容参数和原始版本匹配语义见[工作区契约](../public/rest/workspaces.md#t3-多片段编辑)。不改变调用预算或权限。
+
+模型决策、框架模型调用、SDK HTTP 重试、工具和图步数的口径，以及当前预算停止边界，见[执行预算与计数](agent-budget.md)。
