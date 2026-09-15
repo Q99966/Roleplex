@@ -8,12 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 from uuid import uuid4
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Sequence, Awaitable
 from typing import Any, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, ToolMessage, BaseMessage, SystemMessage
+from langchain_core.runnables import RunnableBinding, RunnableLambda
+from langchain_core.callbacks.manager import adispatch_custom_event
+from pydantic import ValidationError
+from pydantic.v1 import ValidationError as ValidationErrorV1
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent, ToolNode
@@ -62,31 +67,112 @@ def _response_error(output: Any) -> str | None:
     if reason in {'length', 'max_tokens', 'content_filter', 'model_context_window_exceeded'} or metadata.get('status') == 'incomplete':
         return 'PROVIDER_RESPONSE_INCOMPLETE'
     if getattr(output, 'invalid_tool_calls', None):
-        return 'AGENT_PROTOCOL_ERROR'
+        return 'AGENT_TOOL_CALL_ID_INVALID'
     proposals = getattr(output, 'tool_calls', None) or []
     ids = [call.get('id') for call in proposals]
     if any(not isinstance(value, str) or not value for value in ids) or len(ids) != len(set(ids)):
-        return 'AGENT_PROTOCOL_ERROR'
+        return 'AGENT_TOOL_CALL_ID_INVALID'
     if reason in {'tool_calls', 'tool_use'} and not proposals:
-        return 'AGENT_PROTOCOL_ERROR'
+        return 'AGENT_TOOL_CALL_MISSING'
     return None
 
 
+def _normalize_tool_response(output):
+    """将可关联的坏 JSON 转成待拒绝调用，不修复参数或允许执行空参数。
+
+    Args:
+        output：模型原始消息；坏参数正文不会放入诊断或新工具参数。
+    """
+    if not isinstance(output, AIMessage):
+        return output
+    invalid = output.invalid_tool_calls or []
+    if any(not isinstance(call.get('id'), str) or not call.get('id') for call in invalid):
+        return output
+    calls = [dict(call) for call in output.tool_calls]
+    invalid_ids = []
+    for call in invalid:
+        calls.append({'name':call.get('name') or 'unknown_tool', 'args':{}, 'id':call['id'], 'type':'tool_call'})
+        invalid_ids.append(call['id'])
+    # 某些适配器会宽松补齐未闭合 JSON；原始 arguments 可用时再做严格语法检查。
+    for raw in output.additional_kwargs.get('tool_calls', []) or []:
+        if not isinstance(raw, dict) or not isinstance(raw.get('function'), dict):
+            continue
+        arguments = raw['function'].get('arguments')
+        if not isinstance(arguments, str):
+            continue
+        try:
+            parsed = json.loads(arguments)
+            invalid_json = not isinstance(parsed, dict)
+        except (ValueError, TypeError):
+            invalid_json = True
+        if invalid_json:
+            for call in calls:
+                if call['id'] == raw.get('id'):
+                    call['args'] = {}
+                    invalid_ids.append(call['id'])
+    # 宿主标记始终由本次解析重建，不信任 Provider 自带同名 metadata。
+    return output.model_copy(update={'tool_calls':calls, 'invalid_tool_calls':[],
+        'response_metadata':{**output.response_metadata, '_roleplex_invalid_argument_ids':invalid_ids}})
+
+
+class _ResponseModel(RunnableBinding):
+    """保留真实模型回调，在图路由前规范化可恢复的参数拒绝。"""
+
+    def bind_tools(self, tools, **kwargs):
+        """Args:
+            tools：构造时已按同一集合绑定，此处不重复覆盖厂商格式。
+            kwargs：框架的可选绑定参数，当前调用不使用。
+        """
+        return self
+
+
 class _CheckedToolNode(ToolNode):
-    """在工具执行任务内复核响应，不能靠异步事件消费者抢先阻止副作用。"""
+    """在副作用之前拒绝参数错误，并向消息所有者交付确定未执行的事实。"""
 
     async def ainvoke(self, input, config=None, **kwargs):
         """Args:
-            input：图传入的当前消息状态。
+            input：图传入的消息状态。
             config：继承的框架执行配置。
-            kwargs：框架附加调用选项。
+            kwargs：框架附加选项。
         """
         messages = input.get('messages', []) if isinstance(input, dict) else input
+        self._invalid_argument_ids = set()
         if messages:
             code = _response_error(messages[-1])
             if code:
                 raise _InvalidResponse(code)
+            self._invalid_argument_ids = set(messages[-1].response_metadata.get('_roleplex_invalid_argument_ids', []))
         return await super().ainvoke(input, config, **kwargs)
+
+    async def _arun_one(self, call, input_type, config):
+        """Args:
+            call：一个模型提议，保留原身份用于反馈配对。
+            input_type：锁定框架提供的输入形式。
+            config：当前节点的回调与取消上下文。
+        """
+        from .argument_errors import argument_error, rejection_text
+        tool = self.tools_by_name.get(call['name'])
+        detail = None
+        reason = 'arguments_invalid'
+        if tool is None:
+            detail = argument_error('TOOL_NOT_AVAILABLE')
+            reason = 'tool_unavailable'
+        elif call['id'] in self._invalid_argument_ids:
+            detail = argument_error('TOOL_ARGUMENT_JSON_INVALID')
+        else:
+            schema = tool.get_input_schema()
+            try:
+                if hasattr(schema, 'model_validate'): schema.model_validate(call['args'])
+                else: schema.parse_obj(call['args'])
+            except (ValidationError, ValidationErrorV1) as exc:
+                detail = argument_error('TOOL_ARGUMENT_INVALID', exc, schema)
+        if detail is not None:
+            await adispatch_custom_event('roleplex_tool_not_dispatched', {
+                'provider_id':call['id'], 'tool_name':call['name'] if tool is not None else 'unknown_tool',
+                'reason':reason, 'argument_error':detail,
+            }, config=config)
+            return ToolMessage(content=rejection_text(detail), tool_call_id=call['id'], status='error')
+        return await super()._arun_one(call, input_type, config)
 
 
 def _error_code(exc: Exception) -> str:
@@ -258,6 +344,7 @@ async def run_agent(
     history: Sequence[BaseMessage] | None = None,
     recursion_limit: int | None = None,
     decision_limit: int = DEFAULT_DECISION_LIMIT,
+    before_decision: Callable[[int], Awaitable[bool]] | None = None,
     time_source: Callable[[], float] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """执行一次 Agent 循环，按领域事件流式产出结果。
@@ -269,7 +356,8 @@ async def run_agent(
         system_prompt：角色的系统提示词。
         history：更早的对话历史，按框架消息类型传入。
         recursion_limit：内部强制图保护；省略时按当前拓扑为决策和结果交接预留空间。
-        decision_limit：本轮冻结的实际模型决策上限，1..256，默认过渡值 8。
+        decision_limit：本轮冻结的模型决策上限，1..256。
+        before_decision：可选共享预算原子消费，参数为本执行的决策序号。
         time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
 
     Yields:
@@ -289,7 +377,7 @@ async def run_agent(
     decisions = 0
     remaining_steps: int | None = None
 
-    def graph_prompt(state: dict) -> list:
+    async def graph_prompt(state: dict) -> list:
         """在防腐层观察锁定图版本的派发预算，不把框架状态暴露给业务层。
 
         Args:
@@ -298,11 +386,17 @@ async def run_agent(
         nonlocal remaining_steps, decisions
         if decisions >= decision_limit:
             raise _DecisionBudgetReached()
+        if before_decision is not None and not await before_decision(decisions + 1):
+            raise _DecisionBudgetReached()
         decisions += 1
         remaining_steps = state.get('remaining_steps')
         return [*([SystemMessage(content=system_prompt)] if system_prompt else []), *state['messages']]
 
-    agent = create_react_agent(model, _CheckedToolNode(list(tools)), prompt=graph_prompt)
+    from .argument_errors import execution_error_text
+    tools = [tool.model_copy(update={'handle_tool_error':execution_error_text}) for tool in tools]
+    bound_model = model.bind_tools(list(tools)) if tools else model
+    response_model = _ResponseModel(bound=bound_model | RunnableLambda(_normalize_tool_response))
+    agent = create_react_agent(response_model, _CheckedToolNode(list(tools), handle_tool_errors=False), prompt=graph_prompt)
     messages: list[Any] = [*(history or []), ("user", prompt)]
     accumulated = ""
     clock = time_source or loop_time
@@ -349,7 +443,7 @@ async def run_agent(
                     accumulated += text
                     yield TextDelta(text=text)
             elif kind == _EVENT_MODEL_END:
-                output = event["data"].get("output")
+                output = _normalize_tool_response(event["data"].get("output"))
                 model_completed = True
                 response_error = _response_error(output)
                 proposals = getattr(output, 'tool_calls', None) or []
@@ -384,6 +478,14 @@ async def run_agent(
                     cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
                     total_tokens_derived=normalized_usage.get("total_tokens_derived"),
                 )
+            elif kind == 'on_custom_event' and event.get('name') == 'roleplex_tool_not_dispatched':
+                rejected = event['data']
+                if rejected['provider_id'] not in pending_ids:
+                    protocol_broken = True
+                else:
+                    pending_ids.remove(rejected['provider_id'])
+                yield ToolCallsNotDispatched((UndispatchedTool(call_id=uuid4().hex, tool_name=rejected['tool_name'],
+                    args_summary='{}', private_input={'text':'{}','bytes':2,'truncated':False}, argument_error=rejected['argument_error']),), reason=rejected['reason'])
             elif kind == _EVENT_TOOL_START:
                 call_id = str(event.get("run_id"))
                 started_at[call_id] = clock()
@@ -418,22 +520,22 @@ async def run_agent(
                 )
     except _DecisionBudgetReached:
         if response_error or protocol_broken or pending_ids or started_at or provider_call_index:
-            code = response_error or 'AGENT_PROTOCOL_ERROR'
-            yield ProviderError(code=code, message=code, stop_reason='protocol_error' if code == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+            code = response_error or ('AGENT_TOOL_RESULT_MISMATCH' if protocol_broken else 'AGENT_TOOL_RESULT_MISSING')
+            yield ProviderError(code=code, message=code, stop_reason='provider_failed' if code == 'PROVIDER_RESPONSE_INCOMPLETE' else 'protocol_error')
         else:
             yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='decision_budget')
         return
     except _InvalidResponse as exc:
         yield ProviderError(code=exc.code, message=exc.code,
-                            stop_reason='protocol_error' if exc.code == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+                            stop_reason='provider_failed' if exc.code == 'PROVIDER_RESPONSE_INCOMPLETE' else 'protocol_error')
         return
     except GraphRecursionError:
         if response_error:
             yield ProviderError(code=response_error, message=response_error,
-                                stop_reason='protocol_error' if response_error == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+                                stop_reason='provider_failed' if response_error == 'PROVIDER_RESPONSE_INCOMPLETE' else 'protocol_error')
             return
         if protocol_broken:
-            yield ProviderError(code='AGENT_PROTOCOL_ERROR', message='AGENT_PROTOCOL_ERROR', stop_reason='protocol_error')
+            yield ProviderError(code='AGENT_TOOL_RESULT_MISMATCH', message='AGENT_TOOL_RESULT_MISMATCH', stop_reason='protocol_error')
             return
         # 框架在最后一个 super-step 后抛出上限异常，不能覆盖已完整返回的无工具终态。
         if model_completed and not last_response_has_tools and not pending_ids and not started_at and not provider_call_index:
@@ -448,7 +550,7 @@ async def run_agent(
         raise
     except Exception as exc:
         provider_failure = bool(provider_call_index)
-        code = _error_code(exc) if provider_failure else 'AGENT_PROTOCOL_ERROR'
+        code = _error_code(exc) if provider_failure else 'AGENT_RUNTIME_ERROR'
         if provider_failure:
             active_run = max(provider_call_index, key=provider_call_index.get)
             started = provider_started_at.get(active_run)
@@ -460,19 +562,23 @@ async def run_agent(
                 'status': 'timeout' if code == 'PROVIDER_TIMEOUT' else 'rejected'
                     if code in {'PROVIDER_AUTH_FAILED', 'PROVIDER_BAD_REQUEST'} else 'failed',
             })
+        from .argument_errors import safe_exception_type
         yield ProviderError(code=code, message=code,
-                            stop_reason='provider_failed' if provider_failure else 'protocol_error')
+                            stop_reason='provider_failed' if provider_failure else 'protocol_error',
+                            error_type=safe_exception_type(exc),
+                            error_phase='provider_request' if provider_failure else 'tool_execution' if started_at else 'event_processing')
         return
 
     if response_error:
         yield ProviderError(code=response_error, message=response_error,
-                            stop_reason='protocol_error' if response_error == 'AGENT_PROTOCOL_ERROR' else 'provider_failed')
+                            stop_reason='provider_failed' if response_error == 'PROVIDER_RESPONSE_INCOMPLETE' else 'protocol_error')
     elif budget_blocked and graph_completed and not protocol_broken and pending_ids == blocked_ids and not started_at:
         if blocked_calls:
             yield ToolCallsNotDispatched(blocked_calls)
         yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',
                           undispatched_proposals=len(blocked_ids))
     elif protocol_broken or pending_ids or started_at or not graph_completed or not model_completed:
-        yield ProviderError(code='AGENT_PROTOCOL_ERROR', message='AGENT_PROTOCOL_ERROR', stop_reason='protocol_error')
+        code = 'AGENT_TOOL_RESULT_MISMATCH' if protocol_broken else 'AGENT_TOOL_RESULT_MISSING' if pending_ids or started_at else 'AGENT_EVENT_STREAM_INCOMPLETE'
+        yield ProviderError(code=code, message=code, stop_reason='protocol_error')
     else:
         yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages))

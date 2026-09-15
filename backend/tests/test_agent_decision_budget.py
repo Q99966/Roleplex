@@ -163,4 +163,4 @@ async def test_duplicate_tool_ids_are_rejected_before_side_effects():
     model = ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name':'record','args':{},'id':'duplicate'}] * 2)])
     events = [e async for e in loop.run_agent(model=model, tools=[tool], prompt='重复身份', decision_limit=1)]
     assert not applied and not any(isinstance(e, domain.ToolCallStarted) for e in events)
-    assert events[-1].code == 'AGENT_PROTOCOL_ERROR' and events[-1].stop_reason == 'protocol_error'
+    assert events[-1].code == 'AGENT_TOOL_CALL_ID_INVALID' and events[-1].stop_reason == 'protocol_error'

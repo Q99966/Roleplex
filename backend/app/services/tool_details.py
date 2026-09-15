@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView, WriteWaitView, EditErrorView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView, WriteWaitView, EditErrorView, ArgumentErrorView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -132,8 +132,9 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     try:
         output = _decrypt(row, row.output_encrypted)
         payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
-        if output and output.get('format') == 'not-dispatched-v1' and output.get('reason') == 'graph_budget':
-            return {**payload, 'output': None, 'not_dispatched': {'reason': 'graph_budget'}}
+        if output and output.get('format') == 'not-dispatched-v1' and output.get('reason') in {'graph_budget','arguments_invalid','tool_unavailable'}:
+            detail = {'argument_error':ArgumentErrorView.model_validate(output['argument_error']).model_dump()} if output.get('argument_error') else {}
+            return {**payload, 'input':None, 'output': None, 'not_dispatched': {'reason': output['reason']}, **detail}
         if row.tool_name in {'workspace_read', 'workspace_search'} and output and isinstance(output.get('text'), str):
             from ..agent.tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX
             raw = output['text']

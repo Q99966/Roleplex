@@ -7,7 +7,7 @@
 | 协议版本 | 不适用（内部实现，不承诺客户端兼容性） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/models.py`、`backend/alembic/versions/` |
-| 复核日期 | 2026-09-11 |
+| 复核日期 | 2026-09-15 |
 
 本文用于直接查看数据库时理解每张表和字段的用途。**字段的权威定义仍在 `models.py` 和迁移文件中**：类型、长度、约束以代码为准，本文只解释语义、取值范围和为什么这样设计。字段增删时同步更新本文。
 
@@ -483,3 +483,10 @@ FROM generations
 WHERE status NOT IN ('completed')
 ORDER BY id DESC;
 ```
+
+## T4.3a 工作流决策预算（迁移 0014）
+
+instance_settings 新增 decision_limit（Integer，默认 8）和 budget_revision（Integer，默认 0），保存当前 World Owner 默认及 CAS 修订。
+agent_executions 新增 decision_count（Integer，默认 0），记录该持久执行已消费的决策序号；不记录模型输入。
+workflow_budgets：chain_id（String(64) 主键，复用既有链标识）、conversation_id（外键 conversations，级联删除）、trigger_message_id（唯一外键 messages，级联删除）、decision_limit（Integer 冻结额度）、used_decisions（Integer 默认 0）、configuration_revision（Integer）、created_at（带时区 DateTime）。
+快照与用户消息同事务创建，扣减与 execution 序号同事务提交。迁移不为旧链补授权；不提供自动恢复或跨数据库业务方言。公开配置与并发语义见[预算配置](../public/rest/agent-budget.md)。

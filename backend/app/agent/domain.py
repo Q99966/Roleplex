@@ -56,6 +56,7 @@ class UndispatchedTool:
     tool_name: str
     args_summary: str
     private_input: dict[str, Any] | None = field(default=None, repr=False)
+    argument_error: dict[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,8 @@ class ProviderError:
     code: str
     message: str
     stop_reason: str = 'provider_failed'
+    error_type: str | None = None
+    error_phase: str | None = None
 
 
 # 业务层按此联合类型消费事件；新增事件类型时必须同步更新内部协议文档。

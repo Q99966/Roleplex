@@ -1,0 +1,70 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, getAuthEpoch, type AgentBudgetConfig } from '../api/client'
+import { useAppStore } from '../store/app'
+
+/** Owner 设置当前 World 新任务的共享决策额度；切换账户/World 后不应用迟到响应。 */
+export function AgentBudgetSettings() {
+  const user = useAppStore(state => state.user)
+  const world = useAppStore(state => state.worldName)
+  const [config, setConfig] = useState<AgentBudgetConfig | null>(null)
+  const [limit, setLimit] = useState('')
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [reload, setReload] = useState(0)
+  const scope = useRef(0)
+  useEffect(() => {
+    const id = ++scope.current
+    const epoch = getAuthEpoch()
+    const controller = new AbortController()
+    setConfig(null); setError(''); setSaved(false); setBusy(false)
+    if (user?.is_owner) api.agentBudget(controller.signal).then(value => {
+      if (id === scope.current && epoch === getAuthEpoch() && !controller.signal.aborted) {
+        setConfig(value); setLimit(String(value.effective_limit))
+      }
+    }).catch(() => { if (!controller.signal.aborted) setError('无法加载任务预算。') })
+    return () => { controller.abort(); scope.current++ }
+  }, [user?.id, user?.is_owner, world, reload])
+
+  /** 保存时带读取版本，拒绝静默覆盖其他页面的修改。 */
+  async function save() {
+    if (!config) return
+    const value = Number(limit)
+    if (!Number.isInteger(value) || value < 1 || value > config.ceiling) {
+      setError(`请输入 1 至 ${config.ceiling} 的整数。`); return
+    }
+    const id = scope.current, epoch = getAuthEpoch()
+    setBusy(true); setError(''); setSaved(false)
+    try {
+      const result = await api.setAgentBudget(value, config.revision)
+      if (id === scope.current && epoch === getAuthEpoch()) { setConfig(result); setSaved(true) }
+    } catch {
+      if (id === scope.current && epoch === getAuthEpoch()) setError('保存失败；配置可能已变化，请重新加载后确认。')
+    } finally {
+      if (id === scope.current && epoch === getAuthEpoch()) setBusy(false)
+    }
+  }
+  if (!user?.is_owner) return null
+  return <section aria-label="任务决策预算" className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4 space-y-3 text-slate-300">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <label htmlFor="agent-decision-limit" className="text-sm font-semibold text-slate-100">每个任务的决策上限</label>
+      <input id="agent-decision-limit" type="number" min={1} max={config?.ceiling ?? 256} value={limit}
+        disabled={!config || busy} onChange={event => { setLimit(event.target.value); setSaved(false) }}
+        className="w-28 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+    </div>
+    <p className="leading-relaxed">一次用户消息触发一个任务，群聊各角色共用额度。仅新任务生效，排队和执行中的任务保持原预算。</p>
+    <div className="flex flex-wrap items-center gap-2">
+      {[8, 32, 64, 128].filter(value => value <= (config?.ceiling ?? 0)).map(value => <button type="button" key={value}
+        disabled={busy} onClick={() => { setLimit(String(value)); setSaved(false) }}
+        className={`rounded-lg border px-3 py-1.5 ${Number(limit) === value ? 'border-indigo-400 bg-indigo-900/50 text-indigo-300' : 'border-slate-700 bg-slate-900'}`}>{value} 次</button>)}
+      <span className="text-slate-400">{config ? `部署上限 ${config.ceiling} 次` : '加载中…'}</span>
+    </div>
+    <p className="text-slate-400">一次决策可提出多个工具调用。此设置不代表费用或执行时间上限。</p>
+    {error && <p role="alert" className="text-red-300">{error}</p>}
+    {saved && <p role="status" className="text-emerald-300">已保存，仅新任务生效。</p>}
+    <div className="flex gap-2">
+      <button type="button" disabled={!config || busy} onClick={() => void save()} className="rounded-lg bg-indigo-600 px-4 py-2 text-white disabled:opacity-50">{busy ? '保存中…' : '保存任务预算'}</button>
+      <button type="button" disabled={busy} onClick={() => setReload(value => value + 1)} className="rounded-lg border border-slate-700 px-3 py-2">重新加载预算</button>
+    </div>
+  </section>
+}

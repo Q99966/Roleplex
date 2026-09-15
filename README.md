@@ -101,8 +101,9 @@ T1 中断处理已实现并通过人工验收：保留工具执行证据并准�
 验证与人工检查见[T1 验证记录](docs/testing/tool-reliability-t1.md)。T2 搜索定位、按行读取、实际预算与有界排队已实现并通过人工验收，见[T2 测试记录](docs/testing/tool-reliability-t2.md)。
 T3 同文件多片段编辑已实现，自动化与独立真实 Provider 验证通过，已人工验收，见[T3 验证记录](docs/testing/tool-reliability-t3.md)。
 T4.1 已完成计数与停止边界核对，见[T4.1 验证记录](docs/testing/agent-budget-t41.md)。
-T4.2 准确停止已人工验收：模型决策与图保护解耦，最后工具结果完整交接；当前为内部过渡额度，见[预算契约](docs/protocol/internal/agent-budget.md)。
-可配置执行预算与预算停止后继续尚未实现，工具权限和停服规则不变。
+T4.2 准确停止已人工验收：模型决策与图保护解耦，最后工具结果完整交接，见[预算契约](docs/protocol/internal/agent-budget.md)。
+T4.3a 新任务共享决策预算配置已人工验收：Owner 在“运行世界与存储”设置，群聊角色共享发送时冻结的额度，见[配置契约](docs/protocol/public/rest/agent-budget.md)。
+默认仍为 8 的过渡值；时间/审批预算、最终默认基准与预算停止后继续尚未实现，工具权限和停服规则不变。
 
 T2 在角色“文件操作”中单独开启“搜索工作区文件”，沿用工作区原生文件开关；旧角色不会自动获得搜索。
 支持先搜索文件/文本定位行号，再按行读取大文件的小范围。读取默认每次/每批分享 64 KiB 实际内容额度，
@@ -387,3 +388,7 @@ python scripts/check_migrations.py
 ```
 
 它在临时 SQLite 库上重放 `upgrade head`/`downgrade base`、比对迁移结果与 ORM 模型是否一致，并按 PostgreSQL 方言离线渲染 SQL（不需要本机安装 PostgreSQL 驱动）。
+
+`AGENT_DECISION_CEILING` 控制当前 World 新任务的部署决策上限（默认 256，范围 1..256）；降低后不改变已冻结的任务额度。
+
+工具参数错误恢复已修正并获准提交：字段/JSON 错误会保留未执行诊断并允许模型在原预算内修正；真正的协议/执行故障使用具体错误码。见[验证记录](docs/testing/tool-argument-recovery.md)。

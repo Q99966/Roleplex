@@ -198,3 +198,8 @@ Owner 详情沿用原接口与加密输入，not_dispatched.reason=graph_budget 
 旧客户端对未知状态降级；Guest 只见安全状态与工具名。新状态不增加权限，不把未派发输入当作已经批准的操作。
 
 T3 编辑失败兼容增加 edit_error：单项在详情根、批次在失败节点内。replacement_index（1..32）、可选 conflicting_replacement_index（1..32）及 recovery=reread_and_adjust/split_non_overlapping；只显示固定恢复建议。Owner 输入只保留 replacements 的数量、各项旧/新字节数，不复制多片段正文。字段语义见[工作区协议](../rest/workspaces.md#t3-多片段编辑)。
+
+### 参数错误未执行详情
+
+not_dispatched.reason 兼容增加 arguments_invalid / tool_unavailable；Owner 详情可含 argument_error={error_code,issues:[{path,reason}]}，path 为已声明字段名与从零开始的数组索引，未知字段名固定为 `<field>`，最多 8 项问题和 8 层路径。
+reason 仅固定 JSON 语法/缺少字段/类型/范围/额外字段/组合约束等标签，不回显参数、源码或异常正文。前端说明本次未执行，可修正参数；Guest 不取得这些私有详情。

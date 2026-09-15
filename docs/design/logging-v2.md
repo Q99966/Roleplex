@@ -953,3 +953,7 @@ tool.call_not_dispatched 只记录宿主确认未派发的工具名、调用身�
 T3 workspace_edit 的 replacements 只允许记录 replacement_count 与合计 old_text_bytes/new_text_bytes；批次沿用 item_count。不得记录匹配片段或返回原始替换内容。
 
 T4.2 沿用 generation.budget_stopped，reason 兼容新增 decision_budget；provider.call_completed 仍只表示调用返回，响应完整性失败随后以 generation.failed / PROVIDER_RESPONSE_INCOMPLETE 记录，不增加原始响应日志。
+
+工具参数拒绝沿用 tool.call_not_dispatched，reason 增加 arguments_invalid/tool_unavailable，error_code 使用已登记的 TOOL_ARGUMENT_INVALID/TOOL_ARGUMENT_JSON_INVALID/TOOL_NOT_AVAILABLE；字段路径仅供 Owner 加密详情，不进入正式日志，拒绝不伪装为 generation.failed。
+
+执行异常的 generation.failed 可增加 error_phase（provider_request/tool_execution/event_processing/runtime）与 error_type（固定允许的异常类标签，未知为 OtherError）；不保存异常正文。具体协议配对故障优先使用各自 AGENT_TOOL_* / AGENT_EVENT_STREAM_INCOMPLETE 错误码。

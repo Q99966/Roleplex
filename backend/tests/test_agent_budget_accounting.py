@@ -34,12 +34,12 @@ async def test_graph_limit_counts_decisions_tools_and_nodes_separately(monkeypat
             prompt：产品模型前置回调。
             kwargs：其余框架构造参数。
         """
-        def observe(state):
+        async def observe(state):
             """Args:
                 state：仅采集剩余步数，不保存历史正文。
             """
             decisions.append(state['remaining_steps'])
-            return prompt(state)
+            return await prompt(state)
         return original_create(*args, prompt=observe, **kwargs)
 
     monkeypatch.setattr(loop, 'create_react_agent', create)

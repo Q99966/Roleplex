@@ -194,7 +194,7 @@ async def test_unpaired_stream_is_protocol_error(monkeypatch, dispatched):
     assert not any(isinstance(event, ToolCallFinished) for event in events)
     assert not model._wrap_inputs
     assert isinstance(events[-1], ProviderError)
-    assert events[-1].code == 'AGENT_PROTOCOL_ERROR'
+    assert events[-1].code == 'AGENT_TOOL_RESULT_MISSING'
     assert events[-1].stop_reason == 'protocol_error'
 
 

@@ -249,6 +249,8 @@ data/roleplex-real-e2e-<时间戳>.db
 
 ### 2.6 真实世界 E2E
 
+真实 Provider 阶段验收必须使用本流程，生成下述标准 World 目录，方便用户查看角色与会话；临时库契约测试仅作补充。不得以临时库通过代替本层，也不另外复制到项目 worlds 根或增加登记机制。
+
 ```bash
 npm run test:e2e:real-world
 ```
@@ -535,3 +537,9 @@ T4.1 的图步数、模型决策、批次节点、SDK 重试与最后纯文本�
 Token Rhythm 中转的最小请求、流式和工具往返已单独核验，配置来源与历史失败边界见[中转接口核验](tokenrhythm-contract-check.md)。
 
 T4.2 的直接决策计数、最后工具交接、正常终态及中转真实 Provider 验证见[准确停止验证](agent-budget-t42.md)。
+
+T4.3a 的配置、消息链共享额度、迁移与真实群聊验证见[共享预算验证](agent-budget-t43a.md)。
+
+T4.3a 真实 World 群聊预算补验收：`npm run test:e2e:real-world -- workflow-budget-provider.spec.ts`。通过界面设置额度并 @全部 发送真实群聊，刷新核对结果；详情见[共享预算验证](agent-budget-t43a.md)。
+
+工具参数错误恢复的离线、浏览器与标准真实 World 验证见[参数恢复记录](tool-argument-recovery.md)，真实入口为 `npm run test:e2e:real-world -- argument-recovery-provider.spec.ts`。

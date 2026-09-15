@@ -25,13 +25,20 @@ interface ActiveWorkspaceProps {
  */
 function chatErrorMessage(code: string, isOwner: boolean): string {
   const connectionErrors: Record<string, string> = {
+    AGENT_TOOL_CALL_ID_INVALID: '模型返回的工具调用标识缺失或重复，无法安全关联执行结果。',
+    AGENT_TOOL_CALL_MISSING: '模型声明调用工具，但没有提供可识别的调用对象。',
+    AGENT_TOOL_RESULT_MISSING: '工具调用缺少结果，请先核查已执行操作。',
+    AGENT_TOOL_RESULT_MISMATCH: '工具结果与调用标识不一致，执行已停止。',
+    AGENT_EVENT_STREAM_INCOMPLETE: '执行事件流未完整结束，无法确认本轮正常完成。',
+    AGENT_RUNTIME_ERROR: '执行层发生内部异常，请按错误记录核查；已执行操作不会自动撤销。',
+    PROVIDER_RESPONSE_INCOMPLETE: '模型响应被截断或过滤，其中的工具调用未执行。',
     HISTORY_LOAD_TIMEOUT: '会话历史加载超时，请重试。',
     WS_CONNECTION_FAILED: '实时连接失败，请检查网络或后端后重试。',
     WS_PROTOCOL_UNSUPPORTED: '后端尚不支持当前订阅协议，请更新并重启后端。',
     WS_SYNC_TIMEOUT: '会话同步超时，请重试。',
     WS_SYNC_FAILED: '会话同步未完成，请重试。',
   }
-  if (connectionErrors[code]) return connectionErrors[code]
+  if (connectionErrors[code]) return code.startsWith('AGENT_') || code === 'PROVIDER_RESPONSE_INCOMPLETE' ? `${connectionErrors[code]}（${code}）` : connectionErrors[code]
   if (code === 'CONTEXT_BUDGET_EXCEEDED') {
     return isOwner
       ? '当前消息与角色基础配置超过模型上下文上限。请缩短消息，或调整角色提示词、工具配置、上下文窗口或最大输出长度后重试。'

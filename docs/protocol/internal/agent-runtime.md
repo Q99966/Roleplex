@@ -247,3 +247,13 @@ Windows 实测结论（mcp 1.2.1）：
 T3 将文件工具策略版本递增至 17，使工具定义缓存更新；workspace_edit 的兼容参数和原始版本匹配语义见[工作区契约](../public/rest/workspaces.md#t3-多片段编辑)。不改变调用预算或权限。
 
 模型决策、框架模型调用、SDK HTTP 重试、工具和图步数的口径，以及当前预算停止边界，见[执行预算与计数](agent-budget.md)。
+
+### 可恢复的工具参数拒绝
+
+有可靠调用 ID 的参数 JSON/schema 错误或不可用工具，在工具正文执行前返回 TOOL_ARGUMENT_INVALID / TOOL_ARGUMENT_JSON_INVALID / TOOL_NOT_AVAILABLE。模型可在原决策预算内另发修正请求，不自动修补 JSON 或重放已执行操作。
+ToolCallsNotDispatched.reason 兼容增加 arguments_invalid / tool_unavailable，UndispatchedTool 兼容可选 argument_error（固定 error_code、issues 数组，元素为 path/reason；无参数值），记录中使用宿主 UUID，不新增 Trace。
+终止错误分为 AGENT_TOOL_CALL_ID_INVALID、AGENT_TOOL_CALL_MISSING、AGENT_TOOL_RESULT_MISSING、AGENT_TOOL_RESULT_MISMATCH、AGENT_EVENT_STREAM_INCOMPLETE、AGENT_RUNTIME_ERROR；AGENT_PROTOCOL_ERROR 保留历史兼容。Provider 响应明确截断仍为 PROVIDER_RESPONSE_INCOMPLETE，不派发其中任何工具。
+
+ProviderError 兼容可选 error_type/error_phase，仅传输固定安全诊断标签至既有失败日志，不返回原始异常。
+
+工具主动抛出的 ToolException 使用 TOOL_EXECUTION_FAILED 返回模型并保留实际开始/结束；不回显异常正文，也不声称未执行。其他未知执行异常仍终止为 AGENT_RUNTIME_ERROR，避免把已发生副作用的故障当成安全参数重试。

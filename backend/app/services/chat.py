@@ -618,6 +618,8 @@ async def run_scheduled_generation(
             role = await session.get(Role, role_id)
             if role is None:
                 raise ValueError("ROLE_NOT_AVAILABLE")
+            from .agent_budget import limit_for
+            decision_limit = await limit_for(session, generation.run_id, conversation_id)
             provider_fields = await _provider_log_fields(session, role)
             set_log_context(**provider_fields)
             model, tools = await build_agent_inputs(
@@ -640,13 +642,22 @@ async def run_scheduled_generation(
         last_persist = asyncio.get_running_loop().time() - _PERSIST_INTERVAL_SECONDS
         pending_text = ''
         failed_code: str | None = None
+        failure_details: dict = {}
         stop_reason = 'completed'
+        from .agent_budget import consume
+        async def authorize_decision(index: int) -> bool:
+            """Args:
+                index：本次 execution 的模型决策序号。
+            """
+            return await consume(execution_id, index)
+
         async for event in run_agent(
             model=model,
             tools=tools,
             prompt=context.current_message,
             system_prompt=context.system_prompt,
             history=context.history,
+            decision_limit=decision_limit, before_decision=authorize_decision,
         ):
             if not isinstance(event, TextDelta) and pending_text:
                 delta_seq += 1
@@ -697,10 +708,11 @@ async def run_scheduled_generation(
                         await _update_tool_part(conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
                             call_id=proposal.call_id, tool_name=proposal.tool_name, status='not_executed', accumulated_text=accumulated,
                             execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
-                            command_summary={'not_executed_reason': event.reason}, private_input=proposal.private_input,
-                            private_output={'format': 'not-dispatched-v1', 'reason': event.reason})
+                            command_summary={'not_executed_reason': event.reason, **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})}, private_input=proposal.private_input,
+                            private_output={'format': 'not-dispatched-v1', 'reason': event.reason, **({'argument_error':proposal.argument_error} if proposal.argument_error else {})})
                         logger.info('tool.call_not_dispatched', extra={'tool_call_id': proposal.call_id,
-                            'tool_name': proposal.tool_name, 'status': 'not_executed', 'reason': event.reason})
+                            'tool_name': proposal.tool_name, 'status': 'not_executed', 'reason': event.reason,
+                            **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})})
                 recording = asyncio.create_task(record_undispatched(), context=copy_context())
                 cancelled = False
                 while not recording.done():
@@ -777,6 +789,7 @@ async def run_scheduled_generation(
                 stop_reason = event.stop_reason
             elif isinstance(event, ProviderError):
                 failed_code = event.code
+                failure_details = {key:value for key,value in {'error_type':event.error_type,'error_phase':event.error_phase}.items() if value is not None}
                 stop_reason = event.stop_reason
 
         # 已派发但未收到结束事件：先消费现有凭据，不把未知副作用变成未执行。
@@ -791,6 +804,7 @@ async def run_scheduled_generation(
                     "conversation_id": conversation_id,
                     "generation_id": generation_id,
                     "error_code": failed_code,
+                    **failure_details,
                     "status": "timeout" if failed_code == "PROVIDER_TIMEOUT" else "failed",
                     "provider_call_count": provider_call_count,
                     "ttft_ms": first_ttft_ms,
@@ -882,15 +896,17 @@ async def run_scheduled_generation(
             },
         )
         raise
-    except Exception:
+    except Exception as exc:
+        from ..agent.argument_errors import safe_exception_type
         await finish_pending('interrupted')
-        terminal = await _finalize(generation_id, "failed", accumulated, error_code="AGENT_PROTOCOL_ERROR", stop_reason='protocol_error')
+        terminal = await _finalize(generation_id, "failed", accumulated, error_code="AGENT_RUNTIME_ERROR", stop_reason='protocol_error')
         logger.exception(
             "generation.failed",
             extra={
                 "conversation_id": conversation_id,
                 "generation_id": generation_id,
-                "error_code": "AGENT_PROTOCOL_ERROR",
+                "error_code": "AGENT_RUNTIME_ERROR",
+                "error_type": safe_exception_type(exc), "error_phase": "runtime",
                 "status": "failed",
                 "provider_call_count": provider_call_count,
                 "ttft_ms": first_ttft_ms,

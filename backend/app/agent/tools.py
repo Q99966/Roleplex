@@ -220,8 +220,6 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
         tool_name：防腐层提供的工具名称。
         output：工具结果文本或 ToolMessage。
     """
-    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read', 'workspace_search', 'workspace_service_status'}:
-        return {}
     content = getattr(output, 'content', output)
     if not isinstance(content, str):
         return {}
@@ -234,6 +232,10 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
     except (ValueError, TypeError):
         return {}
     if not isinstance(result, dict):
+        return {}
+    if result.get('error_code') == 'TOOL_EXECUTION_FAILED':
+        return {'error_code':'TOOL_EXECUTION_FAILED'}
+    if tool_name not in {'workspace_run_command', 'workspace_run_shell', 'workspace_write', 'workspace_edit', 'workspace_read', 'workspace_search', 'workspace_service_status'}:
         return {}
     if tool_name == 'workspace_service_status':
         code = result.get('error_code')

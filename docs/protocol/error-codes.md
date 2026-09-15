@@ -250,11 +250,23 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `PROVIDER_RATE_LIMITED` | 已实现 | Agent/WS/数据库/日志 | — | failed | yes | 厂商返回 429 或限流类异常，应退避后有限重试 |
 | `PROVIDER_AUTH_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商凭据无效或没有权限，必须修正模型配置 |
 | `PROVIDER_BAD_REQUEST` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商拒绝请求结构或参数，原请求不应原样重试 |
+| `AGENT_BUDGET_LIMIT_INVALID` | 已实现 | REST | 422 | rejected | no | 决策额度超过部署上限 |
+| `AGENT_BUDGET_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 配置修订已变化，重新读取后再保存 |
 | `PROVIDER_RESPONSE_INCOMPLETE` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 响应明确截断或内容过滤；不派发其中工具，不自动重试 |
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
 | `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
 | `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 可裁剪历史全部移除后，必要规则、当前可见工具、当前消息与输出预留仍超过角色有效窗口；不调用 Provider |
 | `EXECUTION_INTERRUPTED` | 已实现（内部） | 数据库/日志 | — | cancelled | conditional | 服务重启前 execution 未到终态；不自动重放 Provider，用户可重新发起任务 |
+| `TOOL_EXECUTION_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 工具主动报告执行失败，结果可能未知，核对后再调整，不自动重放 |
+| `TOOL_ARGUMENT_INVALID` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 工具参数未通过 schema 校验，未执行，可修正 |
+| `TOOL_ARGUMENT_JSON_INVALID` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 工具参数 JSON 无法解析，未执行，可重新生成参数 |
+| `TOOL_NOT_AVAILABLE` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 工具不在本轮可用集合，未执行，改用已提供工具 |
+| `AGENT_TOOL_CALL_ID_INVALID` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 工具调用身份缺失或重复，无法可靠关联结果 |
+| `AGENT_TOOL_CALL_MISSING` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 响应声明工具调用却没有调用对象 |
+| `AGENT_TOOL_RESULT_MISSING` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 已提议或开始的工具缺少对应结果，先核查副作用 |
+| `AGENT_TOOL_RESULT_MISMATCH` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 返回的工具结果与待处理调用身份不一致 |
+| `AGENT_EVENT_STREAM_INCOMPLETE` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 事件流缺少模型或图正常终态 |
+| `AGENT_RUNTIME_ERROR` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 非 Provider 的执行基础设施异常，不能推断无副作用 |
 | `AGENT_PROTOCOL_ERROR` | 已实现（T1） | Agent/WS/数据库 | — | failed | conditional | 非 Provider 的运行时协议异常，如调用结果缺失或缺少正常图终态；不代表步数或余额用尽，可能已发生副作用，必须核查事实，不自动重放 |
 
 Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime.md)。原始厂商错误不得回显给客户端，

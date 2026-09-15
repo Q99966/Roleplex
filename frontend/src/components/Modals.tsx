@@ -1,3 +1,4 @@
+import { AgentBudgetSettings } from './AgentBudgetSettings'
 import { ToolCategory } from './ToolCategory'
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
@@ -301,6 +302,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
               className="space-y-6 text-xs"
             >
               {/* 当前运行状态卡片 */}
+              <AgentBudgetSettings />
               <RuntimeLimit scope="world" id={0} />
               <WorldBackup />
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">

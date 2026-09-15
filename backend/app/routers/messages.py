@@ -140,6 +140,9 @@ async def send_message(
     session.add(message)
     await session.flush()
 
+    from ..services.agent_budget import freeze
+    await freeze(session, message)
+
     jobs: list[QueueJob] = []
     generations: list[Generation] = []
     executions: list[AgentExecution] = []

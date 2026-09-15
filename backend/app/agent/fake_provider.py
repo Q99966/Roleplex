@@ -185,6 +185,16 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         return ReplacementsModel(delay=delay, invalid='[REPLACEMENTS_BAD_FAKE]' in prompt)
     if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:
         return SearchReadModel(delay=delay, stale='[SEARCH_STALE_FAKE]' in prompt)
+    if '[TOOL_ID_ERROR_FAKE]' in prompt:
+        return ScriptedChatModel(delay=delay, turns=[ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':'must-not-write'},'id':'duplicate'}] * 2)])
+    if '[ARGUMENT_RECOVERY_FAKE]' in prompt or '[JSON_RECOVERY_FAKE]' in prompt:
+        return ArgumentRecoveryModel(delay=delay, broken_json='[JSON_RECOVERY_FAKE]' in prompt, turns=[
+            ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':123},'id':'bad-schema'}]),
+            ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':'confirmed'},'id':'corrected'}]),
+            ScriptedTurn(text='参数修正后已完成。')])
+    if '[LONG_DECISIONS_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[*[ScriptedTurn(tool_calls=[{'name': 'workspace_list', 'args': {}, 'id': f'long-{index}'}])
+            for index in range(10)], ScriptedTurn(text='长任务完成。')], delay=delay)
     if '[BUDGET_PROPOSALS_FAKE]' in prompt or '[BUDGET_FINAL_FAKE]' in prompt:
         # 第八次决策可完成回答或提交最后两项，之后不得请求第九次决策。
         final = ScriptedTurn(text='预算边界任务完成。') if '[BUDGET_FINAL_FAKE]' in prompt else ScriptedTurn(tool_calls=[
@@ -337,3 +347,17 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
                 }]), ScriptedTurn(text='W1b 命令场景结束。'),
             ], delay=delay)
     return ScriptedChatModel(turns=[ScriptedTurn(text=FAKE_REPLY_TEMPLATE.format(prompt=prompt))], delay=delay)
+
+
+class ArgumentRecoveryModel(ScriptedChatModel):
+    """一次字段/JSON 错误后按工具反馈重发正确请求的确定性替身。"""
+    broken_json: bool = False
+
+    def _chunks(self, turn):
+        """Args:
+            turn：保留真实 SDK 消息分片解析路径的受控输出。
+        """
+        if self.broken_json and self.index == 1:
+            return [ChatGenerationChunk(message=AIMessageChunk(content='',tool_call_chunks=[{
+                'name':'workspace_write','args':'{"path":"recovered.txt","content":not-json}', 'id':'bad-json','index':0}]))]
+        return super()._chunks(turn)

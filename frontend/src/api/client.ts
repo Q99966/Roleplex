@@ -1,3 +1,4 @@
+export type AgentBudgetConfig = { decision_limit: number; effective_limit: number; ceiling: number; revision: number }
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }
 export type RuntimeScope = 'world' | 'workspace' | 'conversation'
 export type RuntimeConfig = { scope: RuntimeScope; scope_id: number; limit: number; revision: number; used: number; services_enabled?: boolean; services_supported?: boolean }
@@ -101,7 +102,8 @@ export type BatchMutationDetails = {
 }
 export type ToolDetails = {
   edit_error?: EditError | null
-  not_dispatched?: { reason: 'graph_budget' } | null
+  not_dispatched?: { reason: 'graph_budget' | 'arguments_invalid' | 'tool_unavailable' } | null
+  argument_error?: { error_code: string; issues: Array<{ path: Array<string | number>; reason: string }> } | null
   wait_diagnostic?: WriteWait | null
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
@@ -261,6 +263,8 @@ export async function request<T>(path: string, init: RequestInit = {}, format: '
 }
 
 export const api = {
+  agentBudget: (signal?: AbortSignal) => request<AgentBudgetConfig>('/api/agent-budget/config', { signal, cache: 'no-store' }),
+  setAgentBudget: (decision_limit: number, expected_revision: number) => request<AgentBudgetConfig>('/api/agent-budget/config', { method: 'PUT', body: JSON.stringify({ decision_limit, expected_revision }) }),
   toolDetails: (conversationId: number, messageId: number, callId: string, signal?: AbortSignal) => request<ToolDetails>(
     `/api/conversations/${conversationId}/messages/${messageId}/tools/${encodeURIComponent(callId)}`, { signal, cache: 'no-store' },
   ),

@@ -504,3 +504,17 @@ class ShellDetailView(BaseModel):
     output_availability: Literal['recorded', 'pending', 'not_executed', 'not_recorded']
     execution_status: Literal['exited', 'timed_out', 'cancelled', 'not_executed', 'unavailable'] | None
     exit_code: int | None
+
+
+class ArgumentIssueView(BaseModel):
+    """Owner 参数诊断只包含声明字段路径和固定类型，不包含错误原文。"""
+    model_config = ConfigDict(extra='forbid', strict=True)
+    path: list[str | int] = Field(max_length=8)
+    reason: Literal['missing','unexpected_field','invalid_combination','wrong_type','invalid_choice','out_of_range','invalid_value','invalid_json']
+
+
+class ArgumentErrorView(BaseModel):
+    """参数拒绝的有界私有详情。"""
+    model_config = ConfigDict(extra='forbid', strict=True)
+    error_code: Literal['TOOL_ARGUMENT_INVALID','TOOL_ARGUMENT_JSON_INVALID','TOOL_NOT_AVAILABLE']
+    issues: list[ArgumentIssueView] = Field(max_length=8)

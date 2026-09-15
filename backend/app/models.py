@@ -28,6 +28,8 @@ class InstanceSettings(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     process_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    budget_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class User(Base):
@@ -214,6 +216,18 @@ class Generation(Base):
     __table_args__ = (Index("ix_generations_conversation_status", "conversation_id", "status"),)
 
 
+class WorkflowBudget(Base):
+    """同一用户消息链的冻结预算，角色发言不会重置额度。"""
+    __tablename__ = 'workflow_budgets'
+    chain_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
+    trigger_message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, unique=True)
+    decision_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    used_decisions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AgentExecution(Base):
     """一次 Agent 实际执行的持久身份、归属和终态。
 
@@ -238,6 +252,7 @@ class AgentExecution(Base):
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
     execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     dispatch_order: Mapped[int | None] = mapped_column(Integer)
+    decision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_text: Mapped[str | None] = mapped_column(Text)
     context_hint_text: Mapped[str | None] = mapped_column(Text)
