@@ -7,7 +7,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-14 |
+| 复核日期 | 2026-09-15 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -243,3 +243,5 @@ Windows 实测结论（mcp 1.2.1）：
 原生修改的独立准入与审批等待分离已实现并通过人工验收；等待阶段/原因见[工作区契约](../public/rest/workspaces.md#原生修改的有界等待)，进程内等待不增加模型请求，不改变 Agent 图预算。
 
 小阶段 5 增加 ToolCallsNotDispatched 领域事件：同响应未派发提议整体交接，不伪造工具开始；状态、私有输入与取消边界见[执行事实](execution-facts.md#小阶段-5图预算阻止派发的提议)。
+
+T3 将文件工具策略版本递增至 17，使工具定义缓存更新；workspace_edit 的兼容参数和原始版本匹配语义见[工作区契约](../public/rest/workspaces.md#t3-多片段编辑)。不改变调用预算或权限。

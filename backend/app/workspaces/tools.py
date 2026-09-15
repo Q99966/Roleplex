@@ -22,6 +22,7 @@ from ..models import (
     WorkspaceBinding,
 )
 from .files import WorkspaceFileError, WorkspaceFileService, MAX_EDIT_BYTES
+from .replacements import ReplacementInput, MAX_REPLACEMENTS, validate_edit_shape
 from .catalog import WORKSPACE_FILE_TOOLS, WORKSPACE_MUTATION_TOOLS
 from .paths import WorkspacePathError
 from .service import binding_root
@@ -34,14 +35,14 @@ from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocke
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 16
+WORKSPACE_TOOL_POLICY_VERSION = 17
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件。可用 path+start_line/end_line 按行读取（从1开始、含两端，默认200行、最多2000行）；与 offset_bytes/max_bytes 字节模式互斥。兼容旧 path 字节形式，默认最多65536字节，返回原五字段。items 一次最多8项，各项默认65536字节，按实际返回量分享主机内容预算；不因申请值相加拒绝。参数JSON最多16 KiB，完整结果最多64 KiB，预算未覆盖项保留状态。所有成功读取给出全文件sha256；可传 expected_sha256 校验搜索/续读版本，不拼接不同版本。行模式只返回完整行，line_too_long时可用返回的start_offset作为offset_bytes改用字节模式。读取支持更大文件的有界扫描，写入上限仍为1 MiB。繁忙时工具内部有界排队，不需要查询队列。',
     'workspace_search': '在绑定工作区定位文件和代码。query为区分大小写的字面文本，mode=text（默认）返回相对路径、匹配行号、少量上下文和确认后的全文件sha256；mode=files使用文件名fnmatch模式（如*.py），不提供内容版本。path默认根目录，可缩小到子目录/文件；limit默认100最多200，context_lines默认1最多3。系统敏感路径、链接、依赖缓存和构建目录排除。扫描/结果达到预算时status=partial，不等于全工作区无匹配。text可用queries数组（1..8词，每词1..256字符）替代query，match=any表示OR，all要求同一行含全部词；多个已知关键词合并一次扫描，matched_queries返回从0开始的命中词索引，|和&仍是字面字符。已知小文件可直接读取；未知位置先搜索，再用workspace_read按行读取；读取传已知expected_sha256，变化后重新定位。不是Shell、正则或语义索引，不获得额外资源权限。',
 
     "workspace_write": "普通源码创建或整文件替换优先使用本工具；自动创建工作区内缺失的父目录，不必先用Shell建目录，拒绝链接/敏感路径和非目录祖先。批量预检不创建目录，实际写入阶段才创建；失败可能保留已创建空目录。更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
-    'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；两片段合计最多 64 KiB。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
+    'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；也可用 replacements 数组（1..32项 old_text/new_text）替代旧片段字段；全部基于同一原始文件唯一匹配且不得重叠，不可依赖前项产生的文本。整个文件节点全部片段合计最多64 KiB，全部校验后只提交一次、生成一份diff；失败的 replacement_index 从1开始。不与旧字段混传。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
     "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
     "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
     'workspace_start_service': '请求 Owner 批准实际脚本并托管前台 HTTP 开发服务；可包含必要准备操作，但普通源码编辑优先原生文件工具，不仅为减少调用次数塞进启动脚本。必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。脚本可修改文件、访问网络，未采集文件 diff；启动失败或回收成功不代表副作用回滚。独立逐次审批，不移用 Shell 批准，不自动换入口规避拒绝。',
@@ -214,6 +215,7 @@ class WorkspaceEditInput(BaseModel):
     old_text: str | None = Field(default=None, min_length=1, max_length=MAX_EDIT_BYTES)
     new_text: str | None = Field(default=None, max_length=MAX_EDIT_BYTES)
     expected_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS)
     items: list[EditItemInput] | None = Field(default=None, min_length=1, max_length=8)
 
     @model_validator(mode='before')
@@ -222,8 +224,10 @@ class WorkspaceEditInput(BaseModel):
         """Args:
             value：原始编辑参数，items 与全部旧字段互斥。
         """
-        fields = ('path', 'old_text', 'new_text', 'expected_sha256')
-        _mutation_mode(value, fields, fields)
+        fields = ('path', 'old_text', 'new_text', 'expected_sha256', 'replacements')
+        _mutation_mode(value, fields, ('path', 'expected_sha256'))
+        if 'items' not in value:
+            validate_edit_shape(value)
         return value
 
 
@@ -700,11 +704,12 @@ async def create_workspace_tools(
         return await mutate_file('workspace_write', path, {'content': content, 'expected_sha256': expected_sha256})
 
     async def workspace_edit(path: str | None = None, old_text: str | None = None, new_text: str | None = None,
-                             expected_sha256: str | None = None, items: list | None = None) -> str:
-        """对已有文件做一次唯一字面替换。
+                             expected_sha256: str | None = None, items: list | None = None, replacements: list[dict] | None = None) -> str:
+        """对已有文件的一个或多个唯一片段校验后提交一次替换。
 
         Args:
             path：工作区相对路径。
+            replacements：同一原始版本的多个非重叠替换，与旧字段互斥。
             old_text：唯一旧片段。
             new_text：替换片段。
             expected_sha256：读取取得的完整文件 hash。
@@ -712,7 +717,11 @@ async def create_workspace_tools(
         """
         if items is not None:
             return await mutate_items('workspace_edit', items)
-        return await mutate_file('workspace_edit', path, {'old_text': old_text, 'new_text': new_text, 'expected_sha256': expected_sha256})
+        # LangChain 对嵌套 schema 返回模型实例，显式转换为执行层的普通字段。
+        if replacements is not None:
+            replacements = [pair.model_dump() if isinstance(pair, ReplacementInput) else pair for pair in replacements]
+        arguments = {'replacements': replacements} if replacements is not None else {'old_text': old_text, 'new_text': new_text}
+        return await mutate_file('workspace_edit', path, {**arguments, 'expected_sha256': expected_sha256})
 
     async def workspace_run_command(command: str, args: dict | None = None) -> str:
         """在获得串行槽后重新鉴权并执行固定命令。

@@ -450,6 +450,14 @@ class BatchWriteResultView(BaseModel):
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
+class EditErrorView(BaseModel):
+    """只保留失败片段序号与固定恢复建议，不含源码。"""
+    model_config = ConfigDict(extra='forbid', strict=True, hide_input_in_errors=True)
+    replacement_index: int = Field(ge=1, le=32)
+    conflicting_replacement_index: int | None = Field(default=None, ge=1, le=32)
+    recovery: Literal['reread_and_adjust', 'split_non_overlapping']
+
+
 class BatchMutationItemView(BaseModel):
     """批次内的修改事实与原 D 差异对象，不建立独立 Agent execution。"""
     model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
@@ -463,6 +471,7 @@ class BatchMutationItemView(BaseModel):
     result: BatchWriteResultView | None
     write: WriteDetailView | None
     diagnostic: WriteDiagnosticView | None = None
+    edit_error: EditErrorView | None = None
 
 
 class WriteWaitView(BaseModel):

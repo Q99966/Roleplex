@@ -1,3 +1,4 @@
+import { EditErrorNote } from './EditErrorNote'
 import { WriteWaitNote } from './WriteWaitNote'
 import type { BatchMutationDetails } from '../api/client'
 import { WriteDiff } from './WriteDiff'
@@ -29,6 +30,7 @@ function MutationNode({ item, single }: { item: BatchMutationDetails['items'][nu
   </>
   const body = <>
     {!!item.created_parent_count && <p className={item.applied ? "text-slate-400" : "text-amber-300"}>本次创建了 {item.created_parent_count} 个父目录{item.applied ? "。" : "，可能留下空目录。"}</p>}
+    {item.edit_error && <EditErrorNote value={item.edit_error} />}
     {item.diagnostic && <WriteDiagnosticNote value={item.diagnostic} />}
     {item.applied === null && <p className="text-amber-300">文件可能已修改，结果未确认；请先核查，不要直接重试。</p>}
     {item.applied === false && <p className="text-slate-400">本项未写入。</p>}

@@ -34,7 +34,7 @@ docs/protocol/
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
 | REST 会话管理与回收站 | 已实现（单聊与 M4a 群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
-| REST 当前 World 工作区 | E1 与 E2 统一文件操作已人工验收 | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
+| REST 当前 World 工作区 | E1/E2 已验收；T3 多片段编辑已人工验收 | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
 | 工作区搜索与范围读取 | 内部/已实现（T2，已人工验收） | [internal/workspace-search-read.md](protocol/internal/workspace-search-read.md) |
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（B 最近窗口与 M 多行输入均已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |

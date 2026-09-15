@@ -946,3 +946,5 @@ find logs/tests/e2e/real/2026-08-25 -name summary.json -print
 tool.write_wait_completed 记录写入准入结束的固定 status、queue_wait_ms、lock_wait_ms 和等待失败 phase/reason（工作区协议定义），沿用原 tool_call_id/Trace。只在真实工具调用上下文记录，不记录参数、路径、源码或逐轮轮询。
 
 tool.call_not_dispatched 只记录宿主确认未派发的工具名、调用身份、status=not_executed、reason=graph_budget；不伪造 tool.call_started/completed，不记录参数或模型原文。
+
+T3 workspace_edit 的 replacements 只允许记录 replacement_count 与合计 old_text_bytes/new_text_bytes；批次沿用 item_count。不得记录匹配片段或返回原始替换内容。

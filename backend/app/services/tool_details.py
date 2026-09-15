@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView, WriteWaitView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView, WriteWaitView, EditErrorView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -216,6 +216,8 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                         raw = raw.removeprefix(prefix).strip()
                     try:
                         wait = json.loads(raw).get('details', {})
+                        if 'replacement_index' in wait:
+                            payload['edit_error'] = EditErrorView.model_validate(wait).model_dump()
                         if wait.get('reason') in {'queue_full', 'queue_bytes', 'queue_timeout', 'lock_timeout', 'closed'}:
                             payload['wait_diagnostic'] = WriteWaitView.model_validate({key: wait[key] for key in ('phase', 'reason')}).model_dump()
                     except (ValueError, KeyError, TypeError, AttributeError):

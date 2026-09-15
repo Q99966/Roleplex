@@ -214,7 +214,8 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_BATCH_PARTIAL` | 已实现 | 工具 | — | failed | conditional | 部分读取/修改成功；保留逐项结果，修改批次停止后续项，不自动回滚 |
 | `WORKSPACE_BATCH_FAILED` | 已实现 | 工具 | — | failed | conditional | 本批没有成功读取；具体原因仅在 Owner/模型逐项结果中 |
 | `WORKSPACE_READ_FAILED` | 已实现 | 工具 | — | failed | conditional | 已授权读取遇到 I/O 或内部故障；不公开宿主异常原文 |
-| `WORKSPACE_EDIT_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | old_text 与 new_text 的 UTF-8 字节数合计超过 64 KiB |
+| `WORKSPACE_EDIT_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 一个文件节点全部 old_text/new_text 的 UTF-8 字节数合计超过 64 KiB |
+| `WORKSPACE_EDIT_OVERLAP` | 已实现 | 工具 | — | rejected | conditional | 同文件替换区间重复或重叠；拆为非重叠片段，文件不提交 |
 | `WORKSPACE_EDIT_MATCH_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 当前匹配版本内找不到精确旧片段；需重新读取并调整片段 |
 | `WORKSPACE_EDIT_MATCH_AMBIGUOUS` | 已实现 | 工具 | — | rejected | conditional | 旧片段多处匹配，包含重叠；需增加明确上下文，不自动全部替换 |
 | `WORKSPACE_PARENT_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 写入目标的父目录不能创建或祖先不是目录；普通缺失目录自动创建，链接/敏感路径沿用专用拒绝码 |

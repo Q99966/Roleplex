@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
-| 状态 | D/E1/E2 与 S2 私有拒绝诊断已人工验收 |
+| 状态 | D/E1/E2 与 S2 已人工验收；T3 失败序号已人工验收 |
 | 协议版本 | 6（兼容新增原生修改拒绝诊断） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
-| 复核日期 | 2026-09-13 |
+| 复核日期 | 2026-09-15 |
 | 测试 | `backend/tests/test_tool_timeline.py`、`frontend/tests/commands/`、`frontend/tests/real-world/commands-provider.spec.ts` |
 
 ## 接口与资源归属
@@ -196,3 +196,5 @@ T2 搜索命中兼容增加 matched_queries（零基词索引，旧记录默认�
 没有工具开始事件、不计执行耗时；effect_state=not_applied、confirmed_applied_items=0。
 Owner 详情沿用原接口与加密输入，not_dispatched.reason=graph_budget 表示无执行结果；详情时间仅是记录时间，不展示为执行开始/结束。
 旧客户端对未知状态降级；Guest 只见安全状态与工具名。新状态不增加权限，不把未派发输入当作已经批准的操作。
+
+T3 编辑失败兼容增加 edit_error：单项在详情根、批次在失败节点内。replacement_index（1..32）、可选 conflicting_replacement_index（1..32）及 recovery=reread_and_adjust/split_non_overlapping；只显示固定恢复建议。Owner 输入只保留 replacements 的数量、各项旧/新字节数，不复制多片段正文。字段语义见[工作区协议](../rest/workspaces.md#t3-多片段编辑)。

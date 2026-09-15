@@ -1,11 +1,11 @@
-/* 代码差异保持独立深色配色，不随工作台浅色主题改变。 */
+/* 与浅蓝工作台协调：柔和红绿底区分增删，深色文字保持阅读对比度。 */
 .roleplex-write-diff .diff {
-  --diff-background-color: #09090b;
-  --diff-text-color: #e4e4e7;
-  --diff-gutter-insert-background-color: #16412b;
-  --diff-code-insert-background-color: #123322;
-  --diff-gutter-delete-background-color: #562222;
-  --diff-code-delete-background-color: #401b1b;
+  --diff-background-color: #f8fbfd;
+  --diff-text-color: #294553;
+  --diff-gutter-insert-background-color: #d3ebdf;
+  --diff-code-insert-background-color: #e5f3eb;
+  --diff-gutter-delete-background-color: #efd5d8;
+  --diff-code-delete-background-color: #fae9eb;
   font-size: 12px;
   font-family: var(--diff-font-family);
   line-height: 1.6;

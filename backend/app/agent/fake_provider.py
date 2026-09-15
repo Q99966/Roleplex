@@ -143,6 +143,37 @@ class SearchReadModel(ScriptedChatModel):
             yield chunk
 
 
+class ReplacementsModel(ScriptedChatModel):
+    """根据实际读取的版本发起多片段编辑，失败场景不重试。"""
+    invalid: bool = False
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        """Args:
+            messages：包含实际读取结果的框架消息。
+            stop：兼容模型接口。
+            run_manager：框架回调。
+            kwargs：附加接口参数。
+        """
+        if self.index == 0:
+            turn = ScriptedTurn(tool_calls=[{'name':'workspace_read', 'args':{'path':'sample.txt'}, 'id':'replacement-read'}])
+        elif self.index == 1:
+            output = next(message for message in reversed(messages) if isinstance(message, ToolMessage))
+            digest = json.loads(output.content)['sha256']
+            pairs = [{'old_text': f'{key}={old}', 'new_text': f'{key}={new}'} for key,old,new in [('alpha',1,10),('beta',2,20),('gamma',3,30)]]
+            if self.invalid:
+                pairs = [{'old_text':'alpha=10','new_text':'alpha=11'},{'old_text':'missing-marker','new_text':'invalid'}]
+            args = {'path':'sample.txt','expected_sha256':digest,'replacements':pairs}
+            calls = [{'name':'workspace_edit','args':args,'id':'replacement-edit'}]
+            if self.invalid: calls.append({'name':'workspace_edit','args':{'items':[args]},'id':'replacement-batch-error'})
+            turn = ScriptedTurn(tool_calls=calls)
+        else:
+            turn = ScriptedTurn(text='多片段拒绝已确认。' if self.invalid else '多片段编辑完成。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """构造只产出固定回复文案的 fake 模型。
 
@@ -150,6 +181,8 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[REPLACEMENTS_FAKE]' in prompt or '[REPLACEMENTS_BAD_FAKE]' in prompt:
+        return ReplacementsModel(delay=delay, invalid='[REPLACEMENTS_BAD_FAKE]' in prompt)
     if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:
         return SearchReadModel(delay=delay, stale='[SEARCH_STALE_FAKE]' in prompt)
     if '[BUDGET_PROPOSALS_FAKE]' in prompt:

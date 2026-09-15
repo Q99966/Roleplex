@@ -90,15 +90,17 @@ export type WriteDiagnostic = {
   other_sessions_blocking: boolean | null
 }
 export type WriteWait = { phase: 'queue' | 'lock'; reason: 'queue_full' | 'queue_bytes' | 'queue_timeout' | 'lock_timeout' | 'closed' }
+export type EditError = { replacement_index: number; conflicting_replacement_index?: number | null; recovery: 'reread_and_adjust' | 'split_non_overlapping' }
 export type BatchMutationDetails = {
   wait_diagnostic?: WriteWait | null
   version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'rejected' | 'cancelled' | 'result_unconfirmed'; error_code: string | null
   items: Array<{ id: string; path: string; operation: 'write' | 'edit';
     status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null; created_parent_count?: number | null;
     error_code: string | null; result: { created: boolean; bytes: number; sha256: string } | null; write: WriteDetails | null;
-    diagnostic?: WriteDiagnostic | null }>
+    diagnostic?: WriteDiagnostic | null; edit_error?: EditError | null }>
 }
 export type ToolDetails = {
+  edit_error?: EditError | null
   not_dispatched?: { reason: 'graph_budget' } | null
   wait_diagnostic?: WriteWait | null
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'

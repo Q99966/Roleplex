@@ -12,7 +12,7 @@ _FIELDS = {
     'workspace_read': ('path', 'offset_bytes', 'max_bytes', 'items', 'start_line', 'end_line', 'expected_sha256'),
     'workspace_search': ('query', 'queries', 'match', 'mode', 'path', 'limit', 'context_lines'),
     'workspace_write': ('path', 'content', 'expected_sha256', 'items'),
-    'workspace_edit': ('path', 'old_text', 'new_text', 'expected_sha256', 'items'),
+    'workspace_edit': ('path', 'old_text', 'new_text', 'expected_sha256', 'items', 'replacements'),
     'workspace_run_command': ('command', 'args'),
 }
 _ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)')
@@ -32,6 +32,15 @@ def bounded_text(text: str, limit: int = CAPTURE_LIMIT) -> dict[str, Any]:
     return {'text': visible, 'bytes': len(data), 'truncated': len(data) > limit}
 
 
+def replacement_sizes(value: list) -> list[dict]:
+    """Args:
+        value：仅在有界 Owner 输入中保存每项字节数，不保存旧/新源码。
+    """
+    return [{'index': index, **{f'{name}_bytes': len(pair[name].encode('utf-8', errors='replace'))
+        for name in ('old_text', 'new_text') if isinstance(pair.get(name), str)}}
+        for index, pair in enumerate(value[:32], 1) if isinstance(pair, dict)]
+
+
 def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
     """只采集当前内置工作区工具的显式输入字段。
 
@@ -45,7 +54,10 @@ def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
     fields = ('items',) if tool_name in {'workspace_write', 'workspace_edit'} and 'items' in value else _FIELDS[tool_name]
     for key in fields:
         item = value.get(key)
-        if key == 'queries' and isinstance(item, list):
+        if key == 'replacements' and isinstance(item, list):
+            selected['replacement_count'] = len(item)
+            selected['replacements'] = replacement_sizes(item)
+        elif key == 'queries' and isinstance(item, list):
             selected[key] = [term for term in item[:8] if isinstance(term, str)]
         elif key == 'items' and isinstance(item, list) and len(item) <= 8:
             # 修改批次只保留目标和版本，不重复保存整批源码；未知嵌套字段默认排除。
@@ -55,6 +67,9 @@ def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
                 for row in item if isinstance(row, dict)]
             if tool_name in {'workspace_write', 'workspace_edit'}:
                 for target, source in zip(selected[key], (row for row in item if isinstance(row, dict))):
+                    if tool_name == 'workspace_edit' and isinstance(source.get('replacements'), list):
+                        target['replacement_count'] = len(source['replacements'])
+                        target['replacements'] = replacement_sizes(source['replacements'])
                     for name in ('content',) if tool_name == 'workspace_write' else ('old_text', 'new_text'):
                         if isinstance(source.get(name), str):
                             target[f'{name}_bytes'] = len(source[name].encode('utf-8', errors='replace'))

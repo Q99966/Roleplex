@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .files import WorkspaceFileError, WorkspaceFileService
+from .replacements import ReplacementInput, MAX_REPLACEMENTS, validate_edit_shape
 
 INPUT_LIMIT = 256 * 1024
 OUTPUT_LIMIT = 65536
@@ -26,12 +27,21 @@ class WriteItemInput(BaseModel):
 
 
 class EditItemInput(BaseModel):
-    """单个唯一字面替换项，沿用 E1 字符/字节护栏。"""
+    """单个文件编辑节点，兼容单片段与原始版本上的多片段替换。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
     path: str = Field(min_length=1, max_length=1024)
-    old_text: str = Field(min_length=1, max_length=65536)
-    new_text: str = Field(max_length=65536)
+    old_text: str | None = Field(default=None, min_length=1, max_length=65536)
+    new_text: str | None = Field(default=None, max_length=65536)
+    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS)
     expected_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+    @model_validator(mode='before')
+    @classmethod
+    def exclusive_fragments(cls, value):
+        """Args:
+            value：按原始字段判断旧/新形式互斥。
+        """
+        return validate_edit_shape(value)
 
 
 def encode(value: dict) -> str:
@@ -59,7 +69,7 @@ def validate_items(operation: str, items: list) -> list[dict]:
         raise WorkspaceFileError('WORKSPACE_BATCH_ARGUMENT_INVALID')
     schema = WriteItemInput if operation == 'write' else EditItemInput
     try:
-        values = [schema.model_validate(item).model_dump() for item in items]
+        values = [schema.model_validate(item).model_dump(exclude_none=operation == 'edit') for item in items]
         size = len(encode({'items': values}).encode())
         reserved = sum(_reservation(item) for item in values)
     except (ValidationError, ValueError, TypeError, UnicodeError):
@@ -246,6 +256,8 @@ async def _mutate_many(operation: str, items: list[dict], *, authorize: Callable
         code = exc.code if isinstance(exc, WorkspaceFileError) else 'WORKSPACE_BATCH_BUSY'
         if isinstance(exc, WorkspaceFileError) and exc.code == 'WORKSPACE_BATCH_BUSY':
             receipt.value['wait_diagnostic'] = exc.details
+        if isinstance(exc, WorkspaceFileError) and exc.details and 'replacement_index' in exc.details:
+            node['edit_error'] = exc.details
         if not node['applied']:
             node.update(status='failed', applied=False, error_code=code)
             from .diagnostics import AccessRejected

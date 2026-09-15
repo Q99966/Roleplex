@@ -177,6 +177,11 @@ def summarize_tool_args(tool_name: str, args: Any) -> str:
                 content = args.get(key)
                 if isinstance(content, str):
                     summary[f'{key}_bytes'] = len(content.encode('utf-8', errors='replace'))
+            if tool_name == 'workspace_edit' and isinstance(args.get('replacements'), list):
+                pairs = args['replacements']
+                summary['replacement_count'] = len(pairs)
+                for key in ('old_text', 'new_text'):
+                    summary[f'{key}_bytes'] = sum(len(pair[key].encode('utf-8', errors='replace')) for pair in pairs if isinstance(pair, dict) and isinstance(pair.get(key), str))
             summary["has_expected_sha256"] = isinstance(args.get("expected_sha256"), str)
         return json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
     summary: dict[str, int | str] = {}
@@ -249,7 +254,7 @@ def command_result_summary(tool_name: str, output: Any) -> dict[str, Any]:
     if tool_name in {'workspace_write', 'workspace_edit'}:
         from ..workspaces.diagnostics import DENIAL_CODES
         allowed = {'WORKSPACE_EDIT_ARGUMENT_INVALID', 'WORKSPACE_EDIT_INPUT_TOO_LARGE',
-            'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_FILE_REVISION_CONFLICT',
+            'WORKSPACE_EDIT_MATCH_NOT_FOUND', 'WORKSPACE_EDIT_MATCH_AMBIGUOUS', 'WORKSPACE_EDIT_OVERLAP', 'WORKSPACE_FILE_REVISION_CONFLICT',
             'WORKSPACE_FILE_NOT_FOUND', 'WORKSPACE_FILE_NOT_TEXT', 'WORKSPACE_FILE_TOO_LARGE',
             'WORKSPACE_PATH_INVALID', 'WORKSPACE_PATH_OUTSIDE_ROOT', 'WORKSPACE_PATH_SENSITIVE', 'WORKSPACE_TOOL_NOT_AVAILABLE',
             'WORKSPACE_WRITE_ARGUMENT_INVALID', 'WORKSPACE_BATCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_INPUT_TOO_LARGE',

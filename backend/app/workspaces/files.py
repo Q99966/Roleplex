@@ -12,12 +12,13 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
+from .replacements import MAX_FRAGMENT_BYTES
 from .paths import WorkspacePathError, is_link_like, normalize_relative_path, resolve_workspace_path
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_READ_BYTES = 65_536
 MAX_LIST_ITEMS = 200
-MAX_EDIT_BYTES = 65536
+MAX_EDIT_BYTES = MAX_FRAGMENT_BYTES
 _WRITE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -348,12 +349,14 @@ class WorkspaceFileService:
         _capture_applied(capture_applied, current, encoded)
         return WorkspaceWriteResult(created=False, bytes=len(encoded), sha256=_sha256(encoded))
 
-    async def edit(self, path: str, old_text: str, new_text: str, *, expected_sha256: str,
+    async def edit(self, path: str, old_text: str | None = None, new_text: str | None = None, *, expected_sha256: str,
+                   replacements: list[dict] | None = None,
                    capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:
         """唯一字面匹配后修改已有 UTF-8 文件，不解释正则或自动补全上下文。
 
         Args:
             path：授权根内已有普通文件。
+            replacements：多个基于同一原始版本的片段，与旧字段互斥。
             old_text：非空、必须唯一匹配的旧片段。
             new_text：替换片段，可为空但不删除文件。
             expected_sha256：本次读取的完整文件 hash，必填。
@@ -361,41 +364,25 @@ class WorkspaceFileService:
         """
         from .write_admission import locked
         async with locked(self._lock):
-            current, encoded = self._prepare_edit(path, old_text, new_text, expected_sha256)
+            current, encoded = self._prepare_edit(path, old_text, new_text, expected_sha256, replacements=replacements)
             return self._replace_existing(path, current, encoded, capture_applied)
 
-    def _prepare_edit(self, path: str, old_text: str, new_text: str, expected_sha256: str) -> tuple[bytes, bytes]:
+    def _prepare_edit(self, path: str, old_text: str | None = None, new_text: str | None = None, expected_sha256: str | None = None, *, replacements: list[dict] | None = None) -> tuple[bytes, bytes]:
         """单文件提交与批量预检共用精确替换规则，不把预检内容作为未来提交快照。
 
         Args:
             path：已有文件路径。
+            replacements：可选多片段输入。
             old_text：唯一旧片段。
             new_text：新片段。
             expected_sha256：完整旧版本。
         """
-        if not isinstance(old_text, str) or not old_text or not isinstance(new_text, str) or not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+        from .replacements import normalize_pairs, apply_replacements
+        if not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
             raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID')
-        try:
-            size = len(old_text.encode('utf-8')) + len(new_text.encode('utf-8'))
-        except UnicodeEncodeError:
-            raise WorkspaceFileError('WORKSPACE_EDIT_ARGUMENT_INVALID') from None
-        if size > MAX_EDIT_BYTES:
-            raise WorkspaceFileError('WORKSPACE_EDIT_INPUT_TOO_LARGE')
+        pairs = normalize_pairs(old_text, new_text, replacements)
         current = self._read_update(path, expected_sha256)
-        try:
-            text = current.decode('utf-8')
-        except UnicodeDecodeError:
-            raise WorkspaceFileError('WORKSPACE_FILE_NOT_TEXT') from None
-        index = text.find(old_text)
-        if index < 0:
-            raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_NOT_FOUND')
-        # 从下一字符寻找第二处，以免 str.count 的非重叠语义漏掉 aaa 中两处 aa。
-        if text.find(old_text, index + 1) >= 0:
-            raise WorkspaceFileError('WORKSPACE_EDIT_MATCH_AMBIGUOUS')
-        encoded = (text[:index] + new_text + text[index + len(old_text):]).encode('utf-8')
-        if len(encoded) > MAX_FILE_BYTES:
-            raise WorkspaceFileError('WORKSPACE_FILE_TOO_LARGE')
-        return current, encoded
+        return current, apply_replacements(current, pairs, indexed=replacements is not None)
 
     async def preflight(self, operation: str, path: str, arguments: dict) -> tuple[str, tuple[int, int] | None]:
         """无写入地验证一项并返回别名检测身份，提交时仍必须重做校验。

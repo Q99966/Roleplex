@@ -1,3 +1,4 @@
+import { EditErrorNote } from './EditErrorNote'
 import { WriteWaitNote } from './WriteWaitNote'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Loader2, Terminal } from 'lucide-react'
@@ -142,6 +143,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
           <p>{part.status === 'not_executed' ? '记录时间' : '开始'}：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
           {part.status !== 'not_executed' && <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>}
           {detail.wait_diagnostic && <WriteWaitNote value={detail.wait_diagnostic} />}
+          {detail.edit_error && <EditErrorNote value={detail.edit_error} />}
           {detail.diagnostic && <WriteDiagnosticNote value={detail.diagnostic} />}
           {detail.budget_error && <p className="text-amber-300">{detail.budget_error.phase === 'precheck' ? '预检未通过，尚未读取' : '扫描达到限制'}：
             实际 {detail.budget_error.actual} / 上限 {detail.budget_error.limit} {detail.budget_error.unit === 'seconds' ? '秒' : '字节'}</p>}

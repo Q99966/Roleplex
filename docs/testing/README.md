@@ -527,3 +527,5 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 会话右侧概览/成员、扇形选择及窄屏抽屉验证见[会话详情测试](conversation-details.md)。
 
 小阶段 5 的预算未派发记录、部分提交/未知结果、取消竞争与独立真实 Provider 验证见[预算停止事实验证](budget-stop-facts.md)。
+
+T3 单文件多片段编辑的确定性、浏览器及独立真实 Provider 验证见[T3 验证记录](tool-reliability-t3.md)。

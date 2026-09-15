@@ -8,7 +8,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-14 |
+| 复核日期 | 2026-09-15 |
 
 ## 范围与安全边界
 
@@ -130,7 +130,7 @@ S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无
 | `workspace_list` | `path="."`、`after_name?`、`limit=1..200` | UTF-8 名称稳定排序的 `items` 与 `truncated/next_after_name`；symlink 只报告不跟随，敏感/非法名称不发送给模型 |
 | `workspace_read` / `workspace_search` | T2 字节/行范围读取与文件名/文本定位 | [搜索与范围读取权威契约](../../internal/workspace-search-read.md)；旧单文件五字段响应兼容 |
 | `workspace_write` | 旧 `path/content/expected_sha256?` 或新 `items` | 旧形式保留 `created/bytes/sha256` 并兼容新增父目录计数；批次结果见下文；新建要求不存在，更新要求旧 hash |
-| `workspace_edit` | 旧 `path/old_text/new_text/expected_sha256` 或新 `items` | 旧形式保留 `created=false/bytes/sha256`；批次结果见下文；唯一字面替换已有 UTF-8 文件 |
+| `workspace_edit` | 单文件旧片段或 `replacements`；跨文件 `items` | 旧形式保留 `created=false/bytes/sha256`；批次结果见下文；精确替换已有 UTF-8 文件，见本篇 T3 契约 |
 
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
 临时文件、flush/fsync 与 atomic replace 完成。`expected_sha256` 为空不表示允许覆盖。
@@ -165,7 +165,7 @@ Owner 逐项/行范围/搜索详情以[工具详情](../messaging/tool-details.m
 ### E2 多文件写入/编辑（已人工验收，内部工具契约）
 
 原 write/edit 各自增加 items=1..8，严格互斥于该工具所有旧顶层字段（含 null/默认值），不新增角色开关。
-items 内分别使用原 write/edit 单项字段；不允许逐项指定操作、工作区、执行身份或额外参数。
+items 内分别使用 write/edit 单项字段（edit 兼容本篇 T3 replacements）；不允许逐项指定操作、工作区、执行身份或额外参数。
 旧合法单文件响应不变；items 即使只有一项也返回批次信封。write 形态错误为 WORKSPACE_WRITE_ARGUMENT_INVALID，
 edit 沿用 WORKSPACE_EDIT_ARGUMENT_INVALID；内部整批校验另使用 WORKSPACE_BATCH_ARGUMENT_INVALID。
 创建 expected_sha256 为空；已有目标必须匹配最近读取的 hash。每个 edit 的片段仍限 64 KiB，最终文件仍限 1 MiB。
@@ -248,3 +248,14 @@ WORKSPACE_EDIT_MATCH_AMBIGUOUS；这些写前拒绝可作为共享工具卡的�
 WORKSPACE_BATCH_BUSY 的 details/wait_diagnostic 仅携带 phase=queue/lock、reason=queue_full/queue_bytes/queue_timeout/lock_timeout/closed。
 批量 wait_diagnostic 位于结果根，单项位于错误 details；均为可选兼容字段，旧客户端可忽略。取消/关闭移除等待者并回收活跃任务。
 当前队列不提供跨进程互斥，也未接入尚未实现的 Agent 墙钟预算；Shell 实际执行仍使用原互斥锁，人工审批等待不持该锁。
+
+
+### T3 多片段编辑
+
+workspace_edit 在旧 old_text/new_text 之外兼容增加 replacements=[{old_text,new_text}, ...]，两种形式严格互斥（含显式 null）。
+顶层单文件和 items 内节点均支持；每个文件节点 1..32 项，片段合计 UTF-8 64 KiB，最终文件 1 MiB；原 items/总 JSON/排队/权限/服务保护不变。
+所有旧片段在同一原始版本唯一匹配，区间不得重复或重叠；允许相邻片段，不允许依赖前项生成文本。不做正则、Unicode 或换行规范化。
+全部通过后构造最终内容并复用一次原子替换与一份 diff。任意匹配校验失败，不改变原文件；不扩展为跨文件事务或断电保证。
+匹配失败的 details（批次节点为 edit_error）包含一基 replacement_index；重叠另含 conflicting_replacement_index。
+recovery 固定为 reread_and_adjust 或 split_non_overlapping，不回显正文。原错误码沿用，新增 WORKSPACE_EDIT_OVERLAP。
+成功返回结构沿用 created/bytes/sha256；内容相同沿用 unchanged diff。新输入的 Owner 采集只保留替换数量/各项字节数，未知字段和原始片段不进入日志。
