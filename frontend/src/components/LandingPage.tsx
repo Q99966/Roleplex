@@ -267,7 +267,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
             <div className="rounded-lg bg-indigo-600 p-2 text-white shadow-md shadow-indigo-600/30">
               <WandSparkles size={18} />
             </div>
-            <span className="font-bold text-white text-lg tracking-wide bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">Roleplex</span>
+            <span className="font-bold text-white text-lg tracking-wide text-ink">Roleplex</span>
           </div>
           
           <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-950/30 px-2.5 py-0.5 text-[10px] text-emerald-400 font-mono">
@@ -327,7 +327,7 @@ export function LandingPage({ onEnterWorkbench }: LandingPageProps) {
             
             <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
               多智能体协同，<br />
-              <span className="bg-gradient-to-r from-white via-slate-100 to-indigo-300 bg-clip-text text-transparent">重新定义群聊。</span>
+              <span className="bg-gradient-to-r from-indigo-700 via-indigo-500 to-emerald-600 bg-clip-text text-transparent">重新定义群聊。</span>
             </h1>
             
             <p className="text-slate-400 text-sm md:text-base leading-relaxed max-w-lg">

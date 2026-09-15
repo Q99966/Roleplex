@@ -1,0 +1,118 @@
+import { test, expect } from '@playwright/test'
+import { ensureOwnerSession } from './owner'
+
+const base = process.env.ROLEPLEX_E2E_API_ORIGIN!
+
+test('最大输出快捷设置真实保存，默认值不冒充上限且保留其他参数', async ({ page }, testInfo) => {
+  await ensureOwnerSession(page)
+  const id = await page.evaluate(async (base) => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
+    const model = await fetch(`${base}/api/model-configs`, { method: 'POST', headers, body: JSON.stringify({ name: '参数界面测试', provider_type: 'openai_compatible', api_key: 'sk-placeholder' }) })
+    const config = await model.json()
+    const role = await fetch(`${base}/api/roles`, { method: 'POST', headers, body: JSON.stringify({ name: '输出设置助手', model_config_id: config.id,
+      model_name: 'fake-model', system_prompt: '受控参数验证。', params: { max_tokens: 1024, temperature: 0.25, stop: ['END'] } }) })
+    if (!model.ok || !role.ok) throw new Error('参数测试准备失败')
+    return (await role.json()).id as number
+  }, base)
+  /** 查询服务器已保存值，不从表单草稿推断成功。 */
+  async function saved() {
+    return page.evaluate(async ({ base, id }) => {
+      const response = await fetch(`${base}/api/roles`, { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })
+      return (await response.json()).find((role: { id: number }) => role.id === id).params
+    }, { base, id })
+  }
+  await page.reload()
+  const role = page.getByTestId('sidebar-role').filter({ hasText: '输出设置助手' })
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
+  await role.getByRole('button').first().click()
+  const input = page.getByLabel('最大输出 tokens', { exact: true })
+  const section = page.getByRole('region', { name: '最大输出设置' })
+  await expect(input).toHaveValue('1024')
+  await expect(page.getByText('高级模型参数', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('高级模型参数 JSON')).toHaveCount(0)
+  await section.getByRole('button', { name: '8K', exact: true }).click()
+  await expect(input).toHaveValue('8192')
+  await page.getByRole('button', { name: '保存修改', exact: true }).click()
+  await expect(input).toBeHidden()
+  expect(await saved()).toEqual({ max_tokens: 8192, temperature: 0.25, stop: ['END'] })
+  await page.reload()
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
+  await role.getByRole('button').first().click()
+  await expect(input).toHaveValue('8192')
+  await input.fill('12345')
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 850 })
+    await section.scrollIntoViewIfNeeded()
+    await expect.poll(() => section.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    const screenshot = testInfo.outputPath(`output-settings-${width}.png`)
+    await page.screenshot({ path: screenshot })
+    await testInfo.attach(`输出设置 ${width}`, { path: screenshot, contentType: 'image/png' })
+  }
+  await page.setViewportSize({ width: 1280, height: 850 })
+  await page.getByRole('button', { name: '保存修改', exact: true }).click()
+  await expect(input).toBeHidden()
+  expect((await saved()).max_tokens).toBe(12345)
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
+  await role.getByRole('button').first().click()
+  await section.getByRole('button', { name: '厂商默认', exact: true }).click()
+  await expect(input).toHaveValue('')
+  await expect(page.getByText(/本地估算，非输出上限/)).toBeVisible()
+  await page.getByRole('button', { name: '保存修改', exact: true }).click()
+  await expect(input).toBeHidden()
+  expect(await saved()).toEqual({ temperature: 0.25, stop: ['END'] })
+  await page.reload()
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
+  await role.getByRole('button').first().click()
+  await expect(input).toHaveValue('')
+  await input.fill('200000')
+  await page.getByRole('button', { name: '保存修改', exact: true }).click()
+  expect(await input.evaluate(el => (el as HTMLInputElement).validity.rangeOverflow)).toBe(true)
+  expect(await saved()).toEqual({ temperature: 0.25, stop: ['END'] })
+  await input.fill('8192')
+  const tools = page.getByRole('group', { name: '内置工具设置', exact: true })
+  const write = tools.getByRole('button', { name: '写入工作区文件 (workspace_write)', exact: true })
+  await write.click()
+  await expect(write).toHaveAttribute('aria-pressed', 'true')
+  const fileAll = tools.getByRole('checkbox', { name: '文件操作全选', exact: true })
+  const commandAll = tools.getByRole('checkbox', { name: '命令执行全选', exact: true })
+  await expect(fileAll).toHaveJSProperty('indeterminate', true)
+  await tools.getByRole('button', { name: '折叠文件操作', exact: true }).click()
+  await expect(write).toBeHidden()
+  await fileAll.check()
+  await expect(fileAll).toBeChecked()
+  await expect(fileAll).toHaveJSProperty('indeterminate', false)
+  await expect(write).toBeHidden()
+  await tools.getByRole('button', { name: '展开文件操作', exact: true }).click()
+  const fileGroup = tools.getByRole('group', { name: '文件操作', exact: true })
+  await expect(fileGroup.getByRole('button', { pressed: true })).toHaveCount(5)
+  await commandAll.check()
+  await fileAll.uncheck()
+  await expect(fileGroup.getByRole('button', { pressed: true })).toHaveCount(0)
+  await expect(commandAll).toBeChecked()
+  await write.click()
+  await expect(fileAll).toHaveJSProperty('indeterminate', true)
+  await tools.getByRole('button', { name: '折叠后台服务', exact: true }).click()
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 850 })
+    await tools.scrollIntoViewIfNeeded()
+    expect(Math.abs((await tools.boundingBox())!.width - (await section.boundingBox())!.width)).toBeLessThanOrEqual(1)
+    await expect.poll(() => tools.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    const shot = testInfo.outputPath(`tools-full-width-${width}.png`)
+    await page.screenshot({ path: shot })
+    await testInfo.attach(`工具模块全宽 ${width}`, { path: shot, contentType: 'image/png' })
+  }
+  await page.getByRole('button', { name: '保存修改', exact: true }).click()
+  await expect(input).toBeHidden()
+  expect(await saved()).toEqual({ max_tokens: 8192, temperature: 0.25, stop: ['END'] })
+  const savedTools = await page.evaluate(async ({ base, id }) => {
+    const response = await fetch(`${base}/api/roles`, { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })
+    return (await response.json()).find((role: { id: number }) => role.id === id).builtin_tools as string[]
+  }, { base, id })
+  expect(savedTools.sort()).toEqual(['workspace_run_command', 'workspace_run_shell', 'workspace_write'].sort())
+  await page.reload()
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
+  await role.getByRole('button').first().click()
+  await expect(fileAll).toHaveJSProperty('indeterminate', true)
+  await expect(commandAll).toBeChecked()
+
+})

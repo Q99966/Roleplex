@@ -1,3 +1,4 @@
+import { ToolCategory } from './ToolCategory'
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server, FolderKanban,
@@ -489,7 +490,11 @@ interface RoleModalProps {
   onOpenSettings?: () => void
 }
 
-/** 创建/编辑 Agent 角色对话框 (RoleModal)。 */
+/** 创建或编辑角色，保存可视化输出设置并保留已有其他参数。
+ * @param role 待编辑角色；为空时创建新角色。
+ * @param onClose 保存成功或取消时关闭弹窗。
+ * @param onOpenSettings 缺少模型配置时打开设置入口。
+ */
 export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
   const { modelConfigs, createRole, updateRole, deleteRole } = useAppStore()
   
@@ -508,14 +513,32 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
   
   const [busy, setBusy] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const maxOutputTokens = useMemo(() => {
+  const modelParams = useMemo<Record<string, unknown> | null>(() => {
     try {
-      const value = (JSON.parse(form.params || '{}') as { max_tokens?: unknown }).max_tokens
-      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1024
+      const value = JSON.parse(form.params || '{}')
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : null
     } catch {
-      return 1024
+      return null
     }
   }, [form.params])
+  const configuredOutput = modelParams?.max_tokens
+  const usesProviderDefault = configuredOutput === undefined || configuredOutput === null
+  const maxOutputTokens = typeof configuredOutput === 'number' && Number.isFinite(configuredOutput) && configuredOutput > 0 ? configuredOutput : 1024
+
+  /** 更新输出上限时保留其他厂商参数；空值只删除上限，不写入隐式默认值。
+   * @param value 数字输入或快捷选项的值，空字符串表示厂商默认。
+   */
+  function setOutputLimit(value: string) {
+    if (!modelParams) {
+      setErrorMsg('角色参数格式异常，请重新打开角色设置。')
+      return
+    }
+    const params = { ...modelParams }
+    if (value === '') delete params.max_tokens
+    else params.max_tokens = Number(value)
+    setForm(current => ({ ...current, params: JSON.stringify(params, null, 2) }))
+    setErrorMsg(null)
+  }
   const contextCeiling = role?.context_window_ceiling_tokens ?? 2_000_000
   const effectiveContextWindow = Math.min(form.context_window_tokens, contextCeiling)
 
@@ -540,6 +563,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
     }
   }, [role, modelConfigs])
 
+  /** 校验可视化设置并保留已有参数后保存角色。
+   * @param e 角色表单提交事件。
+   */
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
@@ -549,9 +575,10 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       ? form.tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)
       : []
 
-    let parsedParams = {}
+    let parsedParams: Record<string, unknown> = {}
     try {
       parsedParams = JSON.parse(form.params || '{}')
+      if (!parsedParams || typeof parsedParams !== 'object' || Array.isArray(parsedParams)) throw new Error('invalid params')
     } catch {
       setErrorMsg('运行参数配置格式无效，必须为合法的 JSON 对象')
       setBusy(false)
@@ -565,8 +592,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
     }
 
     const submittedMaxOutput = (parsedParams as { max_tokens?: unknown }).max_tokens
-    if (typeof submittedMaxOutput === 'number' && submittedMaxOutput >= form.context_window_tokens) {
-      setErrorMsg('模型 max_tokens 必须小于上下文窗口')
+    if (submittedMaxOutput !== undefined && submittedMaxOutput !== null &&
+      (typeof submittedMaxOutput !== 'number' || !Number.isSafeInteger(submittedMaxOutput) || submittedMaxOutput <= 0 || submittedMaxOutput >= effectiveContextWindow)) {
+      setErrorMsg('最大输出 Token 必须是小于有效上下文窗口的正整数')
       setBusy(false)
       return
     }
@@ -628,6 +656,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
     }
   }
 
+  /** 切换单个工具，不改变其他类别的选择。
+   * @param tool 当前按钮对应的内置工具名称。
+   */
   const toggleTool = (tool: string) => {
     setForm(f => {
       const isExist = f.builtin_tools.includes(tool)
@@ -772,7 +803,7 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                 aria-label="上下文窗口 tokens"
                 min={4096}
                 max={2_000_000}
-                step={1024}
+                step={1}
                 value={form.context_window_tokens}
                 onChange={e => setForm({...form, context_window_tokens: Number(e.target.value)})}
                 className="w-36 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono"
@@ -795,12 +826,35 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
               ))}
               <span className="self-center text-[10px] text-slate-500">
                 服务上限 {contextCeiling.toLocaleString()} · 有效 {effectiveContextWindow.toLocaleString()} ·
-                输出预留 {maxOutputTokens.toLocaleString()} · 可用输入约 {Math.max(0, effectiveContextWindow - maxOutputTokens).toLocaleString()}
+                预算预留 {maxOutputTokens.toLocaleString()}{usesProviderDefault ? '（本地估算，非输出上限）' : ''} · 可用输入约 {Math.max(0, effectiveContextWindow - maxOutputTokens).toLocaleString()}
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <section aria-label="最大输出设置" className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-slate-300 font-medium">最大输出（tokens）</p>
+                <p className="text-[10px] text-slate-500 mt-1">限制单次模型请求的输出，可能包含推理 Token；不限制整个任务的累计输出。</p>
+              </div>
+              <input type="number" aria-label="最大输出 tokens" min={1} max={effectiveContextWindow - 1} step={1}
+                value={typeof configuredOutput === 'number' || typeof configuredOutput === 'string' ? configuredOutput : ''}
+                placeholder="厂商默认" onChange={event => setOutputLimit(event.target.value)}
+                className="w-36 max-w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono" />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" aria-pressed={usesProviderDefault} onClick={() => setOutputLimit('')}
+                className={`px-3 py-1.5 rounded-lg border text-[10px] transition ${usesProviderDefault ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'}`}>厂商默认</button>
+              {[1024, 4096, 8192, 16384, 32768, 65536].map(value => <button key={value} type="button"
+                aria-pressed={configuredOutput === value} disabled={value >= effectiveContextWindow} onClick={() => setOutputLimit(String(value))}
+                className={`px-3 py-1.5 rounded-lg border text-[10px] transition disabled:opacity-40 disabled:cursor-not-allowed ${configuredOutput === value ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'}`}>{value / 1024}K</button>)}
+            </div>
+            <p className="text-[10px] text-slate-500">{usesProviderDefault
+              ? '未指定输出上限，实际使用厂商默认值。'
+              : `保存后将请求最多输出 ${typeof configuredOutput === 'number' ? configuredOutput.toLocaleString() : configuredOutput} Token，实际支持范围由模型服务决定。`}</p>
+          </section>
+
+          <div role="group" aria-label="内置工具设置" className="w-full">
             <div className="block">
               <span className="text-slate-400 font-medium">绑定内置运行工具 (Builtin Tools)</span>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -816,37 +870,16 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
                     ['workspace_start_service', '启动后台 HTTP 服务（Owner 逐次审批）'], ['workspace_service_status', '查询当前会话服务状态'],
                     ['workspace_service_logs', '读取当前会话服务日志'], ['workspace_stop_service', '停止当前会话服务'],
                   ]],
-                ] as const).map(([group, tools]) => <fieldset key={group} className="w-full rounded border border-slate-800 p-2">
-                  <legend className="px-1 text-xs text-slate-400">{group}</legend>
-                  <div className="flex flex-wrap gap-2">{tools.map(([tool, label]) => (
-                  <button
-                    key={tool}
-                    type="button"
-                    aria-pressed={form.builtin_tools.includes(tool)}
-                    onClick={() => toggleTool(tool)}
-                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition ${
-                      form.builtin_tools.includes(tool)
-                        ? 'bg-indigo-600 border-indigo-500 text-white'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {label} ({tool})
-                  </button>
-                  ))}</div>
-                </fieldset>)}
+                ] as const).map(([group, tools]) => <ToolCategory key={group} label={group} tools={tools}
+                  selected={form.builtin_tools} onToggle={toggleTool}
+                  onSelectAll={checked => setForm(current => {
+                    const names = new Set<string>(tools.map(([name]) => name))
+                    const rest = current.builtin_tools.filter(name => !names.has(name))
+                    return { ...current, builtin_tools: checked ? [...rest, ...names] : rest }
+                  })} />)}
               </div>
             </div>
 
-            <label className="block">
-              <span className="text-slate-400 font-medium">模型调用参数 (Params JSON 对象)</span>
-              <textarea 
-                rows={2}
-                value={form.params} 
-                onChange={e => setForm({...form, params: e.target.value})}
-                placeholder='例如: {"temperature": 0.5}' 
-                className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono" 
-              />
-            </label>
           </div>
 
           {errorMsg && (

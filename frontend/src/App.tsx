@@ -112,7 +112,7 @@ export function App() {
   if (passwordResetRequired) return <PasswordResetScreen />
 
   return (
-    <main className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans select-none relative font-sans">
+    <main className="workspace-surface flex h-screen w-screen bg-canvas text-slate-100 overflow-hidden font-sans select-none relative font-sans">
       <Sidebar
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(true)}

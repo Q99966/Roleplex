@@ -60,7 +60,7 @@ export function AuthScreen() {
             <WandSparkles size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">Roleplex</h1>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-700 via-indigo-500 to-emerald-600 bg-clip-text text-transparent">Roleplex</h1>
             <p className="text-sm text-slate-400">你的 Agent 群聊工作台</p>
           </div>
         </div>

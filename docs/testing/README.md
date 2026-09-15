@@ -515,3 +515,13 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 写入队列与 Shell 审批互斥验证：`pytest tests/test_write_admission.py tests/test_shell_approvals.py tests/test_workspace_batch_mutation.py -q`；浏览器 `npm run test:e2e:commands -- write-wait.spec.ts shell-approvals.spec.ts batch-mutation.spec.ts`。结果见[写入等待测试记录](workspace-write-wait.md)。
 
 小阶段 3 独立真实验证：`npm run test:e2e:real-world -- write-wait-provider.spec.ts`，会联网计费；使用隔离世界、后端加密播种，关闭截图/trace/video。批准与拒绝的实际并发路径结果见[写入等待测试记录](workspace-write-wait.md#补充真实-provider-验证)。
+
+小阶段 4 的历史 Token 求和、同配置真实小请求和证据缺口见[输出 Token 核查](token-usage-audit.md)。本次未改变模型默认参数或用量统计代码。
+
+角色最大输出的可视化输入、保存和恢复验证见[输出设置测试记录](role-output-settings.md)。
+
+侧栏切换、角色搜索与浅色主题浏览器回归见 `sidebar-tabs.spec.ts`，配合角色设置、认证、会话与回收站用例；设计范围见[侧栏与主题](../design/frontend-navigation-theme.md)。
+
+侧栏与浅蓝/薄荷主题的最终回归、截图和覆盖边界见[侧栏主题验证](sidebar-theme.md)。
+
+会话右侧概览/成员、扇形选择及窄屏抽屉验证见[会话详情测试](conversation-details.md)。

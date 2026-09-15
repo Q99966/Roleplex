@@ -1,3 +1,4 @@
+/* 代码差异保持独立深色配色，不随工作台浅色主题改变。 */
 .roleplex-write-diff .diff {
   --diff-background-color: #09090b;
   --diff-text-color: #e4e4e7;

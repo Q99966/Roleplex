@@ -103,7 +103,7 @@ test.describe('M2 single chat', () => {
     await page.getByLabel('消息输入框').fill('请开始一段较长的回复')
     await page.getByLabel('发送消息').click()
 
-    const stopButton = page.getByRole('button', { name: '停止生成' })
+    const stopButton = page.getByRole('button', { name: '停止生成', exact: true })
     await stopButton.click()
     await expect(stopButton).toBeHidden({ timeout: 20_000 })
 
@@ -137,6 +137,7 @@ test.describe('M2 single chat', () => {
     }, { base: backend, suffix: `${Date.now()}` })
     await page.reload()
 
+    await page.getByRole('tab', { name: '角色', exact: true }).click()
     await page.getByTitle('定制 Agent 角色').click()
     const contextInput = page.getByLabel('上下文窗口 tokens')
     await expect(contextInput).toHaveValue('200000')

@@ -84,6 +84,7 @@ test.describe('delete semantics', () => {
 
     // 墓碑不再出现在侧边栏的角色列表里；测试库由多个用例共享，
     // 因此断言"这个角色不在列表中"，而不是断言角色总数。
+    await page.getByRole('tab', { name: '角色', exact: true }).click()
     await expect(page.getByTestId('sidebar-role').filter({ hasText: seeded.roleName })).toHaveCount(0)
   })
 

@@ -58,7 +58,9 @@ test('creates a group, keeps no-mention messages quiet, and runs explicit mentio
   await expect(messages).toHaveCount(1)
 
   // 成员管理把 C 加到末尾，稳定顺序继续保持 A、B、C。
-  await page.getByRole('button', { name: '管理群聊成员' }).click()
+  await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: '会话成员', exact: true }).locator('span').last().click()
+  await page.getByRole('button', { name: '管理群聊成员', exact: true }).click()
   await page.getByRole('button', { name: roles[2].name }).click()
   await page.getByRole('button', { name: '保存成员' }).click()
   await expect(page.getByText(`会话成员: ${roles.map((role) => role.name).join(', ')}`)).toBeVisible()

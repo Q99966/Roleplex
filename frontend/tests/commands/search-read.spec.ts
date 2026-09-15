@@ -26,10 +26,12 @@ test('搜索真实行号后读取大文件范围，保留混合批次结果并�
     return (await request('/api/conversations', { title: '搜索范围验收', type: 'single', role_ids: [role.id], workspace_binding_id: workspace.id })).id as number
   }, root)
   await page.reload()
+  await page.getByRole('tab', { name: '角色', exact: true }).click()
   await page.getByTestId('sidebar-role').filter({ hasText: '搜索助手' }).click()
   await expect(page.getByRole('group', { name: '文件操作', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '搜索工作区文件 (workspace_search)', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('button', { name: '取消', exact: true }).click()
+  await page.getByRole('tab', { name: '会话', exact: true }).click()
   await page.getByText('搜索范围验收', { exact: true }).click()
   await page.getByLabel('消息输入框').fill('[SEARCH_READ_FAKE]')
   await page.getByLabel('发送消息').click()

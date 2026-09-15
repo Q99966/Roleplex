@@ -12,6 +12,7 @@ const backend = process.env.ROLEPLEX_E2E_API_ORIGIN ?? 'http://127.0.0.1:8001'
 test.describe('M1 authentication and workspace', () => {
   test('role tool settings omit unimplemented web placeholders', async ({ page }, testInfo) => {
     await ensureOwnerSession(page)
+    await page.getByRole('tab', { name: '角色', exact: true }).click()
     await page.getByTitle('定制 Agent 角色').click()
     await expect(page.getByRole('button', { name: '联网搜索 (web_search)', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '抓取 URL (fetch_url)', exact: true })).toHaveCount(0)
@@ -24,7 +25,7 @@ test.describe('M1 authentication and workspace', () => {
     await edit.click()
     await expect(edit).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByRole('button', { name: '批量读取工作区文件 (workspace_read_many)', exact: true })).toHaveCount(0)
-    const read = page.getByRole('button', { name: '读取工作区文件 (workspace_read)', exact: true })
+    const read = page.getByRole('button', { name: '读取文件（字节 / 行范围） (workspace_read)', exact: true })
     await expect(read).toHaveAttribute('aria-pressed', 'false')
     await read.click()
     await expect(read).toHaveAttribute('aria-pressed', 'true')
@@ -61,6 +62,7 @@ test.describe('M1 authentication and workspace', () => {
     // 新账号的工作台是空的：没有会话也没有角色。
     await expect(page.getByText('欢迎来到 Roleplex')).toBeVisible()
     await expect(page.getByText(`注册测试 ${username}`)).toBeVisible()
+    await page.getByRole('tab', { name: '角色', exact: true }).click()
     await expect(page.getByText('还没有创建角色')).toBeVisible()
     await expect(page).toHaveTitle('Roleplex')
     await page.screenshot({ path: 'test-results/m1-empty-workspace.png', fullPage: true })
