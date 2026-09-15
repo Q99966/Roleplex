@@ -10,8 +10,8 @@ MAX_FRAGMENT_BYTES = 65536
 class ReplacementInput(BaseModel):
     """单个精确替换片段，不允许空旧文本或额外字段。"""
     model_config = ConfigDict(extra='forbid', strict=True, hide_input_in_errors=True)
-    old_text: str = Field(min_length=1, max_length=MAX_FRAGMENT_BYTES)
-    new_text: str = Field(max_length=MAX_FRAGMENT_BYTES)
+    old_text: str = Field(min_length=1, max_length=MAX_FRAGMENT_BYTES, description="原始文件中非空且唯一匹配的旧片段，不依赖其他替换的新内容。")
+    new_text: str = Field(max_length=MAX_FRAGMENT_BYTES, description="新片段，可为空字符串表示删除；新旧片段均保留原换行。")
 
 
 def validate_edit_shape(value: dict) -> dict:

@@ -257,3 +257,5 @@ ToolCallsNotDispatched.reason 兼容增加 arguments_invalid / tool_unavailable�
 ProviderError 兼容可选 error_type/error_phase，仅传输固定安全诊断标签至既有失败日志，不返回原始异常。
 
 工具主动抛出的 ToolException 使用 TOOL_EXECUTION_FAILED 返回模型并保留实际开始/结束；不回显异常正文，也不声称未执行。其他未知执行异常仍终止为 AGENT_RUNTIME_ERROR，避免把已发生副作用的故障当成安全参数重试。
+
+工具说明策略版本 18：用途/关键规则/典型示例置于工具 description，参数用途和互斥关系置于 Field.description，实际数值约束仍由原 schema/执行层强制。workspace_tool_policy 的 exposed_tools 增加 parameters，预算估算与指纹覆盖完整原生参数 schema；该对象只用于内部估算与指纹，不重复注入 system_prompt。没有新增动态发现或“先标题再加载详情”的行为。

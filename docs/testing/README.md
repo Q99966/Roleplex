@@ -543,3 +543,5 @@ T4.3a 的配置、消息链共享额度、迁移与真实群聊验证见[共享�
 T4.3a 真实 World 群聊预算补验收：`npm run test:e2e:real-world -- workflow-budget-provider.spec.ts`。通过界面设置额度并 @全部 发送真实群聊，刷新核对结果；详情见[共享预算验证](agent-budget-t43a.md)。
 
 工具参数错误恢复的离线、浏览器与标准真实 World 验证见[参数恢复记录](tool-argument-recovery.md)，真实入口为 `npm run test:e2e:real-world -- argument-recovery-provider.spec.ts`。
+
+工作区工具说明、字段帮助、示例与实际导出 schema 对齐验证见[工具说明整理](workspace-tool-guidance.md)，真实 World 入口为 `npm run test:e2e:real-world -- tool-guidance-provider.spec.ts`。

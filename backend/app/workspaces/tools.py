@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,26 +31,26 @@ from .commands import WorkspaceCommandError, WorkspaceCommandService
 from .batch_read import ReadItemInput
 from .batch_mutation import WriteItemInput, EditItemInput
 from .access import authorized_member, authorized_execution
-from .service_query import create_status_tool
+from .service_query import create_status_tool, ServiceStatusInput
 from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocker
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 17
+WORKSPACE_TOOL_POLICY_VERSION = 18
 WORKSPACE_TOOL_DESCRIPTIONS = {
-    "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
-    'workspace_read': '读取绑定工作区的 UTF-8 文件。可用 path+start_line/end_line 按行读取（从1开始、含两端，默认200行、最多2000行）；与 offset_bytes/max_bytes 字节模式互斥。兼容旧 path 字节形式，默认最多65536字节，返回原五字段。items 一次最多8项，各项默认65536字节，按实际返回量分享主机内容预算；不因申请值相加拒绝。参数JSON最多16 KiB，完整结果最多64 KiB，预算未覆盖项保留状态。所有成功读取给出全文件sha256；可传 expected_sha256 校验搜索/续读版本，不拼接不同版本。行模式只返回完整行，line_too_long时可用返回的start_offset作为offset_bytes改用字节模式。读取支持更大文件的有界扫描，写入上限仍为1 MiB。繁忙时工具内部有界排队，不需要查询队列。',
-    'workspace_search': '在绑定工作区定位文件和代码。query为区分大小写的字面文本，mode=text（默认）返回相对路径、匹配行号、少量上下文和确认后的全文件sha256；mode=files使用文件名fnmatch模式（如*.py），不提供内容版本。path默认根目录，可缩小到子目录/文件；limit默认100最多200，context_lines默认1最多3。系统敏感路径、链接、依赖缓存和构建目录排除。扫描/结果达到预算时status=partial，不等于全工作区无匹配。text可用queries数组（1..8词，每词1..256字符）替代query，match=any表示OR，all要求同一行含全部词；多个已知关键词合并一次扫描，matched_queries返回从0开始的命中词索引，|和&仍是字面字符。已知小文件可直接读取；未知位置先搜索，再用workspace_read按行读取；读取传已知expected_sha256，变化后重新定位。不是Shell、正则或语义索引，不获得额外资源权限。',
-
-    "workspace_write": "普通源码创建或整文件替换优先使用本工具；自动创建工作区内缺失的父目录，不必先用Shell建目录，拒绝链接/敏感路径和非目录祖先。批量预检不创建目录，实际写入阶段才创建；失败可能保留已创建空目录。更新携带 workspace_read 返回的全文件 expected_sha256。同工作区有未结束服务时须先协调停服、确认回收后编辑，再重新申请启动；不擅停其他会话服务，不自动换脚本规避拒绝。这不构成文件写入隔离。",
-    'workspace_edit': '已有 UTF-8 文件的局部修改优先使用本工具。提供 path、非空且唯一匹配的 old_text、new_text 和最近读取取得的全文件 expected_sha256；也可用 replacements 数组（1..32项 old_text/new_text）替代旧片段字段；全部基于同一原始文件唯一匹配且不得重叠，不可依赖前项产生的文本。整个文件节点全部片段合计最多64 KiB，全部校验后只提交一次、生成一份diff；失败的 replacement_index 从1开始。不与旧字段混传。不做正则、模糊或全部替换，不能猜 hash；版本冲突重新读取，匹配多处时提供更精确上下文。可用空 new_text 删除片段但不删除文件。服务占用时先协调停服再编辑并重新审批启动，不擅停其他会话服务，不换脚本规避拒绝。',
-    "workspace_run_command": "在绑定工作区运行固定命令 pwd/list/read/count；args 仅接受相对 path，不接受 Shell 或任意 argv。",
-    "workspace_run_shell": "执行一次性复杂命令、安装、测试、构建、格式化或代码生成，须等待 Owner 对本次实际脚本批准。只接受 script，不允许 cwd、环境或审批参数。脚本可能修改文件、访问网络和影响服务，不是只读能力，也未采集文件 diff。运行服务时仍可申请，受独立权限、配额与清理门槛约束；不得移用批准或自动换工具规避拒绝；调用结束清理进程，不用于偷偷保活。",
-    'workspace_start_service': '请求 Owner 批准实际脚本并托管前台 HTTP 开发服务；可包含必要准备操作，但普通源码编辑优先原生文件工具，不仅为减少调用次数塞进启动脚本。必须绑定 127.0.0.1 指定端口，不用后台符号/tmux/Docker。等待真实 HTTP ready 后返回资源 ID，回答结束后仍运行。脚本可修改文件、访问网络，未采集文件 diff；启动失败或回收成功不代表副作用回滚。独立逐次审批，不移用 Shell 批准，不自动换入口规避拒绝。',
-    'workspace_service_status': '不传参数即可找回当前会话尚未结束或清理待确认的常驻服务 runtime_id；默认每页50项，limit最大100，has_more时用next_cursor作为cursor续页。列表不是同一时刻快照，服务状态可能变化。传runtime_id查询指定实例并兼容原四字段，不能同时传cursor/limit，也不要传null ID。不扫描全机，不占进程名额，不启动或停止；只查本会话登记，工作区停用或无可写租用也可查询。缺失、撤权或查询失败不是空列表；可通过既有权限允许的停止工具或Owner /ps处理，查询不授予停止权限。',
-    'workspace_service_logs': '读取当前会话服务的有界私有双流日志及游标缺口，内容会发给当前模型。',
-    'workspace_stop_service': '停止当前会话指定的托管实例并确认回收，不按 PID 或端口杀进程。',
+    'workspace_list': '查看工作区目录下的文件和子目录。返回条目名与类型；结果未列完时使用 next_after_name 继续，不递归读取正文。例：{"path":"src","limit":50}。',
+    'workspace_read': '读取已知路径的 UTF-8 文件，可按行、按字节或用 items 批量读取。成功结果包含全文件 sha256，供后续编辑或续读校验版本；版本变化时重新读取，不拼接不同版本。未读完按返回的next_line或next_offset续读。例：{"path":"src/game.js","start_line":120,"end_line":180}。',
+    'workspace_search': '定位文件或文本所在位置。文本搜索区分大小写，返回路径、行号、少量上下文及文件 sha256；文件名搜索使用通配符；默认排除敏感路径、链接、依赖和构建目录。多个关键词优先合并 queries；| 和 & 是普通字符，不是运算符。结果 partial 表示范围未查完，不能断言没有其他匹配。例：{"path":"src","queries":["score","reset"],"match":"any"}。',
+    'workspace_write': '创建文件或用完整正文替换已有文件，自动创建缺失父目录；文件失败可能留下空目录。新建不传 expected_sha256；覆盖前先读取，将返回的真实 sha256 填入 expected_sha256，不能猜测或省略来强行覆盖。例：{"path":"src/hello.txt","content":"hello"}。',
+    'workspace_edit': '精确修改已有 UTF-8 文件，避免重写整份正文。先读取并传回真实 expected_sha256。单处用 old_text/new_text，多处用 replacements；所有旧片段在同一原始版本中唯一匹配且不得重叠，全部校验通过后提交一次。版本冲突重新读取，匹配失败调整片段，不模糊猜测。例如取得 hash 后，可用 replacements 同时把 score = 0 改为 score = 1、speed = 2 改为 speed = 3。',
+    'workspace_run_command': '运行只读的固定命令 pwd/list/read/count；只接受结构化参数，不执行 Shell 语法或任意程序。例：{"command":"count","args":{"path":"src/game.js"}}。',
+    'workspace_run_shell': '执行安装、构建、测试等一次性 Shell 脚本，每次须经 Owner 批准。脚本可修改文件或访问网络，不提供文件 diff。调用结束会清理其进程，不能用来保活后台服务；拒绝后不要换脚本规避审批。例：{"script":"node --version"}。',
+    'workspace_start_service': '启动回答结束后仍需运行的 HTTP 开发服务，每次须经 Owner 批准。脚本以前台方式运行并监听 127.0.0.1 的指定端口；等待 HTTP 健康检查成功后返回 runtime_id。不要用后台符号、tmux 或 Docker 绕过托管。脚本可能修改文件；启动失败或停止服务不回滚文件修改。',
+    'workspace_service_status': '查看本会话的托管服务。用空参数 {} 找回尚未结束或清理待确认的服务 runtime_id；也可传真实 runtime_id 查单个实例。列表 has_more 时用 next_cursor 续页。查询失败不等于没有服务；本工具不会启动或停止服务，也不扫描主机进程。',
+    'workspace_service_logs': '读取本会话指定托管服务的 stdout/stderr 日志。runtime_id 从服务启动或状态查询结果取得，after 用返回的游标续读；日志有保留上限，注意结果中的缺口。返回内容会进入当前模型上下文。',
+    'workspace_stop_service': '停止本会话指定托管服务并确认进程回收。runtime_id 从服务启动或状态查询结果取得，不接受 PID 或端口，不停止其他会话服务；停止进程不代表文件修改被撤销。',
 }
+
 _LEASE_LOCKS: dict[int, asyncio.Lock] = {}
 _COMMAND_CALL_LOCKS: dict[int, asyncio.Lock] = {}
 
@@ -62,27 +63,29 @@ def _tool_description(name: str, *, edit_available: bool = False) -> str:
         edit_available：本次实际工具集合是否包含 edit，禁止向模型推荐未暴露工具。
     """
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
-    if name in {'workspace_write', 'workspace_edit'}:
-        description += ' 单项与批量共用有界等待，排队和获取锁累计最多30秒；等待期间保留本次参数，不需要重复发送代码。繁忙时查看固定阶段/原因，未知提交先核对，不盲重试。'
+    if name in WORKSPACE_MUTATION_TOOLS:
+        description += (' 单文件 path 形式与 items 批次形式互斥。批次 JSON 最多256 KiB；先预检全批，执行失败即停，不回滚已提交文件。'
+            '结果未知先核对，不能整批盲目重放。服务占用导致拒绝时先协调停服并确认回收，不擅停其他会话服务或换脚本绕过保护。'
+            '工具会在内部排队；同一次等待保留参数，不必重复发送代码。')
     if name in {'workspace_read', 'workspace_search'}:
         from ..config import settings
-        description += (f' 当前主机正文额度 {settings.workspace_read_content_bytes} 字节，单文件扫描上限 '
-                        f'{settings.workspace_scan_file_bytes} 字节，单次扫描总量 {settings.workspace_scan_total_bytes} 字节，'
-                        f'扫描时限 {settings.workspace_scan_seconds} 秒。')
+        description += (f' 当前内容额度 {settings.workspace_read_content_bytes} 字节，完整结果最多64 KiB；'
+                        f'扫描上限：单文件 {settings.workspace_scan_file_bytes} 字节、总量 {settings.workspace_scan_total_bytes} 字节、{settings.workspace_scan_seconds} 秒。')
+    if name == 'workspace_read':
+        description += (' 参数 JSON 最多16 KiB，批量按实际返回内容共享额度。行模式遇 line_too_long 时，'
+                        '用返回的 start_offset 改为字节读取，不混传行/字节参数。')
     if name == 'workspace_write' and edit_available:
-        description += ' 局部修改可优先使用本轮已启用的 workspace_edit，避免重传整份文件。'
-    if name in WORKSPACE_MUTATION_TOOLS:
-        description += (' 支持 items 数组（1..8项），与顶层单文件参数严格互斥；沿用本工具单项字段，整批 JSON 输入最多256 KiB。'
-            '先检查全批目标/版本再顺序执行，任何执行失败停止后续项，不自动回滚。重复目标拒绝，结果逐项区分成功、失败、未执行或未确认。'
-            '只重试失败/未执行项并重新读取 hash，未确认项先核查；不整批盲目重放，不承诺跨文件事务或跨调用 exactly-once。')
+        description += ' 局部修改优先使用本轮已提供的 workspace_edit。'
+    if name == 'workspace_edit':
+        description += ' 每文件全部 old_text/new_text 合计最多64 KiB，最终文件最多1 MiB。'
     if name == 'workspace_run_shell':
         from .shell import shell_configuration
         try:
             config = shell_configuration()
         except WorkspaceCommandError:
             return description
-        description += (f" 当前解释器为 {config['shell_kind']}；脚本最多 65536 UTF-8 字节，"
-                        f"执行超时 {config['timeout_seconds']} 秒，输出保留 {config['output_bytes']} 字节。")
+        description += (f" 当前解释器 {config['shell_kind']}，执行超时 {config['timeout_seconds']} 秒，"
+                        f"输出最多 {config['output_bytes']} 字节。")
     return description
 
 
@@ -107,57 +110,57 @@ def _enabled_tools(role: Role, binding: WorkspaceBinding) -> list[str]:
 class ServiceStartInput(BaseModel):
     """受限前台服务请求，不接收目录、环境或运行身份。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    script: str = Field(min_length=1, max_length=65536)
-    port: int = Field(ge=1024, le=65535)
-    health_path: str = Field(default='/', pattern=r'^/(?:[^/\\?#\x00-\x20][^\\?#\x00-\x20]*)?$', max_length=512)
-    lifetime_seconds: int = Field(default=7200, ge=1, le=28800)
+    script: str = Field(min_length=1, max_length=65536, description="前台服务启动脚本，UTF-8 最多65536字节；运行目录由绑定工作区决定。")
+    port: int = Field(ge=1024, le=65535, description="服务实际监听的端口，必须绑定127.0.0.1；应与脚本中的端口一致。")
+    health_path: str = Field(default='/', pattern=r'^/(?:[^/\\?#\x00-\x20][^\\?#\x00-\x20]*)?$', max_length=512, description="健康检查的相对URL路径，默认/；不要传完整网址或查询参数。")
+    lifetime_seconds: int = Field(default=7200, ge=1, le=28800, description="服务最长存续秒数，默认7200，最多28800；到期由平台回收。")
 
 
 class ServiceIdInput(BaseModel):
     """按不可猜测资源 ID 查询/停止，绝不接受裸 PID。"""
     model_config = ConfigDict(extra='forbid')
-    runtime_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    runtime_id: str = Field(pattern=r'^[a-f0-9]{32}$', description="服务启动或状态查询返回的真实runtime_id，不是PID；不要编造。")
 
 
 class ServiceLogInput(ServiceIdInput):
     """有界日志游标。"""
-    after: int = Field(default=0, ge=0, le=2**63 - 1)
+    after: int = Field(default=0, ge=0, le=2**63 - 1, description="上次读取返回的next_seq；首次省略或传0。")
 
 
 class WorkspaceShellInput(BaseModel):
     """模型仅能提交脚本；真实调用身份由防腐层上下文提供。"""
 
     model_config = ConfigDict(extra='forbid')
-    script: str = Field(min_length=1, max_length=65536)
+    script: str = Field(min_length=1, max_length=65536, description="一次性脚本，UTF-8最多65536字节；不要传cwd、环境或审批字段。")
 
 
 class WorkspaceCommandInput(BaseModel):
     """结构化命令输入；命令专用字段由执行层校验，错误不回显原始参数。"""
 
     model_config = ConfigDict(extra='forbid')
-    command: str = Field(min_length=1, max_length=32)
-    args: dict = Field(default_factory=dict)
+    command: str = Field(min_length=1, max_length=32, description="固定命令：pwd查看目录、list列条目、read读取文本、count统计文件行数。")
+    args: dict = Field(default_factory=dict, description="命令参数对象；pwd传{}，其他命令传path相对路径；不支持任意命令行参数。")
 
 
 class WorkspaceListInput(BaseModel):
     """目录列表工具输入。"""
 
-    path: str = Field(default=".", max_length=1024)
-    after_name: str | None = Field(default=None, max_length=255)
-    limit: int = Field(default=200, ge=1, le=200)
+    path: str = Field(default=".", max_length=1024, description="工作区相对目录，默认根目录。")
+    after_name: str | None = Field(default=None, max_length=255, description="上一页返回的next_after_name；首次省略。")
+    limit: int = Field(default=200, ge=1, le=200, description="本次最多返回的条目数，默认200。")
 
 
 class WorkspaceReadInput(BaseModel):
     """统一单文件/批量读取；旧路径参数兼容，items 不与顶层单项字段混用。"""
 
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    path: str | None = Field(default=None, min_length=1, max_length=1024)
-    offset_bytes: int = Field(default=0, ge=0)
-    max_bytes: int = Field(default=65_536, ge=1, le=65_536)
-    items: list[ReadItemInput] | None = Field(default=None, min_length=1, max_length=8)
-    start_line: int | None = Field(default=None, ge=1)
-    end_line: int | None = Field(default=None, ge=1)
-    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    path: str | None = Field(default=None, min_length=1, max_length=1024, description="单文件相对路径；与items不能同时出现。")
+    offset_bytes: int = Field(default=0, ge=0, description="字节模式的起始偏移，从0开始；不能与行范围混传。")
+    max_bytes: int = Field(default=65_536, ge=1, le=65_536, description="字节模式最多返回的UTF-8字节数，必须为整数；行模式不要传此字段。")
+    items: list[ReadItemInput] | None = Field(default=None, min_length=1, max_length=8, description="一次读取多个文件或范围，最多8项；使用时省略所有顶层单文件字段，包括null。")
+    start_line: int | None = Field(default=None, ge=1, description="行模式起始行，从1开始；不能同时传offset_bytes/max_bytes。")
+    end_line: int | None = Field(default=None, ge=1, description="行模式结束行，包含本行且不小于start_line；省略时默认读200行，最多2000行。")
+    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$', description="可选的已知全文件sha256；来自此前读取或文本搜索，版本不同则拒绝。")
 
     @model_validator(mode='before')
     @classmethod
@@ -180,23 +183,23 @@ class WorkspaceReadInput(BaseModel):
 class WorkspaceSearchInput(BaseModel):
     """搜索参数只表达绑定根内的定位任务，不接受执行身份或任意命令。"""
     model_config = ConfigDict(extra='forbid', strict=True, hide_input_in_errors=True)
-    query: str | None = Field(default=None, min_length=1, max_length=256)
-    queries: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(default=None, min_length=1, max_length=8)
-    match: Literal['any', 'all'] = 'any'
-    mode: Literal['text', 'files'] = 'text'
-    path: str = Field(default='.', max_length=1024)
-    limit: int = Field(default=100, ge=1, le=200)
-    context_lines: int = Field(default=1, ge=0, le=3)
+    query: str | None = Field(default=None, min_length=1, max_length=256, description="单个字面关键词；mode=files时为文件名通配模式，如*.js。与queries互斥。")
+    queries: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(default=None, min_length=1, max_length=8, description="仅文本模式支持的多个字面关键词，最多8个、每个最多256字符；与query互斥。")
+    match: Literal['any', 'all'] = Field(default='any', description="queries匹配方式：any任一关键词命中，all要求同一行含全部词。")
+    mode: Literal['text', 'files'] = Field(default='text', description="text搜索文本内容；files匹配文件名且不返回内容版本。")
+    path: str = Field(default='.', max_length=1024, description="搜索范围：工作区相对目录或文件，默认根目录。")
+    limit: int = Field(default=100, ge=1, le=200, description="最多返回的匹配结果数，默认100；达到上限时结果可能不完整。")
+    context_lines: int = Field(default=1, ge=0, le=3, description="每条文本命中附带的前后上下文行数，默认1。")
 
 
 class WorkspaceWriteInput(BaseModel):
     """单文件或批量创建/替换，两种参数形式互斥。"""
 
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    path: str | None = Field(default=None, min_length=1, max_length=1024)
-    content: str | None = None
-    expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    items: list[WriteItemInput] | None = Field(default=None, min_length=1, max_length=8)
+    path: str | None = Field(default=None, min_length=1, max_length=1024, description="单文件相对路径；缺失父目录会自动创建，与items互斥。")
+    content: str | None = Field(default=None, description="完整UTF-8文件正文，最终文件最多1 MiB；单文件模式必填，可为空字符串。")
+    expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", description="新建时省略；覆盖已有文件时必填最近读取返回的真实sha256。")
+    items: list[WriteItemInput] | None = Field(default=None, min_length=1, max_length=8, description="最多8个独立文件写入项；与全部顶层单文件字段互斥，包括null。")
 
     @model_validator(mode='before')
     @classmethod
@@ -211,12 +214,12 @@ class WorkspaceWriteInput(BaseModel):
 class WorkspaceEditInput(BaseModel):
     """单文件精确替换输入；字节合计在文件执行层复核，不接受额外参数。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    path: str | None = Field(default=None, min_length=1, max_length=1024)
-    old_text: str | None = Field(default=None, min_length=1, max_length=MAX_EDIT_BYTES)
-    new_text: str | None = Field(default=None, max_length=MAX_EDIT_BYTES)
-    expected_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
-    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS)
-    items: list[EditItemInput] | None = Field(default=None, min_length=1, max_length=8)
+    path: str | None = Field(default=None, min_length=1, max_length=1024, description="已有文件的相对路径；与items互斥。")
+    old_text: str | None = Field(default=None, min_length=1, max_length=MAX_EDIT_BYTES, description="单处修改的非空旧片段，必须唯一匹配；使用replacements时省略。")
+    new_text: str | None = Field(default=None, max_length=MAX_EDIT_BYTES, description="单处修改的新片段；空字符串表示删除旧片段，不删除文件。")
+    expected_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$', description="单文件编辑必填：最近读取返回的全文件sha256，不能猜测。")
+    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS, description="同文件1..32处替换，针对原始版本匹配；与old_text/new_text互斥。例如[{\"old_text\":\"score = 0\",\"new_text\":\"score = 1\"}]。")
+    items: list[EditItemInput] | None = Field(default=None, min_length=1, max_length=8, description="最多8个独立文件编辑项，每项可用单片段或replacements；与全部顶层单文件字段互斥，包括null。")
 
     @model_validator(mode='before')
     @classmethod
@@ -229,6 +232,26 @@ class WorkspaceEditInput(BaseModel):
         if 'items' not in value:
             validate_edit_shape(value)
         return value
+
+
+# 模型暴露与上下文预算共用同一份参数 schema，字段说明移动后也不能漏算。
+WORKSPACE_TOOL_SCHEMAS = {
+    'workspace_list': WorkspaceListInput, 'workspace_read': WorkspaceReadInput, 'workspace_search': WorkspaceSearchInput,
+    'workspace_write': WorkspaceWriteInput, 'workspace_edit': WorkspaceEditInput,
+    'workspace_run_command': WorkspaceCommandInput, 'workspace_run_shell': WorkspaceShellInput,
+    'workspace_start_service': ServiceStartInput, 'workspace_service_status': ServiceStatusInput,
+    'workspace_service_logs': ServiceLogInput, 'workspace_stop_service': ServiceIdInput,
+}
+
+
+def _tool_parameters(name: str) -> dict:
+    """获取模型实际使用的参数结构，包括展开后的嵌套字段说明。
+
+    Args:
+        name：已登记的工作区工具名。
+    """
+    definition = StructuredTool(name=name, description=_tool_description(name), args_schema=WORKSPACE_TOOL_SCHEMAS[name])
+    return convert_to_openai_tool(definition)['function']['parameters']
 
 
 def _mutation_mode(value: dict, fields: tuple, required: tuple) -> None:
@@ -915,7 +938,8 @@ async def workspace_tool_policy(
         "version": WORKSPACE_TOOL_POLICY_VERSION,
         **({"workspace_binding_id": binding.id, "workspace_kind": binding.workspace_kind} if binding else {}),
         "exposed_tools": [
-            {"name": name, "description": _tool_description(name, edit_available='workspace_edit' in exposed)}
+            {"name": name, "description": _tool_description(name, edit_available='workspace_edit' in exposed),
+             "parameters": _tool_parameters(name)}
             for name in WORKSPACE_TOOLS if name in exposed
         ],
     }

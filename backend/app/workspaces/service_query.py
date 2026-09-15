@@ -22,9 +22,9 @@ OUTPUT_LIMIT = 65536
 class ServiceStatusInput(BaseModel):
     """不传 ID 列表查询；旧 ID 查询不接受分页参数混用。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
-    runtime_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
-    cursor: str | None = Field(default=None, max_length=512)
-    limit: int = Field(default=50, ge=1, le=100)
+    runtime_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$', description="查单个服务时填真实ID；列服务时省略，不传null；与cursor/limit互斥。")
+    cursor: str | None = Field(default=None, max_length=512, description="列表上一页返回的next_cursor；首次省略，不能与runtime_id混传。")
+    limit: int = Field(default=50, ge=1, le=100, description="列表每页最多条目数，默认50；查单个runtime_id时不要传。")
 
     @model_validator(mode='before')
     @classmethod

@@ -21,19 +21,19 @@ OUTPUT_LIMIT = 65536
 class WriteItemInput(BaseModel):
     """单个创建/整文件替换项，不允许模型覆盖执行归属。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
-    path: str = Field(min_length=1, max_length=1024)
-    content: str = Field(max_length=1024 * 1024)
-    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    path: str = Field(min_length=1, max_length=1024, description="工作区相对文件路径，自动创建缺失父目录。")
+    content: str = Field(max_length=1024 * 1024, description="完整UTF-8正文，最终文件最多1 MiB。")
+    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$', description="新建时省略；覆盖时填最近读取返回的真实sha256。")
 
 
 class EditItemInput(BaseModel):
     """单个文件编辑节点，兼容单片段与原始版本上的多片段替换。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
-    path: str = Field(min_length=1, max_length=1024)
-    old_text: str | None = Field(default=None, min_length=1, max_length=65536)
-    new_text: str | None = Field(default=None, max_length=65536)
-    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS)
-    expected_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    path: str = Field(min_length=1, max_length=1024, description="已有UTF-8文件的相对路径。")
+    old_text: str | None = Field(default=None, min_length=1, max_length=65536, description="非空且唯一匹配的旧片段；与replacements互斥。")
+    new_text: str | None = Field(default=None, max_length=65536, description="替换片段，可为空字符串；与replacements互斥。")
+    replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS, description="基于同一原始版本的1..32处不重叠替换；本文件全部新旧片段合计最多64 KiB。")
+    expected_sha256: str = Field(pattern=r'^[a-f0-9]{64}$', description="必填，最近读取返回的真实全文件sha256。")
 
     @model_validator(mode='before')
     @classmethod

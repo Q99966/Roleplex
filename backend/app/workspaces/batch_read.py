@@ -20,12 +20,12 @@ MAX_BATCH_OUTPUT = 65536
 class ReadItemInput(BaseModel):
     """每项独立相对路径及读取游标，未知参数不可进入文件层。"""
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, strict=True)
-    path: str = Field(min_length=1, max_length=1024)
-    offset_bytes: int = Field(default=0, ge=0, le=2**63 - 1)
-    max_bytes: int = Field(default=65536, ge=1, le=65536)
-    start_line: int | None = Field(default=None, ge=1, le=2**63 - 1)
-    end_line: int | None = Field(default=None, ge=1, le=2**63 - 1)
-    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    path: str = Field(min_length=1, max_length=1024, description="工作区相对文件路径。")
+    offset_bytes: int = Field(default=0, ge=0, le=2**63 - 1, description="字节起始偏移，从0开始；行模式不要传。")
+    max_bytes: int = Field(default=65536, ge=1, le=65536, description="字节模式的最大返回字节数；行模式不要传。")
+    start_line: int | None = Field(default=None, ge=1, le=2**63 - 1, description="起始行，从1开始；与offset_bytes/max_bytes互斥。")
+    end_line: int | None = Field(default=None, ge=1, le=2**63 - 1, description="包含结束行，省略默认200行；每项最多2000行。")
+    expected_sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$', description="可选，之前读取或文本搜索返回的真实全文件版本。")
 
     @model_validator(mode='before')
     @classmethod
