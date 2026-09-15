@@ -1,3 +1,4 @@
+import { WriteWaitNote } from './WriteWaitNote'
 import type { BatchMutationDetails } from '../api/client'
 import { WriteDiff } from './WriteDiff'
 import { WriteDiagnosticNote } from './WriteDiagnosticNote'
@@ -52,6 +53,7 @@ export function BatchMutation({ value }: { value: BatchMutationDetails }) {
     result_unconfirmed: '本批存在未确认的写入结果，先核查文件再决定后续操作。',
   }
   return <section aria-label="本次批量修改" className="mt-3 space-y-2">
+    {value.wait_diagnostic && <WriteWaitNote value={value.wait_diagnostic} />}
     {notice[value.status] && <p className="text-amber-300">{notice[value.status]}</p>}
     {value.items.map((item) => <MutationNode key={item.id} item={item} single={value.items.length === 1} />)}
   </section>

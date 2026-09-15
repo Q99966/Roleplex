@@ -89,7 +89,9 @@ export type WriteDiagnostic = {
   services: Array<{ runtime_id: string; state: string }> | null; services_truncated: boolean;
   other_sessions_blocking: boolean | null
 }
+export type WriteWait = { phase: 'queue' | 'lock'; reason: 'queue_full' | 'queue_bytes' | 'queue_timeout' | 'lock_timeout' | 'closed' }
 export type BatchMutationDetails = {
+  wait_diagnostic?: WriteWait | null
   version: number; status: 'running' | 'success' | 'partial' | 'failed' | 'rejected' | 'cancelled' | 'result_unconfirmed'; error_code: string | null
   items: Array<{ id: string; path: string; operation: 'write' | 'edit';
     status: 'not_executed' | 'running' | 'success' | 'failed' | 'result_unconfirmed'; applied: boolean | null; created_parent_count?: number | null;
@@ -97,6 +99,7 @@ export type BatchMutationDetails = {
     diagnostic?: WriteDiagnostic | null }>
 }
 export type ToolDetails = {
+  wait_diagnostic?: WriteWait | null
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string
   input: ToolCapture | null; output: ToolCapture | null

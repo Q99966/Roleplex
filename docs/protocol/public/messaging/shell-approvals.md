@@ -69,3 +69,5 @@ Shell 输出在调用结束时有界加密保存，供 Owner 按需展开，公�
 
 PowerShell 的 stdin/NoProfile/NonInteractive 参数依据 [Microsoft 参数文档](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1)；
 该参数约定与 Linux 上的模拟断言不代替原生 Windows 的编码、Job Object 和取消验证。
+
+审批等待不持工作区命令锁；Shell 获批后才取得原锁，并在锁内重新检查权限后执行已批准的冻结请求。运行实例预留/进程配额保持既有生命周期。取消等待或等待锁时不启动进程；审批批准不保证后续授权仍然有效。服务启动的原资源保护保持不变。

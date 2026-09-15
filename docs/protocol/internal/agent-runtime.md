@@ -239,3 +239,5 @@ Windows 实测结论（mcp 1.2.1）：
 - MCP 生命周期：`app/mcp/manager.py`
 - 生成链路与审计写入：`app/services/chat.py`
 - W1a 路径、文件与工具：`app/workspaces/`
+
+原生修改的独立准入与审批等待分离已实现并通过人工验收；等待阶段/原因见[工作区契约](../public/rest/workspaces.md#原生修改的有界等待)，进程内等待不增加模型请求，不改变 Agent 图预算。

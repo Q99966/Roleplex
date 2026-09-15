@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import AgentExecution, Generation, Message, ToolApprovalRequest, ToolExecutionDetail, User
-from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView
+from ..schemas import ShellDetailView, ToolCaptureView, WriteDetailView, BatchReadDetailView, BatchMutationDetailView, WriteDiagnosticView, LineReadResultView, SearchResultView, WriteWaitView
 from ..workspaces.catalog import WORKSPACE_MUTATION_TOOLS
 
 
@@ -207,6 +207,17 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                     len(hunk['lines']) for file in value['files'] for hunk in file['hunks']) > 1000:
                     raise ValueError('TOOL_DETAILS_UNAVAILABLE')
                 payload['write'] = value
+                if output.get('result') and isinstance(output['result'].get('text'), str):
+                    from ..agent.tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX
+                    raw = output['result']['text']
+                    for prefix in (FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX):
+                        raw = raw.removeprefix(prefix).strip()
+                    try:
+                        wait = json.loads(raw).get('details', {})
+                        if wait.get('reason') in {'queue_full', 'queue_bytes', 'queue_timeout', 'lock_timeout', 'closed'}:
+                            payload['wait_diagnostic'] = WriteWaitView.model_validate({key: wait[key] for key in ('phase', 'reason')}).model_dump()
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        pass
                 if output.get('diagnostic') is not None:
                     payload['diagnostic'] = _diagnostic(output['diagnostic'])
                 payload['output'] = ToolCaptureView.model_validate(output['result']).model_dump() if output.get('result') is not None else None

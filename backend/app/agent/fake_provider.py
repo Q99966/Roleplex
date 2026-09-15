@@ -76,9 +76,12 @@ class ScriptedChatModel(BaseChatModel):
             yield chunk
 
     def _chunks(self, turn: ScriptedTurn) -> list[ChatGenerationChunk]:
-        """把一个回合展开为流式分片。"""
+        """把一个回合展开为流式分片，同响应多工具保留各自索引。
+
+        Args:
+            turn：受控模型回合，不伪造厂商用量。
+        """
         if turn.tool_calls:
-            call = turn.tool_calls[0]
             return [
                 *[ChatGenerationChunk(message=AIMessageChunk(content=turn.text[i:i + self.chunk_size]))
                   for i in range(0, len(turn.text), self.chunk_size)],
@@ -88,9 +91,9 @@ class ScriptedChatModel(BaseChatModel):
                         tool_call_chunks=[{
                             "name": call["name"],
                             "args": json.dumps(call.get("args", {}), ensure_ascii=False),
-                            "id": call.get("id", "call_1"),
-                            "index": 0,
-                        }],
+                            "id": call.get("id", f"call_{index + 1}"),
+                            "index": index,
+                        } for index, call in enumerate(turn.tool_calls)],
                     )
                 )
             ]
@@ -178,6 +181,11 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_start_service', 'args': {
                 'script': script, 'port': port, 'lifetime_seconds': 60}, 'id': 'service_start'}]),
                 ScriptedTurn(text='服务启动流程已结束，请使用 /ps 管理。')], delay=delay)
+    if '[SHELL_WRITE_WAIT_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[
+            {'name': 'workspace_run_shell', 'args': {'script': 'echo approval-placeholder'}, 'id': 'wait-shell'},
+            {'name': 'workspace_write', 'args': {'items': [{'path': 'pending/proof.txt', 'content': 'written-before-approval'}]}, 'id': 'wait-write'},
+        ]), ScriptedTurn(text='审批与写入验证完成。')], delay=delay)
     if any(marker in prompt for marker in ('[SHELL_APPROVAL_FAKE]', '[SHELL_EXPIRY_FAKE]', '[SHELL_DETAILS_FAKE]')):
         import os
         script = "[IO.File]::AppendAllText('shell-proof.txt', \"approved`n\")" if os.name == 'nt' else "printf 'approved\\n' >> shell-proof.txt"

@@ -319,7 +319,8 @@ async def test_batch_lock_timeout_and_capacity_do_not_start_writes(command_root,
     """
     from app.workspaces import batch_mutation as batch
     from app.workspaces.files import WorkspaceFileService
-    monkeypatch.setattr(batch, 'LOCK_WAIT', .02)
+    from app.workspaces.write_admission import current_pool
+    monkeypatch.setattr(current_pool(), 'timeout', .02)
     service = WorkspaceFileService(root=command_root, execution_id='test')
     async def authorize():
         """本轮服务。"""
@@ -335,7 +336,7 @@ async def test_batch_lock_timeout_and_capacity_do_not_start_writes(command_root,
     entered, release = asyncio.Event(), asyncio.Event()
     calls = 0
     async def blocked():
-        """停在两批预检授权，第三批应立即拒绝。"""
+        """停在两批预检授权，第三批排队至本轮短预算到期。"""
         nonlocal calls
         calls += 1
         if calls >= 2:
@@ -349,7 +350,7 @@ async def test_batch_lock_timeout_and_capacity_do_not_start_writes(command_root,
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    assert batch._active_batches == 0 and not (command_root / 'a.txt').exists()
+    assert not current_pool().active and not (command_root / 'a.txt').exists()
 
 
 @pytest.mark.anyio

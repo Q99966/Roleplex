@@ -465,6 +465,13 @@ class BatchMutationItemView(BaseModel):
     diagnostic: WriteDiagnosticView | None = None
 
 
+class WriteWaitView(BaseModel):
+    """写入等待失败的固定阶段和原因，不含参数或路径。"""
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    phase: Literal['queue', 'lock']
+    reason: Literal['queue_full', 'queue_bytes', 'queue_timeout', 'lock_timeout', 'closed']
+
+
 class BatchMutationDetailView(BaseModel):
     """Owner 私有修改批次：整批字节与行数在响应边界再次核验。"""
     model_config = ConfigDict(hide_input_in_errors=True, extra='forbid')
@@ -472,6 +479,7 @@ class BatchMutationDetailView(BaseModel):
     status: Literal['running', 'success', 'partial', 'failed', 'rejected', 'cancelled', 'result_unconfirmed']
     error_code: str | None = Field(max_length=80)
     items: list[BatchMutationItemView] = Field(min_length=1, max_length=8)
+    wait_diagnostic: WriteWaitView | None = None
 
 
 class ShellDetailView(BaseModel):

@@ -203,7 +203,7 @@ async def resolve_approval(approval_id: int, *, decision: str, digest: str | Non
 
 async def request_and_run(*, script: str, execution_id: str, conversation_id: int, role_id: int,
                           owner_id: int, workspace_binding_id: int, root_path: str, tool_call_id: str | None,
-                          service_request: dict | None = None) -> dict:
+                          service_request: dict | None = None, execution_lock: asyncio.Lock | None = None) -> dict:
     """唯一宿主创建 pending，等待决定，批准后再次授权并执行一次。
 
     Args:
@@ -216,6 +216,7 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
         root_path：execution 的规范根快照。
         tool_call_id：防腐层注入的实际调用身份，不接受模型提供。
         service_request：仅服务管理器可传入的冻结资源/端口/寿命，不是模型额外参数。
+        execution_lock：宿主 Shell 执行互斥锁，审批等待期间不持有。
     """
     validate_script(script)
     if not tool_call_id:
@@ -278,6 +279,11 @@ async def request_and_run(*, script: str, execution_id: str, conversation_id: in
             raise WorkspaceCommandError('WORKSPACE_TOOL_NOT_AVAILABLE')
         if service_request:
             return {**request, 'approval_id': row.id}
+        if execution_lock is not None:
+            async with execution_lock:
+                if not await _authorized(request):
+                    raise WorkspaceCommandError('WORKSPACE_TOOL_NOT_AVAILABLE')
+                return await run_shell(request)
         return await run_shell(request)
     finally:
         if row is not None:

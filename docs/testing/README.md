@@ -511,3 +511,7 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 工程级强约束见 [AGENTS.md](../../AGENTS.md)，各领域的具体关联测试见对应协议文档元数据。
 
 写入自动创建父目录的小阶段验证与人工检查见[父目录写入测试记录](workspace-write-parents.md)。
+
+写入队列与 Shell 审批互斥验证：`pytest tests/test_write_admission.py tests/test_shell_approvals.py tests/test_workspace_batch_mutation.py -q`；浏览器 `npm run test:e2e:commands -- write-wait.spec.ts shell-approvals.spec.ts batch-mutation.spec.ts`。结果见[写入等待测试记录](workspace-write-wait.md)。
+
+小阶段 3 独立真实验证：`npm run test:e2e:real-world -- write-wait-provider.spec.ts`，会联网计费；使用隔离世界、后端加密播种，关闭截图/trace/video。批准与拒绝的实际并发路径结果见[写入等待测试记录](workspace-write-wait.md#补充真实-provider-验证)。

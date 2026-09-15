@@ -297,6 +297,7 @@ provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed
 tool.call_failed
 tool.scan_completed
+tool.write_wait_completed
 tool.approval_requested      tool.approval_resolved
 runtime.reserved            runtime.state_changed
 runtime.quota_changed       runtime.cleanup_started
@@ -940,3 +941,5 @@ find logs/tests/e2e/real/2026-08-25 -name summary.json -print
 - 时机：每次后端启动、结构化日志就绪后执行；互斥、幂等，失败不阻断启动。
 - 安全：当天、活跃、running、临时、损坏和未迁移旧日志不自动删除；无法达标时记录 CRITICAL。
 - 审计：先写计划并 flush，后删除，再写结果；归档验证失败时原始目录必须保留。
+
+tool.write_wait_completed 记录写入准入结束的固定 status、queue_wait_ms、lock_wait_ms 和等待失败 phase/reason（工作区协议定义），沿用原 tool_call_id/Trace。只在真实工具调用上下文记录，不记录参数、路径、源码或逐轮轮询。

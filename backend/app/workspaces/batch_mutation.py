@@ -15,8 +15,6 @@ from .files import WorkspaceFileError, WorkspaceFileService
 
 INPUT_LIMIT = 256 * 1024
 OUTPUT_LIMIT = 65536
-LOCK_WAIT = 5.0
-_active_batches = 0
 
 
 class WriteItemInput(BaseModel):
@@ -170,14 +168,12 @@ async def _locked(lock: asyncio.Lock):
     """Args:
         lock：既有工作区命令锁；只限制准入等待，不中断正在提交的同步文件操作。
     """
-    await asyncio.wait_for(lock.acquire(), timeout=LOCK_WAIT)
-    try:
+    from .write_admission import locked
+    async with locked(lock):
         yield
-    finally:
-        lock.release()
 
 
-async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[[], Awaitable[WorkspaceFileService | None]],
+async def _mutate_many(operation: str, items: list[dict], *, authorize: Callable[[], Awaitable[WorkspaceFileService | None]],
                       lock: asyncio.Lock, receipt: BatchMutationReceipt) -> str:
     """全批预检后顺序修改，不自动回滚或重试任何项。
 
@@ -189,12 +185,6 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
         receipt：当前调用私有结果，正常取消也由消息所有者消费。
     """
     from ..agent.write_capture import WriteReceipt
-    global _active_batches
-    items = validate_items(operation, items)
-    if _active_batches >= 2:
-        receipt.value.update(status='rejected', error_code='WORKSPACE_BATCH_BUSY')
-        return encode({**receipt.value, 'items': [{k: v for k, v in node.items() if k != 'write'} for node in receipt.value['items']]})
-    _active_batches += 1
     phase, index = 'precheck', 0
     node = receipt.value['items'][0]
     try:
@@ -254,6 +244,8 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
         raise
     except (WorkspaceFileError, TimeoutError) as exc:
         code = exc.code if isinstance(exc, WorkspaceFileError) else 'WORKSPACE_BATCH_BUSY'
+        if isinstance(exc, WorkspaceFileError) and exc.code == 'WORKSPACE_BATCH_BUSY':
+            receipt.value['wait_diagnostic'] = exc.details
         if not node['applied']:
             node.update(status='failed', applied=False, error_code=code)
             from .diagnostics import AccessRejected
@@ -277,5 +269,28 @@ async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[
             receipt.retain(index)
         finally:
             receipt.release()
-            _active_batches -= 1
     return encode({**receipt.value, 'items': [{k: v for k, v in node.items() if k != 'write'} for node in receipt.value['items']]})
+
+
+async def mutate_many(operation: str, items: list[dict], *, authorize: Callable[[], Awaitable[WorkspaceFileService | None]],
+                      lock: asyncio.Lock, receipt: BatchMutationReceipt) -> str:
+    """Args:
+        operation：宿主绑定的 write/edit。
+        items：整批参数，准入前验证。
+        authorize：出队及每项提交前重新授权。
+        lock：既有工作区共同锁。
+        receipt：准入前已登记的调用凭据。
+    """
+    from .write_admission import admitted
+    values = validate_items(operation, items)
+    try:
+        async with admitted(len(encode({'items': values}).encode())):
+            return await _mutate_many(operation, values, authorize=authorize, lock=lock, receipt=receipt)
+    except WorkspaceFileError as exc:
+        if exc.code != 'WORKSPACE_BATCH_BUSY':
+            raise
+        receipt.value.update(status='rejected', error_code=exc.code, wait_diagnostic=exc.details)
+        return encode({**receipt.value, 'items': [{k: v for k, v in node.items() if k != 'write'} for node in receipt.value['items']]})
+    except asyncio.CancelledError:
+        receipt.value['status'] = 'cancelled'
+        raise

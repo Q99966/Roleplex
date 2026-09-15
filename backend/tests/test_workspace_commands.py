@@ -452,7 +452,11 @@ async def test_parent_exit_does_not_leave_inherited_output_pipe_open(command_roo
         root=command_root, payload=b'', timeout=5, output_limit=1024)
     assert result['status'] == 'exited' and result['exit_code'] == 0
     pid = int(result['stdout'].strip())
-    assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    try:
+        assert psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        # 检查存在性与读取状态之间退出也代表回收成功，不能把竞态当成遗留子进程。
+        pass
 
 
 @pytest.mark.anyio

@@ -218,7 +218,8 @@ class WorkspaceFileService:
             expected_sha256：更新时必需的全文件旧 hash。
             capture_applied：内部私有观察器，只能同步预留，不能等待计算或执行额外写入。
         """
-        async with self._lock:
+        from .write_admission import locked
+        async with locked(self._lock):
             target, current, encoded = self._prepare_write(path, content, expected_sha256)
             if current is None:
                 self._create_write_parents(path, capture_parent_created=capture_parent_created)
@@ -358,7 +359,8 @@ class WorkspaceFileService:
             expected_sha256：本次读取的完整文件 hash，必填。
             capture_applied：成功提交后共享 D 差异采集。
         """
-        async with self._lock:
+        from .write_admission import locked
+        async with locked(self._lock):
             current, encoded = self._prepare_edit(path, old_text, new_text, expected_sha256)
             return self._replace_existing(path, current, encoded, capture_applied)
 
@@ -403,7 +405,8 @@ class WorkspaceFileService:
             path：本项相对路径。
             arguments：通过对应 schema 的内容与版本。
         """
-        async with self._lock:
+        from .write_admission import locked
+        async with locked(self._lock):
             if operation == 'write':
                 target, _, _ = self._prepare_write(path, **arguments)
             elif operation == 'edit':

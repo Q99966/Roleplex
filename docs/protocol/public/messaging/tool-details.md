@@ -186,3 +186,5 @@ T2 搜索命中兼容增加 matched_queries（零基词索引，旧记录默认�
 模型单文件结果兼容增加 created_parent_count；已知拒绝通过 details.created_parent_count 表达，批量通过逐项同名字段表达。
 共享调用级 effect_state 不把“文件未提交但有目录副作用”标成 not_applied，保守使用 unknown；confirmed_applied_items 仍只统计文件提交。
 不新增路径日志、每轮总结、表或数据库迁移。新字段沿用加密详情、保留期限与 Owner/Guest 隔离。
+
+写入等待失败兼容新增 wait_diagnostic（单项 Owner 详情根或批量结果根），phase/reason 的取值只以[工作区等待契约](../rest/workspaces.md#原生修改的有界等待)为准。旧记录缺省/null；展示固定中文原因，不据等待失败掩盖前项提交。

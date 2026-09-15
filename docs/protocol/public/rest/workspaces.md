@@ -172,7 +172,7 @@ edit 沿用 WORKSPACE_EDIT_ARGUMENT_INVALID；内部整批校验另使用 WORKSP
 整批紧凑 UTF-8 输入最多 256 KiB；元数据预留按每项 1536 + 2×JSON 路径字节数计算，合计不得超过 32 KiB，
 超额写前拒绝 WORKSPACE_BATCH_INPUT_TOO_LARGE。预留只为结果身份/diff 元数据，不是文件源码限额放宽。
 
-宿主最多 2 批（write/edit 共用），无外部批次队列；复用工作区命令锁，每次等待该锁最多 5 秒，超时为 WORKSPACE_BATCH_BUSY。
+修改准入现已覆盖单项和批量，采用[有界等待](#原生修改的有界等待)；复用工作区命令锁，繁忙原因按固定阶段区分。
 全批逐项授权并复用单文件准备校验：大小、待写内容及 edit 目标的 UTF-8、敏感路径/链接、父目录、hash、唯一匹配与最终文件大小；
 预检阶段无文件写入。规范目标或已有硬链接身份重复拒绝 WORKSPACE_BATCH_TARGET_CONFLICT。
 执行按输入顺序，每项重新授权/校验，包括服务占用；每项锁外计算 D diff。全批不是事务，预检不隔离外部文件变化。
@@ -238,3 +238,13 @@ WORKSPACE_EDIT_MATCH_AMBIGUOUS；这些写前拒绝可作为共享工具卡的�
 
 会话表示新增可空 `workspace_binding_id`，旧客户端忽略后仍可进行普通聊天。没有绑定或能力关闭时不向模型
 发送工具 schema，普通 single/M4a 行为不变。未知工作区状态应按 unavailable 展示，不能回退到任意目录。
+
+
+### 原生修改的有界等待
+
+单项与批量 write/edit 共用进程内 FIFO 写入准入：2 个执行、8 个等待，等待参数实际 UTF-8 JSON 合计最多 2 MiB。
+排队与各次工作区命令锁/文件写锁等待累计最多 30 秒；不重置等待额度，不将文件同步提交放进等待超时。保留待执行参数，不自动重放已提交或未知操作。
+排队/锁等待后按原规则重新授权和验证版本；全批预检前拒绝全部未执行，执行阶段失败保留前项并停止后项。
+WORKSPACE_BATCH_BUSY 的 details/wait_diagnostic 仅携带 phase=queue/lock、reason=queue_full/queue_bytes/queue_timeout/lock_timeout/closed。
+批量 wait_diagnostic 位于结果根，单项位于错误 details；均为可选兼容字段，旧客户端可忽略。取消/关闭移除等待者并回收活跃任务。
+当前队列不提供跨进程互斥，也未接入尚未实现的 Agent 墙钟预算；Shell 实际执行仍使用原互斥锁，人工审批等待不持该锁。

@@ -34,7 +34,7 @@ from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocke
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 15
+WORKSPACE_TOOL_POLICY_VERSION = 16
 WORKSPACE_TOOL_DESCRIPTIONS = {
     "workspace_list": "列出当前 execution 已绑定工作区内的目录；path 只能是相对路径。",
     'workspace_read': '读取绑定工作区的 UTF-8 文件。可用 path+start_line/end_line 按行读取（从1开始、含两端，默认200行、最多2000行）；与 offset_bytes/max_bytes 字节模式互斥。兼容旧 path 字节形式，默认最多65536字节，返回原五字段。items 一次最多8项，各项默认65536字节，按实际返回量分享主机内容预算；不因申请值相加拒绝。参数JSON最多16 KiB，完整结果最多64 KiB，预算未覆盖项保留状态。所有成功读取给出全文件sha256；可传 expected_sha256 校验搜索/续读版本，不拼接不同版本。行模式只返回完整行，line_too_long时可用返回的start_offset作为offset_bytes改用字节模式。读取支持更大文件的有界扫描，写入上限仍为1 MiB。繁忙时工具内部有界排队，不需要查询队列。',
@@ -61,6 +61,8 @@ def _tool_description(name: str, *, edit_available: bool = False) -> str:
         edit_available：本次实际工具集合是否包含 edit，禁止向模型推荐未暴露工具。
     """
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
+    if name in {'workspace_write', 'workspace_edit'}:
+        description += ' 单项与批量共用有界等待，排队和获取锁累计最多30秒；等待期间保留本次参数，不需要重复发送代码。繁忙时查看固定阶段/原因，未知提交先核对，不盲重试。'
     if name in {'workspace_read', 'workspace_search'}:
         from ..config import settings
         description += (f' 当前主机正文额度 {settings.workspace_read_content_bytes} 字节，单文件扫描上限 '
@@ -616,27 +618,29 @@ async def create_workspace_tools(
         """
         from ..agent.write_capture import begin_write_capture, WriteReceipt
         receipt = begin_write_capture(path) or WriteReceipt(path)
+        from .write_admission import admitted, locked
         try:
-            async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
-                authorized = await mutation_service(tool_name)
-                operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
-                result = await operation(path, **arguments, capture_applied=receipt.applied,
-                    **({'capture_parent_created': receipt.parent_created} if tool_name == 'workspace_write' else {}))
-                result_value = json.loads(authorized.json_result(result))
-                if tool_name == 'workspace_write':
-                    result_value['created_parent_count'] = receipt.created_parent_count
-                output = json.dumps(result_value, ensure_ascii=False)
-            # 库计算或排队绝不能延长文件/工作区写锁的持有时间。
-            if receipt:
-                await receipt.finish(output)
-            return output
+            async with admitted(len(json.dumps({'path': path, **arguments}, ensure_ascii=False).encode())):
+                async with locked(_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock())):
+                    authorized = await mutation_service(tool_name)
+                    operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
+                    result = await operation(path, **arguments, capture_applied=receipt.applied,
+                        **({'capture_parent_created': receipt.parent_created} if tool_name == 'workspace_write' else {}))
+                    result_value = json.loads(authorized.json_result(result))
+                    if tool_name == 'workspace_write':
+                        result_value['created_parent_count'] = receipt.created_parent_count
+                    output = json.dumps(result_value, ensure_ascii=False)
+                # 库计算或排队绝不能延长文件/工作区写锁的持有时间。
+                if receipt:
+                    await receipt.finish(output)
+                return output
         except WorkspaceFileError as exc:
             diagnostic = exc.diagnostic if isinstance(exc, AccessRejected) else None
             if receipt:
                 receipt.not_executed()
                 receipt.diagnostic = diagnostic
             return _error_result(exc.code, rejected=tool_name == 'workspace_edit' or isinstance(exc, AccessRejected), diagnostic=diagnostic,
-                details={'created_parent_count': receipt.created_parent_count} if tool_name == 'workspace_write' else None)
+                details={**(exc.details or {}), **({'created_parent_count': receipt.created_parent_count} if tool_name == 'workspace_write' else {})})
         finally:
             if receipt:
                 receipt.release()
@@ -730,23 +734,23 @@ async def create_workspace_tools(
                 return _command_result({'ok': False, 'error_code': exc.code})
 
     async def workspace_run_shell(script: str) -> str:
-        """串行等待本次批准，执行前仍复核租用和身份。
+        """审批等待不占写锁，批准后持原锁复核租用和身份再执行。
 
         Args:
             script：模型脚本，不能覆盖宿主执行参数。
         """
         from ..agent.tool_context import tool_call_id
         from .approvals import request_and_run
-        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
-            try:
-                from ..runtime.manager import manager
-                async with manager.command(**runtime_identity('workspace_run_shell')):
-                    return _command_result(await request_and_run(script=script, execution_id=execution_id,
-                        conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
-                        workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
-                        tool_call_id=tool_call_id.get()))
-            except WorkspaceCommandError as exc:
-                return _command_result({'ok': False, 'error_code': exc.code})
+        try:
+            from ..runtime.manager import manager
+            async with manager.command(**runtime_identity('workspace_run_shell')):
+                return _command_result(await request_and_run(script=script, execution_id=execution_id,
+                    conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
+                    workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
+                    tool_call_id=tool_call_id.get(),
+                    execution_lock=_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock())))
+        except WorkspaceCommandError as exc:
+            return _command_result({'ok': False, 'error_code': exc.code})
 
     async def workspace_start_service(script: str, port: int, health_path: str = '/', lifetime_seconds: int = 7200) -> str:
         """Args:
