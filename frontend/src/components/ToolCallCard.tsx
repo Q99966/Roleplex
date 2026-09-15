@@ -12,7 +12,7 @@ const WriteDiff = lazy(async () => ({ default: (await import('./WriteDiff')).Wri
 const BatchMutation = lazy(async () => ({ default: (await import('./BatchMutation')).BatchMutation }))
 
 const STATUS: Record<string, string> = {
-  running: '执行中', success: '已完成', failed: '失败', rejected: '已拒绝', cancelled: '已取消', interrupted: '已中断',
+  not_executed: '未执行', running: '执行中', success: '已完成', failed: '失败', rejected: '已拒绝', cancelled: '已取消', interrupted: '已中断',
 }
 
 /** 渲染经授权返回的纯文本，禁止 HTML 或终端序列执行。
@@ -74,7 +74,7 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
   const preflightRejected = ['WORKSPACE_READ_ARGUMENT_INVALID', 'WORKSPACE_SEARCH_ARGUMENT_INVALID', 'WORKSPACE_BATCH_ARGUMENT_INVALID',
     'WORKSPACE_BATCH_INPUT_TOO_LARGE', 'WORKSPACE_SCAN_BUSY', 'WORKSPACE_SCAN_QUEUE_TIMEOUT', 'WORKSPACE_SCAN_CLOSED'].includes(part.error_code ?? '')
   const fileWrite = part.tool_name === 'workspace_write' || part.tool_name === 'workspace_edit'
-  const [open, setOpen] = useState(fileWrite && isOwner)
+  const [open, setOpen] = useState(fileWrite && isOwner && part.status !== 'not_executed')
   const cardRef = useRef<HTMLDivElement>(null)
   const [seen, setSeen] = useState(false)
   const [detail, setDetail] = useState<ToolDetails | null>(null)
@@ -130,7 +130,8 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
       {part.error_code && <span className="text-red-400">{part.error_code}</span>}
     </div>
     {open && <div id={controlId} className="border-t border-slate-800 px-3 pb-3 pt-2 text-slate-400">
-      {(shell || part.tool_name === 'workspace_start_service') && <p className="mb-2 text-amber-300">未采集文件差异，不代表没有修改。</p>}
+      {part.status === 'not_executed' && <p className="mb-2">{part.not_executed_reason === 'graph_budget' ? '本轮执行预算已耗尽，' : ''}此工具未派发，未执行任何操作。</p>}
+      {part.status !== 'not_executed' && (shell || part.tool_name === 'workspace_start_service') && <p className="mb-2 text-amber-300">未采集文件差异，不代表没有修改。</p>}
       {!isOwner ? <p>详细输入和输出仅 Owner 可见。</p> : !canLoad ? <p>此调用未记录执行详情。</p> : <>
         {loading && <p role="status">正在加载执行详情…</p>}
         {failed && <p role="alert">无法加载执行详情，请收起后重试。</p>}
@@ -138,13 +139,13 @@ export function ToolCallCard({ part, conversationId, messageId, isOwner }: {
         {detail?.availability === 'unavailable' && <p>执行详情不可用，无法解密原始记录。</p>}
         {detail?.availability === 'not_recorded' && <p>此调用未记录执行详情。</p>}
         {detail?.availability === 'available' && <>
-          <p>开始：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
-          <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>
+          <p>{part.status === 'not_executed' ? '记录时间' : '开始'}：{detail.started_at ? new Date(detail.started_at).toLocaleString('zh-CN', { hour12: false }) : '未记录'}</p>
+          {part.status !== 'not_executed' && <p>结束：{detail.ended_at ? new Date(detail.ended_at).toLocaleString('zh-CN', { hour12: false }) : detail.status === 'running' ? '执行中，等待工具结果' : '未记录结束时间'}</p>}
           {detail.wait_diagnostic && <WriteWaitNote value={detail.wait_diagnostic} />}
           {detail.diagnostic && <WriteDiagnosticNote value={detail.diagnostic} />}
           {detail.budget_error && <p className="text-amber-300">{detail.budget_error.phase === 'precheck' ? '预检未通过，尚未读取' : '扫描达到限制'}：
             实际 {detail.budget_error.actual} / 上限 {detail.budget_error.limit} {detail.budget_error.unit === 'seconds' ? '秒' : '字节'}</p>}
-          {'search' in detail ? (detail.search ? <SearchDetails value={detail.search} input={detail.input} /> : <p>{preflightRejected ? '请求在预检或准入时拒绝，未开始搜索。' : '本次没有可展示的搜索结果，请查看调用状态。'}</p>)
+          {detail.not_dispatched ? <CaptureText title="提议参数" capture={detail.input} /> : 'search' in detail ? (detail.search ? <SearchDetails value={detail.search} input={detail.input} /> : <p>{preflightRejected ? '请求在预检或准入时拒绝，未开始搜索。' : '本次没有可展示的搜索结果，请查看调用状态。'}</p>)
             : 'read_range' in detail ? (detail.read_range ? <RangeReadDetails value={detail.read_range} /> : <p>{preflightRejected ? '请求在预检或准入时拒绝，未开始读取。' : '本次没有可展示的读取结果，请查看调用状态。'}</p>)
             : 'read_batch' in detail ? (detail.read_batch
             ? <ReadBatch value={detail.read_batch} />

@@ -155,3 +155,33 @@ async def test_real_write_evidence_at_stop(vendor, command_root, limit):
         pytest.fail('触顶事实或无额外解释请求不符；记录实际路径，不自动重跑', pytrace=False)
     if limit == 15 and (stop_reason != 'completed' or not verified):
         pytest.fail('正常预算对照未完成预定核验；记录实际路径', pytrace=False)
+
+@pytest.mark.anyio
+async def test_real_budget_records_proposal_without_executing(vendor):
+    """Args:
+        vendor：独立契约配置，不在普通回归调用。
+    """
+    from app.agent.domain import ToolCallsNotDispatched
+    called = []
+    @tool
+    async def budget_probe(value: str) -> str:
+        """受控操作，预算禁止派发时不能进入。
+
+        Args:
+            value：无实际价值的占位参数。
+        """
+        called.append(True)
+        return 'executed-placeholder'
+    try:
+        model = vendor.build_model(params={'max_tokens': 256})
+        events = [event async for event in loop.run_agent(model=model, tools=[budget_probe],
+            prompt='请调用 budget_probe，参数 value 为 probe-placeholder；不要直接文字回复。', recursion_limit=2)]
+        records = [event for event in events if isinstance(event, ToolCallsNotDispatched)]
+        passed = not called and len(records) == 1 and len(records[0].calls) >= 1 and isinstance(events[-1], MessageDone) and events[-1].stop_reason == 'graph_budget'
+        calls = [event for event in events if isinstance(event, ProviderCallCompleted)]
+        passed = passed and len(calls) == 1
+        print(json.dumps({'vendor': vendor.id, 'model': vendor.model_name, 'passed': passed, 'executed': bool(called),
+            'provider_calls': len(calls), 'output_tokens': calls[0].output_tokens if calls else None}))
+    except Exception:
+        pytest.fail('真实预算未派发验证失败；不输出原始异常或响应', pytrace=False)
+    assert passed

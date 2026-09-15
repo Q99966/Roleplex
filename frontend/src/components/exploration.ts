@@ -29,11 +29,11 @@ export function groupMessageParts(message: Message): PartGroup[] {
  * @param parts 本组只读调用的安全元数据，不读取任何私有参数。
  */
 export function explorationSummary(parts: Part[]): string {
-  const labels: Record<string, string> = { partial: '未完整覆盖', running: '执行中', failed: '失败', rejected: '已拒绝',
+  const labels: Record<string, string> = { not_executed: '未执行', partial: '未完整覆盖', running: '执行中', failed: '失败', rejected: '已拒绝',
     cancelled: '已取消', interrupted: '已中断', unknown: '状态未知' }
-  const reads = parts.filter((part) => part.tool_name === 'workspace_read').length
-  const lists = parts.filter((part) => part.tool_name === 'workspace_list').length
-  const searches = parts.filter((part) => part.tool_name === 'workspace_search').length
+  const reads = parts.filter((part) => part.tool_name === 'workspace_read' && part.status !== 'not_executed').length
+  const lists = parts.filter((part) => part.tool_name === 'workspace_list' && part.status !== 'not_executed').length
+  const searches = parts.filter((part) => part.tool_name === 'workspace_search' && part.status !== 'not_executed').length
   const operations = [reads && `读取 ${reads} 次`, lists && `列目录 ${lists} 次`, searches && `搜索 ${searches} 次`].filter(Boolean)
   const states = parts.map((part) => part.tool_name === 'workspace_search' && part.truncated ? 'partial' : part.error_code === 'EXECUTION_INTERRUPTED' ? 'interrupted'
     : part.status === 'success' ? 'success' : part.status && labels[part.status] ? part.status : 'unknown')

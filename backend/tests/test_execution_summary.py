@@ -200,3 +200,118 @@ def test_directory_side_effect_is_not_reported_as_no_effect():
         {'format': 'write-batch-v1', 'batch': {'items': [{'applied': False, 'created_parent_count': 2}]}},
     ]:
         assert tool_evidence('workspace_write', 'failed', value) == {'effect_state': 'unknown', 'confirmed_applied_items': 0}
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('failure', ['known', 'unknown'])
+async def test_partial_commit_and_budget_undispatched_are_distinct(command_root, isolated_command_database, monkeypatch, failure):
+    """Args:
+        command_root：本轮隔离目录。
+        isolated_command_database：逐轮迁移数据库。
+        monkeypatch：固定低图预算并在第二文件注入可分类失败。
+        failure：已知未提交或无法确认的执行异常。
+    """
+    from app.services import chat
+    from app.workspaces.files import WorkspaceFileService, WorkspaceFileError
+    from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
+    original_loop, original_write = chat.run_agent, WorkspaceFileService.write
+    model = ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': 'partial', 'args': {'items': [
+        {'path': 'first.txt', 'content': 'confirmed'}, {'path': 'second.txt', 'content': 'uncertain'}]}}]),
+        ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'blocked-{i}', 'args': {'path': f'blocked-{i}.txt', 'content': 'must-not-write'}} for i in range(2)])], delay=0)
+    monkeypatch.setattr(chat, 'fake_reply_model', lambda prompt: model)
+    async def limited(**kwargs):
+        """Args:
+            kwargs：原循环输入，只有本测试图预算为四步。
+        """
+        async for event in original_loop(**{**kwargs, 'recursion_limit': 4}):
+            yield event
+    async def write(service, path, content, **kwargs):
+        """Args:
+            service：真实文件服务。
+            path：受控目标。
+            content：测试正文。
+            kwargs：原版本和凭据回调。
+        """
+        if path == 'second.txt':
+            if failure == 'known': raise WorkspaceFileError('WORKSPACE_FILE_REVISION_CONFLICT')
+            raise RuntimeError('controlled failure')
+        return await original_write(service, path, content, **kwargs)
+    monkeypatch.setattr(chat, 'run_agent', limited)
+    monkeypatch.setattr(WorkspaceFileService, 'write', write)
+    async with command_conversation(command_root) as (client, headers, cid, rid, wid):
+        from test_write_diff import enable_write
+        await enable_write(client, headers, rid, wid)
+        sent = await send_command(client, headers, cid, '受控部分提交与预算停止')
+        reply = await wait_reply(client, headers, cid, sent['message']['id'])
+        assert reply['stop_reason'] == 'graph_budget' and model.index == 2
+        calls = [part for part in reply['parts_json'] if part['type'] == 'tool_call']
+        assert len(calls) == 3 and calls[0]['confirmed_applied_items'] == 1
+        assert (command_root / 'first.txt').read_text() == 'confirmed'
+        for name in ['second.txt', 'blocked-0.txt', 'blocked-1.txt']:
+            assert not (command_root / name).exists()
+        details = [(await client.get(f"/api/conversations/{cid}/messages/{reply['id']}/tools/{part['call_id']}", headers=headers)).json() for part in calls]
+        assert details[0]['write_batch']['items'][1]['applied'] is (False if failure == 'known' else None)
+        for part, detail in zip(calls[1:], details[1:]):
+            assert part['status'] == 'not_executed' and part['not_executed_reason'] == 'graph_budget'
+            assert part['effect_state'] == 'not_applied' and part['confirmed_applied_items'] == 0
+            assert 'duration_ms' not in part
+            assert detail['not_dispatched'] == {'reason': 'graph_budget'} and detail['output'] is None
+        assert 'must-not-write' not in json.dumps(reply) and 'blocked-0.txt' not in json.dumps(reply)
+        again = (await client.get(f'/api/conversations/{cid}/messages', headers=headers)).json()['items']
+        assert next(item for item in again if item['id'] == reply['id']) == reply
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('cancel_mode', ['owner', 'api'])
+async def test_cancel_during_undispatched_record_keeps_whole_response(command_root, isolated_command_database, monkeypatch, cancel_mode):
+    """Args:
+        command_root：隔离工作区。
+        isolated_command_database：本轮新数据库。
+        monkeypatch：用屏障控制未派发事实记录中的取消。
+        cancel_mode：直接重复取消所有者，或通过实际停止接口取消。
+    """
+    import asyncio
+    from app.services import chat
+    from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
+    original_loop, original_record = chat.run_agent, chat._record_tool_call
+    entered, release = asyncio.Event(), asyncio.Event()
+    owners = []
+    model = ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'c{i}', 'args': {'path': f'never-{i}.txt', 'content': 'never'}} for i in range(2)])], delay=0)
+    monkeypatch.setattr(chat, 'fake_reply_model', lambda prompt: model)
+    async def limited(**kwargs):
+        """Args:
+            kwargs：原循环参数。
+        """
+        owners.append(asyncio.current_task())
+        async for event in original_loop(**{**kwargs, 'recursion_limit': 2}): yield event
+    async def record(event, **kwargs):
+        """Args:
+            event：宿主未派发记录。
+            kwargs：原所有者关联字段。
+        """
+        if event.status == 'not_executed' and not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await original_record(event, **kwargs)
+    monkeypatch.setattr(chat, 'run_agent', limited)
+    monkeypatch.setattr(chat, '_record_tool_call', record)
+    async with command_conversation(command_root) as (client, headers, cid, rid, wid):
+        from test_write_diff import enable_write
+        await enable_write(client, headers, rid, wid)
+        sent = await send_command(client, headers, cid, '取消未派发记录')
+        await asyncio.wait_for(entered.wait(), 3)
+        # 直接向真实生成所有者发送两次取消，屏障保证信号发生在记录交接中。
+        try:
+            if cancel_mode == 'owner':
+                owners[0].cancel()
+                await asyncio.sleep(0)
+                owners[0].cancel()
+            else:
+                async with asyncio.timeout(3):
+                    assert (await client.post(f'/api/conversations/{cid}/stop', headers=headers)).status_code == 202
+        finally:
+            release.set()
+        reply = await wait_reply(client, headers, cid, sent['message']['id'])
+        calls = [part for part in reply['parts_json'] if part['type'] == 'tool_call']
+        assert len(calls) == 2 and all(part['status'] == 'not_executed' for part in calls)
+        assert reply['stop_reason'] == 'user_cancelled' and model.index == 1
+        assert not list(command_root.glob('never-*.txt'))

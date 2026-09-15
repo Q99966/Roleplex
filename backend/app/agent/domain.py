@@ -50,6 +50,22 @@ class ToolCallFinished:
 
 
 @dataclass(frozen=True)
+class UndispatchedTool:
+    """宿主确认未进入执行层的提议，参数只供 Owner 加密详情。"""
+    call_id: str
+    tool_name: str
+    args_summary: str
+    private_input: dict[str, Any] | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
+class ToolCallsNotDispatched:
+    """同一次模型响应的未派发事实，整体交接避免取消切断一组记录。"""
+    calls: tuple[UndispatchedTool, ...]
+    reason: str = 'graph_budget'
+
+
+@dataclass(frozen=True)
 class MessageDone:
     """本轮生成收口；停止原因独立于已确认工具事实。"""
 
@@ -92,4 +108,4 @@ class ProviderError:
 
 
 # 业务层按此联合类型消费事件；新增事件类型时必须同步更新内部协议文档。
-AgentEvent = TextDelta | ToolCallStarted | ToolCallFinished | ProviderCallStarted | ProviderCallCompleted | MessageDone | ProviderError
+AgentEvent = ToolCallsNotDispatched | TextDelta | ToolCallStarted | ToolCallFinished | ProviderCallStarted | ProviderCallCompleted | MessageDone | ProviderError

@@ -296,6 +296,7 @@ provider.built               provider.call_started
 provider.call_completed      provider.call_failed
 tool.call_started            tool.call_completed
 tool.call_failed
+tool.call_not_dispatched
 tool.scan_completed
 tool.write_wait_completed
 tool.approval_requested      tool.approval_resolved
@@ -943,3 +944,5 @@ find logs/tests/e2e/real/2026-08-25 -name summary.json -print
 - 审计：先写计划并 flush，后删除，再写结果；归档验证失败时原始目录必须保留。
 
 tool.write_wait_completed 记录写入准入结束的固定 status、queue_wait_ms、lock_wait_ms 和等待失败 phase/reason（工作区协议定义），沿用原 tool_call_id/Trace。只在真实工具调用上下文记录，不记录参数、路径、源码或逐轮轮询。
+
+tool.call_not_dispatched 只记录宿主确认未派发的工具名、调用身份、status=not_executed、reason=graph_budget；不伪造 tool.call_started/completed，不记录参数或模型原文。

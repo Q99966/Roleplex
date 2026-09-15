@@ -188,3 +188,11 @@ T2 搜索命中兼容增加 matched_queries（零基词索引，旧记录默认�
 不新增路径日志、每轮总结、表或数据库迁移。新字段沿用加密详情、保留期限与 Owner/Guest 隔离。
 
 写入等待失败兼容新增 wait_diagnostic（单项 Owner 详情根或批量结果根），phase/reason 的取值只以[工作区等待契约](../rest/workspaces.md#原生修改的有界等待)为准。旧记录缺省/null；展示固定中文原因，不据等待失败掩盖前项提交。
+
+
+### 图预算下未派发的调用
+
+工具 part 兼容新增 status=not_executed、not_executed_reason=graph_budget。该记录来自宿主确认的未派发提议，
+没有工具开始事件、不计执行耗时；effect_state=not_applied、confirmed_applied_items=0。
+Owner 详情沿用原接口与加密输入，not_dispatched.reason=graph_budget 表示无执行结果；详情时间仅是记录时间，不展示为执行开始/结束。
+旧客户端对未知状态降级；Guest 只见安全状态与工具名。新状态不增加权限，不把未派发输入当作已经批准的操作。

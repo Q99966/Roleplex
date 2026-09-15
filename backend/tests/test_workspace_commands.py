@@ -321,7 +321,11 @@ def command_root(tmp_path_factory):
                   and path.is_dir() and not path.is_symlink())
     for stale in runs[:-5]:
         if stale != run_root:
-            shutil.rmtree(stale)
+            try:
+                shutil.rmtree(stale)
+            except FileNotFoundError:
+                # 其他测试进程可能已清理同一旧轮次；只接受已不存在，不掩盖权限或 IO 错误。
+                pass
     return Path(tempfile.mkdtemp(prefix='case-', dir=run_root))
 
 

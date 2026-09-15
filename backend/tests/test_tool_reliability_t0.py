@@ -315,3 +315,22 @@ async def test_small_files_large_allowance_reaches_real_reads(command_root, isol
         assert response.status_code == 200
         assert [node['result']['text'] for node in response.json()['read_batch']['items']] == ['tiny', 'tiny']
         assert len(reads) == 2
+
+@pytest.mark.anyio
+async def test_graph_limit_does_not_mask_already_broken_pairing(monkeypatch):
+    """Args:
+        monkeypatch：同时制造重复提议 ID 和图预算异常。
+    """
+    from langgraph.errors import GraphRecursionError
+    async def stream(*args, **kwargs):
+        """Args:
+            args：框架调用参数。
+            kwargs：框架配置。
+        """
+        yield {'event': 'on_chat_model_end', 'run_id': 'model-run', 'data': {'output': AIMessage(content='', tool_calls=[
+            {'name': 'probe_action', 'args': {}, 'id': 'duplicate'}, {'name': 'probe_action', 'args': {}, 'id': 'duplicate'}])}}
+        raise GraphRecursionError('controlled budget')
+    monkeypatch.setattr(loop, 'create_react_agent', lambda *args, **kwargs: SimpleNamespace(astream_events=stream))
+    events = [event async for event in loop.run_agent(model=probe_model(), tools=[], prompt='probe')]
+    assert isinstance(events[-1], ProviderError) and events[-1].stop_reason == 'protocol_error'
+    assert not any(type(event).__name__ == 'ToolCallsNotDispatched' for event in events)

@@ -99,6 +99,7 @@ export type BatchMutationDetails = {
     diagnostic?: WriteDiagnostic | null }>
 }
 export type ToolDetails = {
+  not_dispatched?: { reason: 'graph_budget' } | null
   wait_diagnostic?: WriteWait | null
   availability: 'available' | 'not_recorded' | 'expired' | 'unavailable'
   tool_name?: string; status?: string; started_at?: string; ended_at?: string | null; expires_at?: string

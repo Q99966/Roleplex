@@ -49,7 +49,7 @@ docs/protocol/
 | 其他列表分页与兼容性 | 预留/总则；消息窗口见消息领域 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 | Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
-| 执行事实与可信收尾 | 内部/已实现（T1，已人工验收） | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
+| 执行事实与可信收尾 | T1 已验收；预算未派发记录已人工验收 | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
 | 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |
 
 ## 认证

@@ -152,6 +152,12 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """
     if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:
         return SearchReadModel(delay=delay, stale='[SEARCH_STALE_FAKE]' in prompt)
+    if '[BUDGET_PROPOSALS_FAKE]' in prompt:
+        # 默认预算的前七轮只创建不同的小文件；第八轮的两项只能记录为未派发。
+        return ScriptedChatModel(turns=[*[ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'budget-{index}',
+            'args': {'path': f'created-{index}.txt', 'content': 'confirmed'}}]) for index in range(7)],
+            ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'id': f'blocked-{index}',
+                'args': {'path': f'not-created-{index}.txt', 'content': 'must-not-write'}} for index in range(2)])], delay=delay)
     if '[EXECUTION_FACTS_FAKE]' in prompt:
         # 默认图预算内先真实写入，再持续只读以确定性触顶；不修改生产预算。
         return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{

@@ -432,7 +432,7 @@ shell-v1 结构的有界 stdout/stderr 与实测执行元数据。仅增加密�
 | `execution_id` / `workspace_binding_id` | W1a 起关联实际 execution 与可选 workspace；解除登记后 workspace 可置空 |
 | `tool_name` | 工具名 |
 | `args_summary` | 参数摘要，**不得写入凭据或敏感参数原文** |
-| `status` | 执行结果状态：`ok`（正常返回）、`rejected`（危险级别被执行层拒绝）、`error`（工具自身失败）、`cancelled`（W1b 命令因停止而取消，正常终态） |
+| `status` | 执行或未派发状态：`not_executed`（预算阻止派发，不表示调用过工具）；`ok`（正常返回）、`rejected`（危险级别被执行层拒绝）、`error`（工具自身失败）、`cancelled`（W1b 命令因停止而取消，正常终态） |
 | `duration_ms` | 耗时 |
 | `created_at` | 记录时间 |
 

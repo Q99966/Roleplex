@@ -370,3 +370,19 @@ def test_framework_event_names_stay_inside_the_loop_module():
         if any(token in text for token in _FRAMEWORK_EVENT_TOKENS):
             offenders.append(str(path.relative_to(app_dir)))
     assert offenders == [], f"这些业务模块直接引用了框架事件名：{offenders}"
+
+@pytest.mark.anyio
+async def test_budget_blocked_proposals_are_recorded_without_tool_start():
+    """最后一轮多个提议保留未派发事实，不能伪造工具开始或调用结果。"""
+    from app.agent.domain import ToolCallsNotDispatched, ToolCallStarted, ToolCallFinished
+    from app.agent.loop import run_agent as current_run_agent
+    model = ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[
+        {'name': 'read_artifact', 'args': {'artifact_id': 7}, 'id': 'blocked-a'},
+        {'name': 'read_artifact', 'args': {'artifact_id': 8}, 'id': 'blocked-b'},
+    ])], delay=0)
+    events = [event async for event in current_run_agent(model=model, tools=guard_tools([read_artifact], allow_dangerous=True), prompt='受控预算', recursion_limit=2)]
+    skipped = [event for event in events if isinstance(event, ToolCallsNotDispatched)]
+    assert len(skipped) == 1 and len(skipped[0].calls) == 2
+    assert len({call.call_id for call in skipped[0].calls}) == 2
+    assert not any(isinstance(event, (ToolCallStarted, ToolCallFinished)) for event in events)
+    assert events[-1].stop_reason == 'graph_budget' and model.index == 1

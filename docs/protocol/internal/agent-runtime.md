@@ -241,3 +241,5 @@ Windows 实测结论（mcp 1.2.1）：
 - W1a 路径、文件与工具：`app/workspaces/`
 
 原生修改的独立准入与审批等待分离已实现并通过人工验收；等待阶段/原因见[工作区契约](../public/rest/workspaces.md#原生修改的有界等待)，进程内等待不增加模型请求，不改变 Agent 图预算。
+
+小阶段 5 增加 ToolCallsNotDispatched 领域事件：同响应未派发提议整体交接，不伪造工具开始；状态、私有输入与取消边界见[执行事实](execution-facts.md#小阶段-5图预算阻止派发的提议)。

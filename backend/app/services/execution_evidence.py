@@ -16,6 +16,8 @@ def tool_evidence(name: str, status: str, private_output: dict | None) -> dict:
         status：执行层公开状态。
         private_output：有界原生凭据，只提取布尔值和数量，不回传原文。
     """
+    if isinstance(private_output, dict) and private_output.get('format') == 'not-dispatched-v1' and private_output.get('reason') == 'graph_budget':
+        return {'effect_state': 'not_applied', 'confirmed_applied_items': 0}
     effect, count = 'unknown', 0
     if name in READ_ONLY:
         effect = 'not_applicable'

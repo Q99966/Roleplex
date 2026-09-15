@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Callable
 
@@ -17,7 +18,7 @@ from langchain_core.tools import BaseTool
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
-from .domain import AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from .domain import ToolCallsNotDispatched, UndispatchedTool, AgentEvent, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from .tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX, summarize_tool_args, summarize_tool_output, command_result_summary
 from .tool_capture import capture_input, capture_output
 
@@ -253,6 +254,8 @@ async def run_agent(
     model_completed = False
     budget_blocked = False
     blocked_ids: set[str] = set()
+    blocked_calls: tuple[UndispatchedTool, ...] = ()
+    known_tools = {tool.name for tool in tools}
     direct_tools = {tool.name for tool in tools if tool.return_direct}
 
     try:
@@ -292,6 +295,12 @@ async def run_agent(
                     (remaining_steps < 2 and bool(proposals)) or
                     (remaining_steps < 1 and all(call['name'] in direct_tools for call in proposals)))
                 blocked_ids = set(ids) if budget_blocked else set()
+                blocked_calls = tuple(UndispatchedTool(
+                    call_id=uuid4().hex,
+                    tool_name=call['name'] if call.get('name') in known_tools else 'unknown_tool',
+                    args_summary=summarize_tool_args(call['name'], call.get('args')) if call.get('name') in known_tools else '{}',
+                    private_input=capture_input(call['name'], call.get('args')) if call.get('name') in known_tools else None,
+                ) for call in proposals) if budget_blocked and not protocol_broken else ()
                 stream_usage = provider_stream_usage.pop(run_id, {})
                 normalized_usage = normalize_provider_usage(output) or stream_usage
                 call_usages.append(normalized_usage)
@@ -342,6 +351,11 @@ async def run_agent(
                     private_output=private_output,
                 )
     except GraphRecursionError:
+        if protocol_broken:
+            yield ProviderError(code='AGENT_PROTOCOL_ERROR', message='AGENT_PROTOCOL_ERROR', stop_reason='protocol_error')
+            return
+        if blocked_calls and not started_at and pending_ids == blocked_ids:
+            yield ToolCallsNotDispatched(blocked_calls)
         yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',
                           undispatched_proposals=len(blocked_ids) if budget_blocked and not started_at else None)
         return
@@ -366,6 +380,8 @@ async def run_agent(
         return
 
     if budget_blocked and graph_completed and not protocol_broken and pending_ids == blocked_ids and not started_at:
+        if blocked_calls:
+            yield ToolCallsNotDispatched(blocked_calls)
         yield MessageDone(text=accumulated, usage=_aggregate_usage(call_usages), stop_reason='graph_budget',
                           undispatched_proposals=len(blocked_ids))
     elif protocol_broken or pending_ids or started_at or not graph_completed or not model_completed:

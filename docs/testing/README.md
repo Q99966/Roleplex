@@ -525,3 +525,5 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 侧栏与浅蓝/薄荷主题的最终回归、截图和覆盖边界见[侧栏主题验证](sidebar-theme.md)。
 
 会话右侧概览/成员、扇形选择及窄屏抽屉验证见[会话详情测试](conversation-details.md)。
+
+小阶段 5 的预算未派发记录、部分提交/未知结果、取消竞争与独立真实 Provider 验证见[预算停止事实验证](budget-stop-facts.md)。

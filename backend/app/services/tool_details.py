@@ -132,6 +132,8 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
     try:
         output = _decrypt(row, row.output_encrypted)
         payload = {**result, 'availability': 'available', 'input': _decrypt(row, row.input_encrypted), 'output': output}
+        if output and output.get('format') == 'not-dispatched-v1' and output.get('reason') == 'graph_budget':
+            return {**payload, 'output': None, 'not_dispatched': {'reason': 'graph_budget'}}
         if row.tool_name in {'workspace_read', 'workspace_search'} and output and isinstance(output.get('text'), str):
             from ..agent.tools import FAILED_OUTPUT_PREFIX, REJECTED_OUTPUT_PREFIX
             raw = output['text']

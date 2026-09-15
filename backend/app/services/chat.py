@@ -18,7 +18,7 @@ from ..config.logging import set_log_context
 from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
 from ..context.domain import ContextBuildError, ContextBuildResult
 from ..agent import providers
-from ..agent.domain import MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
+from ..agent.domain import ToolCallsNotDispatched, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
 from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
@@ -686,6 +686,31 @@ async def run_scheduled_generation(
                         "tool_name": event.tool_name, "tool_call_id": event.call_id,
                     },
                 )
+            elif isinstance(event, ToolCallsNotDispatched):
+                async def record_undispatched():
+                    """由原消息所有者完整记录同响应提议，不调用工具或创建审批。"""
+                    for proposal in event.calls:
+                        await _record_tool_call(
+                            ToolCallFinished(proposal.call_id, proposal.tool_name, 'not_executed', 0, '{}'),
+                            args_summary=proposal.args_summary, conversation_id=conversation_id, message_id=assistant_id,
+                            role_id=role_id, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
+                        await _update_tool_part(conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
+                            call_id=proposal.call_id, tool_name=proposal.tool_name, status='not_executed', accumulated_text=accumulated,
+                            execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
+                            command_summary={'not_executed_reason': event.reason}, private_input=proposal.private_input,
+                            private_output={'format': 'not-dispatched-v1', 'reason': event.reason})
+                        logger.info('tool.call_not_dispatched', extra={'tool_call_id': proposal.call_id,
+                            'tool_name': proposal.tool_name, 'status': 'not_executed', 'reason': event.reason})
+                recording = asyncio.create_task(record_undispatched(), context=copy_context())
+                cancelled = False
+                while not recording.done():
+                    try:
+                        await asyncio.shield(recording)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                recording.result()
+                if cancelled:
+                    raise asyncio.CancelledError
             elif isinstance(event, ToolCallFinished):
                 completion = _finish_tool_event(
                     event, args_summary=tool_args.pop(event.call_id, ''), conversation_id=conversation_id,
