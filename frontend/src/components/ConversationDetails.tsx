@@ -1,3 +1,4 @@
+import { RoleUsagePanel } from './RoleUsagePanel'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Bot, Info, UsersRound, LockKeyhole } from 'lucide-react'
 import type { Conversation, Role } from '../api/client'
@@ -225,12 +226,13 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
           {conversation.role_ids.map(id => {
             const role = roles.find(value => value.id === id)
             const summary = role ?? roleDirectory[id]
-            return <div key={id} className="rounded-xl border border-slate-800 bg-panel p-3">
+            return <div key={id} role="group" aria-label={`会话角色：${summary?.name ?? `角色 #${id}`}`} className="rounded-xl border border-slate-800 bg-panel p-3">
               <div className="flex items-center gap-2"><span className="rounded-lg bg-emerald-100 p-2 text-emerald-700"><Bot size={15} /></span>
                 <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold" title={summary?.name}>{summary?.name ?? `角色 #${id}`}{summary?.deleted_at ? '（已删除）' : ''}</p>
                   {user?.is_owner && role && <p className="mt-1 truncate text-[10px] text-slate-500">{role.model_name}</p>}</div>
                 {user?.is_owner && role && <button type="button" aria-label={`编辑角色：${role.name}`} onClick={() => { if (drawer) close(); onEditRole(role) }} className="text-xs text-indigo-600">编辑</button>}
               </div>
+              {user?.is_owner && <RoleUsagePanel conversationId={conversation.id} roleId={id} />}
               {user?.is_owner && role?.description && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">角色描述</summary><p className="mt-2 whitespace-pre-wrap break-words">{role.description}</p></details>}
             </div>
           })}

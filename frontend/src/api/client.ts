@@ -1,3 +1,8 @@
+export type UsageMetric = { total: number | null; known: number | null; missing_calls: number }
+export type UsageSummary = { executions: number; untracked_executions: number; untracked_messages: number; recorded_calls: number; completed_calls: number;
+  missing_call_records: number; metrics: Record<'input_tokens' | 'output_tokens' | 'cache_hit_tokens' | 'cache_write_tokens' | 'cache_miss_tokens' | 'input_cache_hit_ratio' | 'model_duration_ms', UsageMetric> }
+export type RoleExecutionUsage = { latest: { execution_id: string; message_id: number | null; status: string; error_code: string | null; stop_reason: string | null;
+  model_name: string | null; duration_ms: number | null; summary: UsageSummary } | null; cumulative: UsageSummary }
 export type AgentBudgetConfig = { decision_limit: number; effective_limit: number; ceiling: number; revision: number }
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }
 export type RuntimeScope = 'world' | 'workspace' | 'conversation'
@@ -263,6 +268,7 @@ export async function request<T>(path: string, init: RequestInit = {}, format: '
 }
 
 export const api = {
+  roleExecutionUsage: (conversationId: number, roleId: number, signal?: AbortSignal) => request<RoleExecutionUsage>(`/api/conversations/${conversationId}/roles/${roleId}/usage`, { signal, cache: 'no-store' }),
   agentBudget: (signal?: AbortSignal) => request<AgentBudgetConfig>('/api/agent-budget/config', { signal, cache: 'no-store' }),
   setAgentBudget: (decision_limit: number, expected_revision: number) => request<AgentBudgetConfig>('/api/agent-budget/config', { method: 'PUT', body: JSON.stringify({ decision_limit, expected_revision }) }),
   toolDetails: (conversationId: number, messageId: number, callId: string, signal?: AbortSignal) => request<ToolDetails>(

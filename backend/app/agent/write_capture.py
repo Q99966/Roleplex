@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
@@ -95,6 +96,42 @@ class WriteCaptureScope:
     def __init__(self):
         """创建仅由当前 generation 持有的空凭据集合。"""
         self.receipts: dict[str, WriteReceipt | ReadBatchReceipt | BatchMutationReceipt] = {}
+        self.started: dict[str, tuple[object, float]] = {}
+
+    def register_started(self, call_id: str, name: str, arguments: dict) -> None:
+        """在原生工具正文执行前保存安全元数据，供未交付开始事件时核对提交。
+
+        Args:
+            call_id：GuardedTool 的真实宿主身份。
+            name：宿主已绑定工具名，不来自模型参数。
+            arguments：已解析参数，仅通过原白名单采集。
+        """
+        from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
+        from .domain import ToolCallStarted
+        from .tool_capture import capture_input
+        from .tools import summarize_tool_args
+        if name not in WORKSPACE_CAPTURE_TOOLS or call_id in self.started or len(self.started)>=32:
+            return
+        def plain(value):
+            """Args:
+                value：递归转换嵌套 schema，保留原已提供字段。
+            """
+            if hasattr(value,'model_dump'):return value.model_dump(exclude_unset=True)
+            if isinstance(value,list):return [plain(item) for item in value]
+            if isinstance(value,dict):return {key:plain(item) for key,item in value.items()}
+            return value
+        values=plain(arguments)
+        self.started[call_id]=(ToolCallStarted(call_id,name,summarize_tool_args(name,values),capture_input(name,values)),perf_counter())
+
+    def peek(self, call_id: str, output: dict | None = None) -> dict | None:
+        """只导出快照，消息所有者落库确认前不销毁提交凭据。
+
+        Args:
+            call_id：待交付工具身份。
+            output：本次有界模型结果。
+        """
+        receipt=self.receipts.get(call_id)
+        return receipt.export(output) if receipt is not None else output
 
     def begin_mutation_batch(self, call_id: str, operation: str, items: list[dict]) -> BatchMutationReceipt | None:
         """Args:
@@ -141,6 +178,7 @@ class WriteCaptureScope:
             call_id：匹配的原始工具调用。
             output：防腐层观察到的普通工具输出，取消时可以为空。
         """
+        self.started.pop(call_id,None)
         receipt = self.receipts.pop(call_id, None)
         if receipt is None:
             return output
@@ -152,6 +190,7 @@ class WriteCaptureScope:
         for receipt in self.receipts.values():
             receipt.release()
         self.receipts.clear()
+        self.started.clear()
 
 
 write_capture_scope: ContextVar[WriteCaptureScope | None] = ContextVar('roleplex_write_capture_scope', default=None)
@@ -168,11 +207,11 @@ def begin_write_capture(path: str) -> WriteReceipt | None:
 
 
 def take_write_capture(call_id: str, output: dict | None) -> dict | None:
-    """供防腐层提取私有输出，不接收模型传入的采集对象。
+    """供防腐层导出私有快照；所有者落库确认后才消费，不接收模型采集对象。
 
     Args:
         call_id：宿主调用身份。
         output：显式白名单提取的普通结果。
     """
     scope = write_capture_scope.get()
-    return scope.take(call_id, output) if scope else output
+    return scope.peek(call_id, output) if scope else output

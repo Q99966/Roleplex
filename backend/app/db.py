@@ -155,6 +155,8 @@ async def recover_interrupted_messages() -> None:
                 message.meta_json = {**(message.meta_json or {}), 'stop_reason': 'interrupted'}
             message.parts_json = parts
             message.revision += 1
+        from .services.execution_usage import close_pending
+        await close_pending(session)
         await session.commit()
 
 

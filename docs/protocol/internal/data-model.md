@@ -490,3 +490,15 @@ instance_settings 新增 decision_limit（Integer，默认 8）和 budget_revisi
 agent_executions 新增 decision_count（Integer，默认 0），记录该持久执行已消费的决策序号；不记录模型输入。
 workflow_budgets：chain_id（String(64) 主键，复用既有链标识）、conversation_id（外键 conversations，级联删除）、trigger_message_id（唯一外键 messages，级联删除）、decision_limit（Integer 冻结额度）、used_decisions（Integer 默认 0）、configuration_revision（Integer）、created_at（带时区 DateTime）。
 快照与用户消息同事务创建，扣减与 execution 序号同事务提交。迁移不为旧链补授权；不提供自动恢复或跨数据库业务方言。公开配置与并发语义见[预算配置](../public/rest/agent-budget.md)。
+
+
+## 角色模型用量（迁移 0015）
+
+agent_executions 增加 usage_tracked（Boolean）；迁移前记录为 false，新建 ORM 执行为 true，表示本版本具备观测，不保证所有字段均已收到。旧未运行执行若从首次调用开始实际记录可标记为 true，不从日志回填。
+model_call_usage 保存 id（Integer 主键）、execution_id（外键 agent_executions.execution_id，级联删除）、call_index（Integer），二者联合唯一；provider_mode（String16）、model_name（String128）是调用时快照；status 为 started/completed/unconfirmed。
+input_tokens/output_tokens/cache_hit_tokens/cache_write_tokens/duration_ms 为可空 BigInteger，空表示未知；recorded_at 为 DateTime(timezone=True) 记录时间。只保存厂商归一化统计与本地实测耗时，不保存源码、参数、回答或 Key。
+开始与完成更新同一事实，不重复累计；结束/重启将未完成观测标为 unconfirmed，不清除已完成用量。API 与完整/部分累计口径见[执行用量](../public/rest/execution-usage.md)。
+
+迁移 0015 同时增加 agent_executions(conversation_id,role_id,id) 索引，支撑角色最近执行与累计查询；不新增角色全局统计入口。
+
+迁移 0016 增加 generations(assistant_message_id) 索引，用于核对旧角色回复是否缺少 execution 关联；不回填或推算这些旧回复的 Token。

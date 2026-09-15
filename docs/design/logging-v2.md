@@ -957,3 +957,5 @@ T4.2 沿用 generation.budget_stopped，reason 兼容新增 decision_budget；pr
 工具参数拒绝沿用 tool.call_not_dispatched，reason 增加 arguments_invalid/tool_unavailable，error_code 使用已登记的 TOOL_ARGUMENT_INVALID/TOOL_ARGUMENT_JSON_INVALID/TOOL_NOT_AVAILABLE；字段路径仅供 Owner 加密详情，不进入正式日志，拒绝不伪装为 generation.failed。
 
 执行异常的 generation.failed 可增加 error_phase（provider_request/tool_execution/event_processing/runtime）与 error_type（固定允许的异常类标签，未知为 OtherError）；不保存异常正文。具体协议配对故障优先使用各自 AGENT_TOOL_* / AGENT_EVENT_STREAM_INCOMPLETE 错误码。
+
+用量观测增加 usage.record_failed 事件，仅含既有 generation_id/execution_id、可选 call_index 和固定 error_type；不记录 usage 原始载荷或异常正文。页面用量来自业务记录，不从日志反推；采集失败不终止任务。

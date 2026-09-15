@@ -11,6 +11,7 @@ import logging
 import json
 from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence, Awaitable
+from contextlib import aclosing
 from typing import Any, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -419,105 +420,106 @@ async def run_agent(
     known_tools = {tool.name for tool in tools}
 
     try:
-        async for event in agent.astream_events(
+        async with aclosing(agent.astream_events(
             {"messages": messages}, version="v2", config={"recursion_limit": graph_limit}
-        ):
-            kind = event["event"]
-            run_id = str(event.get("run_id"))
-            if kind == 'on_chain_end' and not event.get('parent_ids'):
-                graph_completed = True
-            if kind == _EVENT_MODEL_START:
-                next_provider_call_index += 1
-                provider_call_index[run_id] = next_provider_call_index
-                provider_started_at[run_id] = clock()
-                yield ProviderCallStarted(call_index=next_provider_call_index)
-            elif kind == _EVENT_MODEL_STREAM:
-                chunk = event["data"].get("chunk")
-                if run_id in provider_started_at and run_id not in provider_ttft_ms:
-                    provider_ttft_ms[run_id] = int((clock() - provider_started_at[run_id]) * 1000)
-                chunk_usage = normalize_provider_usage(chunk)
-                if chunk_usage:
-                    provider_stream_usage[run_id] = chunk_usage
-                text = _chunk_text(chunk)
-                if text:
-                    accumulated += text
-                    yield TextDelta(text=text)
-            elif kind == _EVENT_MODEL_END:
-                output = _normalize_tool_response(event["data"].get("output"))
-                model_completed = True
-                response_error = _response_error(output)
-                proposals = getattr(output, 'tool_calls', None) or []
-                last_response_has_tools = bool(proposals)
-                ids = [call.get('id') for call in proposals]
-                if pending_ids or any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
-                    protocol_broken = True
-                pending_ids.update(value for value in ids if isinstance(value, str))
-                # 与锁定版本派发条件一致，不能通过兜底文本或 pending 数量猜测触顶。
-                budget_blocked = remaining_steps is not None and bool(proposals) and remaining_steps < 2
-                blocked_ids = set(ids) if budget_blocked else set()
-                blocked_calls = tuple(UndispatchedTool(
-                    call_id=uuid4().hex,
-                    tool_name=call['name'] if call.get('name') in known_tools else 'unknown_tool',
-                    args_summary=summarize_tool_args(call['name'], call.get('args')) if call.get('name') in known_tools else '{}',
-                    private_input=capture_input(call['name'], call.get('args')) if call.get('name') in known_tools else None,
-                ) for call in proposals) if budget_blocked and not protocol_broken else ()
-                stream_usage = provider_stream_usage.pop(run_id, {})
-                normalized_usage = normalize_provider_usage(output) or stream_usage
-                call_usages.append(normalized_usage)
-                started = provider_started_at.pop(run_id, None)
-                duration_ms = int((clock() - started) * 1000) if started is not None else 0
-                yield ProviderCallCompleted(
-                    call_index=provider_call_index.pop(run_id, len(call_usages)),
-                    ttft_ms=provider_ttft_ms.pop(run_id, None),
-                    duration_ms=duration_ms,
-                    input_tokens=normalized_usage.get("input_tokens"),
-                    output_tokens=normalized_usage.get("output_tokens"),
-                    total_tokens=normalized_usage.get("total_tokens"),
-                    cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
-                    cache_write_tokens=normalized_usage.get("cache_write_tokens"),
-                    cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
-                    total_tokens_derived=normalized_usage.get("total_tokens_derived"),
-                )
-            elif kind == 'on_custom_event' and event.get('name') == 'roleplex_tool_not_dispatched':
-                rejected = event['data']
-                if rejected['provider_id'] not in pending_ids:
-                    protocol_broken = True
-                else:
-                    pending_ids.remove(rejected['provider_id'])
-                yield ToolCallsNotDispatched((UndispatchedTool(call_id=uuid4().hex, tool_name=rejected['tool_name'],
-                    args_summary='{}', private_input={'text':'{}','bytes':2,'truncated':False}, argument_error=rejected['argument_error']),), reason=rejected['reason'])
-            elif kind == _EVENT_TOOL_START:
-                call_id = str(event.get("run_id"))
-                started_at[call_id] = clock()
-                yield ToolCallStarted(
-                    call_id=call_id,
-                    tool_name=event.get("name", ""),
-                    args_summary=summarize_tool_args(event.get("name", ""), event["data"].get("input")),
-                    private_input=capture_input(event.get('name', ''), event['data'].get('input')),
-                )
-            elif kind == _EVENT_TOOL_END:
-                call_id = str(event.get("run_id"))
-                output = event["data"].get("output")
-                provider_id = getattr(output, 'tool_call_id', None)
-                if provider_id not in pending_ids:
-                    protocol_broken = True
-                else:
-                    pending_ids.remove(provider_id)
-                tool_started = started_at.pop(call_id, None)
-                from .write_capture import take_write_capture
-                private_output = capture_output(event.get('name', ''), output)
-                from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
-                if event.get('name') in WORKSPACE_CAPTURE_TOOLS:
-                    private_output = take_write_capture(call_id, private_output)
-                yield ToolCallFinished(
-                    call_id=call_id,
-                    tool_name=event.get("name", ""),
-                    status=_tool_status(output),
-                    duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
-                    output_summary=summarize_tool_output(getattr(output, "content", output)),
-                    command_summary=command_result_summary(event.get('name', ''), output),
-                    private_output=private_output,
-                )
+        )) as graph_events:
+            async for event in graph_events:
+                kind = event["event"]
+                run_id = str(event.get("run_id"))
+                if kind == 'on_chain_end' and not event.get('parent_ids'):
+                    graph_completed = True
+                if kind == _EVENT_MODEL_START:
+                    next_provider_call_index += 1
+                    provider_call_index[run_id] = next_provider_call_index
+                    provider_started_at[run_id] = clock()
+                    yield ProviderCallStarted(call_index=next_provider_call_index)
+                elif kind == _EVENT_MODEL_STREAM:
+                    chunk = event["data"].get("chunk")
+                    if run_id in provider_started_at and run_id not in provider_ttft_ms:
+                        provider_ttft_ms[run_id] = int((clock() - provider_started_at[run_id]) * 1000)
+                    chunk_usage = normalize_provider_usage(chunk)
+                    if chunk_usage:
+                        provider_stream_usage[run_id] = chunk_usage
+                    text = _chunk_text(chunk)
+                    if text:
+                        accumulated += text
+                        yield TextDelta(text=text)
+                elif kind == _EVENT_MODEL_END:
+                    output = _normalize_tool_response(event["data"].get("output"))
+                    model_completed = True
+                    response_error = _response_error(output)
+                    proposals = getattr(output, 'tool_calls', None) or []
+                    last_response_has_tools = bool(proposals)
+                    ids = [call.get('id') for call in proposals]
+                    if pending_ids or any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
+                        protocol_broken = True
+                    pending_ids.update(value for value in ids if isinstance(value, str))
+                    # 与锁定版本派发条件一致，不能通过兜底文本或 pending 数量猜测触顶。
+                    budget_blocked = remaining_steps is not None and bool(proposals) and remaining_steps < 2
+                    blocked_ids = set(ids) if budget_blocked else set()
+                    blocked_calls = tuple(UndispatchedTool(
+                        call_id=uuid4().hex,
+                        tool_name=call['name'] if call.get('name') in known_tools else 'unknown_tool',
+                        args_summary=summarize_tool_args(call['name'], call.get('args')) if call.get('name') in known_tools else '{}',
+                        private_input=capture_input(call['name'], call.get('args')) if call.get('name') in known_tools else None,
+                    ) for call in proposals) if budget_blocked and not protocol_broken else ()
+                    stream_usage = provider_stream_usage.pop(run_id, {})
+                    normalized_usage = normalize_provider_usage(output) or stream_usage
+                    call_usages.append(normalized_usage)
+                    started = provider_started_at.pop(run_id, None)
+                    duration_ms = int((clock() - started) * 1000) if started is not None else 0
+                    yield ProviderCallCompleted(
+                        call_index=provider_call_index.pop(run_id, len(call_usages)),
+                        ttft_ms=provider_ttft_ms.pop(run_id, None),
+                        duration_ms=duration_ms,
+                        input_tokens=normalized_usage.get("input_tokens"),
+                        output_tokens=normalized_usage.get("output_tokens"),
+                        total_tokens=normalized_usage.get("total_tokens"),
+                        cache_hit_tokens=normalized_usage.get("cache_hit_tokens"),
+                        cache_write_tokens=normalized_usage.get("cache_write_tokens"),
+                        cache_hit_ratio=normalized_usage.get("cache_hit_ratio"),
+                        total_tokens_derived=normalized_usage.get("total_tokens_derived"),
+                    )
+                elif kind == 'on_custom_event' and event.get('name') == 'roleplex_tool_not_dispatched':
+                    rejected = event['data']
+                    if rejected['provider_id'] not in pending_ids:
+                        protocol_broken = True
+                    else:
+                        pending_ids.remove(rejected['provider_id'])
+                    yield ToolCallsNotDispatched((UndispatchedTool(call_id=uuid4().hex, tool_name=rejected['tool_name'],
+                        args_summary='{}', private_input={'text':'{}','bytes':2,'truncated':False}, argument_error=rejected['argument_error']),), reason=rejected['reason'])
+                elif kind == _EVENT_TOOL_START:
+                    call_id = str(event.get("run_id"))
+                    started_at[call_id] = clock()
+                    yield ToolCallStarted(
+                        call_id=call_id,
+                        tool_name=event.get("name", ""),
+                        args_summary=summarize_tool_args(event.get("name", ""), event["data"].get("input")),
+                        private_input=capture_input(event.get('name', ''), event['data'].get('input')),
+                    )
+                elif kind == _EVENT_TOOL_END:
+                    call_id = str(event.get("run_id"))
+                    output = event["data"].get("output")
+                    provider_id = getattr(output, 'tool_call_id', None)
+                    if provider_id not in pending_ids:
+                        protocol_broken = True
+                    else:
+                        pending_ids.remove(provider_id)
+                    tool_started = started_at.pop(call_id, None)
+                    from .write_capture import take_write_capture
+                    private_output = capture_output(event.get('name', ''), output)
+                    from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
+                    if event.get('name') in WORKSPACE_CAPTURE_TOOLS:
+                        private_output = take_write_capture(call_id, private_output)
+                    yield ToolCallFinished(
+                        call_id=call_id,
+                        tool_name=event.get("name", ""),
+                        status=_tool_status(output),
+                        duration_ms=int((clock() - tool_started) * 1000) if tool_started is not None else 0,
+                        output_summary=summarize_tool_output(getattr(output, "content", output)),
+                        command_summary=command_result_summary(event.get('name', ''), output),
+                        private_output=private_output,
+                    )
     except _DecisionBudgetReached:
         if response_error or protocol_broken or pending_ids or started_at or provider_call_index:
             code = response_error or ('AGENT_TOOL_RESULT_MISMATCH' if protocol_broken else 'AGENT_TOOL_RESULT_MISSING')

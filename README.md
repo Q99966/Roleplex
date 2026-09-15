@@ -392,3 +392,5 @@ python scripts/check_migrations.py
 `AGENT_DECISION_CEILING` 控制当前 World 新任务的部署决策上限（默认 256，范围 1..256）；降低后不改变已冻结的任务额度。
 
 工具参数错误恢复已修正并获准提交：字段/JSON 错误会保留未执行诊断并允许模型在原预算内修正；真正的协议/执行故障使用具体错误码。见[验证记录](docs/testing/tool-argument-recovery.md)。
+
+右侧角色执行用量观测已实现（待验收），新增时间、Token 和费用限制暂缓；现有决策配置不变。旧执行未采集的用量显示未知，不从日志回填。

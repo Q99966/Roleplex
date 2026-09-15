@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -357,3 +357,29 @@ async def restore_conversation(conversation_id: int, user: Annotated[User, Depen
     await session.commit()
     member = await require_member(session, conversation_id, user.id)
     return await response(session, conversation, member)
+
+
+@router.get('/{conversation_id}/roles/{role_id}/usage')
+async def execution_usage(conversation_id:int,role_id:int,response:Response,
+    user:Annotated[User,Depends(require_owner)],session:Annotated[AsyncSession,Depends(get_session)]):
+    """读取本会话指定角色用量，不暴露其他会话或 Owner 的记录。
+
+    Args:
+        conversation_id：当前会话。
+        role_id：目标角色。
+        response：关闭客户端缓存。
+        user：已认证 Owner。
+        session：只读数据库会话。
+    """
+    from ..models import AgentExecution
+    from ..services.execution_usage import role_usage
+    await require_member(session,conversation_id,user.id)
+    role=(await session.execute(select(Role.created_by,Role.deleted_at).where(Role.id==role_id))).first()
+    if role is None or role.created_by!=user.id or role.deleted_at is not None:
+        raise HTTPException(404,'ROLE_NOT_FOUND')
+    membership=await session.scalar(select(ConversationMember.id).where(ConversationMember.conversation_id==conversation_id,
+        ConversationMember.member_type=='role',ConversationMember.member_id==role_id))
+    history=await session.scalar(select(AgentExecution.id).where(AgentExecution.conversation_id==conversation_id,AgentExecution.role_id==role_id).limit(1))
+    if membership is None and history is None:raise HTTPException(404,'ROLE_NOT_FOUND')
+    response.headers['Cache-Control']='no-store'
+    return await role_usage(session,conversation_id,role_id)

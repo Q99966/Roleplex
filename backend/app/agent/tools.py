@@ -91,6 +91,10 @@ class GuardedTool(BaseTool):
         """
         if self.danger == DANGER_DANGEROUS and not self.allow_dangerous:
             return self._reject()
+        from .write_capture import write_capture_scope
+        scope=write_capture_scope.get()
+        if scope is not None and run_manager is not None:
+            scope.register_started(str(run_manager.run_id),self.name,kwargs)
         binding = tool_call_id.set(str(run_manager.run_id) if run_manager else None)
         try:
             return await self.inner.arun(kwargs or (args[0] if args else {}))

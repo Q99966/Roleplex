@@ -545,3 +545,5 @@ T4.3a 真实 World 群聊预算补验收：`npm run test:e2e:real-world -- workf
 工具参数错误恢复的离线、浏览器与标准真实 World 验证见[参数恢复记录](tool-argument-recovery.md)，真实入口为 `npm run test:e2e:real-world -- argument-recovery-provider.spec.ts`。
 
 工作区工具说明、字段帮助、示例与实际导出 schema 对齐验证见[工具说明整理](workspace-tool-guidance.md)，真实 World 入口为 `npm run test:e2e:real-world -- tool-guidance-provider.spec.ts`。
+
+右侧角色执行用量、历史缺口与取消交接验证见[角色用量记录](role-execution-usage.md)。真实 World 命令：`npm run test:e2e:real-world -- role-usage-provider.spec.ts`。

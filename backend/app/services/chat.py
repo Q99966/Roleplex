@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import aclosing
+
 import asyncio
 import json
 import logging
@@ -497,6 +499,10 @@ async def run_scheduled_generation(
         Args:
             pending_status：取消或中断状态，与提交状态独立。
         """
+        # 工具可能先于事件消费者完成；取消时也要消费尚未交付的实际提交凭据。
+        for call_id in list(write_captures.receipts):
+            if call_id not in command_calls and call_id in write_captures.started:
+                command_calls[call_id]=write_captures.started[call_id]
         for call_id, (started_event, started_at) in list(command_calls.items()):
             duration_ms = int((perf_counter() - started_at) * 1000)
             await _record_tool_call(
@@ -512,6 +518,7 @@ async def run_scheduled_generation(
                     {'command_status': 'cancelled', 'exit_code': None} if started_event.tool_name in {'workspace_run_command', 'workspace_run_shell'} else {}),
                 accumulated_text=accumulated,
                 execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
+                private_input=started_event.private_input,
                 private_output=write_captures.take(call_id) if started_event.tool_name in WORKSPACE_CAPTURE_TOOLS else None,
             )
             logger.info('tool.call_completed', extra={
@@ -651,146 +658,161 @@ async def run_scheduled_generation(
             """
             return await consume(execution_id, index)
 
-        async for event in run_agent(
+        # 消费者在事件处理期间取消，也必须先关闭图与工具任务，不能依赖垃圾回收。
+        async with aclosing(run_agent(
             model=model,
             tools=tools,
             prompt=context.current_message,
             system_prompt=context.system_prompt,
             history=context.history,
             decision_limit=decision_limit, before_decision=authorize_decision,
-        ):
-            if not isinstance(event, TextDelta) and pending_text:
-                delta_seq += 1
-                await _persist_text_delta(assistant_id, conversation_id, generation_id, accumulated, pending_text, delta_seq)
-                pending_text = ''
-                last_persist = asyncio.get_running_loop().time()
-            if isinstance(event, TextDelta):
-                accumulated += event.text
-                pending_text += event.text
-                now = asyncio.get_running_loop().time()
-                if now - last_persist >= _PERSIST_INTERVAL_SECONDS:
+        )) as agent_events:
+            async for event in agent_events:
+                usage_cancelled=False
+                if isinstance(event, ProviderCallCompleted):
+                    from .execution_usage import record as record_usage
+                    # 先于其他持久化 await 交接已返回用量；取消不能让已知统计变成缺失。
+                    recording=asyncio.create_task(record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name,completed=True),context=copy_context())
+                    while not recording.done():
+                        try:await asyncio.shield(recording)
+                        except asyncio.CancelledError:usage_cancelled=True
+                    recording.result()
+                if not isinstance(event, TextDelta) and pending_text and not usage_cancelled:
                     delta_seq += 1
                     await _persist_text_delta(assistant_id, conversation_id, generation_id, accumulated, pending_text, delta_seq)
                     pending_text = ''
-                    last_persist = now
-            elif isinstance(event, ToolCallStarted):
-                tool_args[event.call_id] = event.args_summary
-                command_calls[event.call_id] = (event, perf_counter())
-                command_summary = {}
-                if event.tool_name == 'workspace_run_command':
-                    command_summary = json.loads(event.args_summary)
-                await _update_tool_part(
-                    conversation_id=conversation_id,
-                    message_id=assistant_id,
-                    generation_id=generation_id,
-                    call_id=event.call_id,
-                    tool_name=event.tool_name,
-                    status="running",
-                    command_summary=command_summary,
-                    accumulated_text=accumulated, execution_id=execution_id,
-                    triggered_by_user_id=triggered_by_user_id, private_input=event.private_input,
-                )
-                logger.info(
-                    "tool.call_started",
-                    extra={
-                        "conversation_id": conversation_id, "generation_id": generation_id,
-                        "tool_name": event.tool_name, "tool_call_id": event.call_id,
-                    },
-                )
-            elif isinstance(event, ToolCallsNotDispatched):
-                async def record_undispatched():
-                    """由原消息所有者完整记录同响应提议，不调用工具或创建审批。"""
-                    for proposal in event.calls:
-                        await _record_tool_call(
-                            ToolCallFinished(proposal.call_id, proposal.tool_name, 'not_executed', 0, '{}'),
-                            args_summary=proposal.args_summary, conversation_id=conversation_id, message_id=assistant_id,
-                            role_id=role_id, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
-                        await _update_tool_part(conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
-                            call_id=proposal.call_id, tool_name=proposal.tool_name, status='not_executed', accumulated_text=accumulated,
-                            execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
-                            command_summary={'not_executed_reason': event.reason, **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})}, private_input=proposal.private_input,
-                            private_output={'format': 'not-dispatched-v1', 'reason': event.reason, **({'argument_error':proposal.argument_error} if proposal.argument_error else {})})
-                        logger.info('tool.call_not_dispatched', extra={'tool_call_id': proposal.call_id,
-                            'tool_name': proposal.tool_name, 'status': 'not_executed', 'reason': event.reason,
-                            **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})})
-                recording = asyncio.create_task(record_undispatched(), context=copy_context())
-                cancelled = False
-                while not recording.done():
-                    try:
-                        await asyncio.shield(recording)
-                    except asyncio.CancelledError:
-                        cancelled = True
-                recording.result()
-                if cancelled:
-                    raise asyncio.CancelledError
-            elif isinstance(event, ToolCallFinished):
-                completion = _finish_tool_event(
-                    event, args_summary=tool_args.pop(event.call_id, ''), conversation_id=conversation_id,
-                    message_id=assistant_id, generation_id=generation_id, role_id=role_id,
-                    triggered_by_user_id=triggered_by_user_id, execution_id=execution_id,
-                    accumulated_text=accumulated,
-                )
-                if event.call_id in command_calls:
-                    # 已观察到结果后，取消不能把审计提交与消息更新切断或补造第二条取消事实。
-                    completed_task = asyncio.create_task(completion, context=copy_context())
+                    last_persist = asyncio.get_running_loop().time()
+                if isinstance(event, TextDelta):
+                    accumulated += event.text
+                    pending_text += event.text
+                    now = asyncio.get_running_loop().time()
+                    if now - last_persist >= _PERSIST_INTERVAL_SECONDS:
+                        delta_seq += 1
+                        await _persist_text_delta(assistant_id, conversation_id, generation_id, accumulated, pending_text, delta_seq)
+                        pending_text = ''
+                        last_persist = now
+                elif isinstance(event, ToolCallStarted):
+                    tool_args[event.call_id] = event.args_summary
+                    command_calls[event.call_id] = (event, perf_counter())
+                    command_summary = {}
+                    if event.tool_name == 'workspace_run_command':
+                        command_summary = json.loads(event.args_summary)
+                    await _update_tool_part(
+                        conversation_id=conversation_id,
+                        message_id=assistant_id,
+                        generation_id=generation_id,
+                        call_id=event.call_id,
+                        tool_name=event.tool_name,
+                        status="running",
+                        command_summary=command_summary,
+                        accumulated_text=accumulated, execution_id=execution_id,
+                        triggered_by_user_id=triggered_by_user_id, private_input=event.private_input,
+                    )
+                    logger.info(
+                        "tool.call_started",
+                        extra={
+                            "conversation_id": conversation_id, "generation_id": generation_id,
+                            "tool_name": event.tool_name, "tool_call_id": event.call_id,
+                        },
+                    )
+                elif isinstance(event, ToolCallsNotDispatched):
+                    async def record_undispatched():
+                        """由原消息所有者完整记录同响应提议，不调用工具或创建审批。"""
+                        for proposal in event.calls:
+                            await _record_tool_call(
+                                ToolCallFinished(proposal.call_id, proposal.tool_name, 'not_executed', 0, '{}'),
+                                args_summary=proposal.args_summary, conversation_id=conversation_id, message_id=assistant_id,
+                                role_id=role_id, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
+                            await _update_tool_part(conversation_id=conversation_id, message_id=assistant_id, generation_id=generation_id,
+                                call_id=proposal.call_id, tool_name=proposal.tool_name, status='not_executed', accumulated_text=accumulated,
+                                execution_id=execution_id, triggered_by_user_id=triggered_by_user_id,
+                                command_summary={'not_executed_reason': event.reason, **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})}, private_input=proposal.private_input,
+                                private_output={'format': 'not-dispatched-v1', 'reason': event.reason, **({'argument_error':proposal.argument_error} if proposal.argument_error else {})})
+                            logger.info('tool.call_not_dispatched', extra={'tool_call_id': proposal.call_id,
+                                'tool_name': proposal.tool_name, 'status': 'not_executed', 'reason': event.reason,
+                                **({'error_code':proposal.argument_error['error_code']} if proposal.argument_error else {})})
+                    recording = asyncio.create_task(record_undispatched(), context=copy_context())
                     cancelled = False
-                    while not completed_task.done():
+                    while not recording.done():
                         try:
-                            await asyncio.shield(completed_task)
+                            await asyncio.shield(recording)
                         except asyncio.CancelledError:
                             cancelled = True
-                    completed_task.result()
-                    command_calls.pop(event.call_id, None)
+                    recording.result()
                     if cancelled:
                         raise asyncio.CancelledError
-                else:
-                    await completion
-            elif isinstance(event, ProviderCallCompleted):
-                provider_call_count += 1
-                if first_ttft_ms is None:
-                    first_ttft_ms = event.ttft_ms
-                logger.info(
-                    "provider.call_completed",
-                    extra={
-                        "provider_call_index": event.call_index,
-                        **provider_fields,
-                        "model": role.model_name,
-                        "ttft_ms": event.ttft_ms,
-                        "duration_ms": event.duration_ms,
-                        "input_tokens": event.input_tokens,
-                        "output_tokens": event.output_tokens,
-                        "total_tokens": event.total_tokens,
-                        "cache_hit_tokens": event.cache_hit_tokens,
-                        "cache_write_tokens": event.cache_write_tokens,
-                        "cache_hit_ratio": event.cache_hit_ratio,
-                        "usage_source": "provider" if any(
-                            value is not None for value in (
-                                event.input_tokens, event.output_tokens,
-                                event.total_tokens, event.cache_hit_tokens, event.cache_write_tokens,
-                            )
-                        ) else None,
-                        "total_tokens_derived": event.total_tokens_derived,
-                        "status": "success",
-                        **context_fields,
-                    },
-                )
-            elif isinstance(event, ProviderCallStarted):
-                logger.info(
-                    "provider.call_started",
-                    extra={
-                        "provider_call_index": event.call_index,
-                        **provider_fields,
-                        "model": role.model_name,
-                        **context_fields,
-                    },
-                )
-            elif isinstance(event, MessageDone):
-                usage_summary.update(event.usage)
-                stop_reason = event.stop_reason
-            elif isinstance(event, ProviderError):
-                failed_code = event.code
-                failure_details = {key:value for key,value in {'error_type':event.error_type,'error_phase':event.error_phase}.items() if value is not None}
-                stop_reason = event.stop_reason
+                elif isinstance(event, ToolCallFinished):
+                    completion = _finish_tool_event(
+                        event, args_summary=tool_args.pop(event.call_id, ''), conversation_id=conversation_id,
+                        message_id=assistant_id, generation_id=generation_id, role_id=role_id,
+                        triggered_by_user_id=triggered_by_user_id, execution_id=execution_id,
+                        accumulated_text=accumulated,
+                    )
+                    if event.call_id in command_calls:
+                        # 已观察到结果后，取消不能把审计提交与消息更新切断或补造第二条取消事实。
+                        completed_task = asyncio.create_task(completion, context=copy_context())
+                        cancelled = False
+                        while not completed_task.done():
+                            try:
+                                await asyncio.shield(completed_task)
+                            except asyncio.CancelledError:
+                                cancelled = True
+                        completed_task.result()
+                        command_calls.pop(event.call_id, None)
+                        write_captures.take(event.call_id)
+                        if cancelled:
+                            raise asyncio.CancelledError
+                    else:
+                        await completion
+                elif isinstance(event, ProviderCallCompleted):
+                    provider_call_count += 1
+                    if first_ttft_ms is None:
+                        first_ttft_ms = event.ttft_ms
+                    logger.info(
+                        "provider.call_completed",
+                        extra={
+                            "provider_call_index": event.call_index,
+                            **provider_fields,
+                            "model": role.model_name,
+                            "ttft_ms": event.ttft_ms,
+                            "duration_ms": event.duration_ms,
+                            "input_tokens": event.input_tokens,
+                            "output_tokens": event.output_tokens,
+                            "total_tokens": event.total_tokens,
+                            "cache_hit_tokens": event.cache_hit_tokens,
+                            "cache_write_tokens": event.cache_write_tokens,
+                            "cache_hit_ratio": event.cache_hit_ratio,
+                            "usage_source": "provider" if any(
+                                value is not None for value in (
+                                    event.input_tokens, event.output_tokens,
+                                    event.total_tokens, event.cache_hit_tokens, event.cache_write_tokens,
+                                )
+                            ) else None,
+                            "total_tokens_derived": event.total_tokens_derived,
+                            "status": "success",
+                            **context_fields,
+                        },
+                    )
+                    if usage_cancelled:raise asyncio.CancelledError
+                elif isinstance(event, ProviderCallStarted):
+                    from .execution_usage import record as record_usage
+                    await record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name)
+                    logger.info(
+                        "provider.call_started",
+                        extra={
+                            "provider_call_index": event.call_index,
+                            **provider_fields,
+                            "model": role.model_name,
+                            **context_fields,
+                        },
+                    )
+                elif isinstance(event, MessageDone):
+                    usage_summary.update(event.usage)
+                    stop_reason = event.stop_reason
+                elif isinstance(event, ProviderError):
+                    failed_code = event.code
+                    failure_details = {key:value for key,value in {'error_type':event.error_type,'error_phase':event.error_phase}.items() if value is not None}
+                    stop_reason = event.stop_reason
 
         # 已派发但未收到结束事件：先消费现有凭据，不把未知副作用变成未执行。
         if command_calls:
@@ -920,6 +942,8 @@ async def run_scheduled_generation(
         write_captures.clear()
         write_capture_scope.reset(write_capture_token)
         await retain_execution_workspace(execution_id)
+        from .execution_usage import finish as finish_usage
+        await finish_usage(generation_id)
 
 
 async def build_snapshot(session, conversation_id: int) -> dict:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -213,7 +213,8 @@ class Generation(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stop_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (Index("ix_generations_conversation_status", "conversation_id", "status"),)
+    __table_args__ = (Index("ix_generations_conversation_status", "conversation_id", "status"),
+        Index("ix_generations_assistant_message", "assistant_message_id"))
 
 
 class WorkflowBudget(Base):
@@ -252,6 +253,7 @@ class AgentExecution(Base):
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
     execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     dispatch_order: Mapped[int | None] = mapped_column(Integer)
+    usage_tracked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     decision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_text: Mapped[str | None] = mapped_column(Text)
@@ -275,7 +277,26 @@ class AgentExecution(Base):
             "parent_execution_id", "dispatch_order", "attempt",
         ),
         Index("ix_agent_executions_chain_id", "chain_id"),
+        Index("ix_agent_executions_conversation_role", "conversation_id", "role_id", "id"),
     )
+
+
+class ModelCallUsage(Base):
+    """一次框架模型调用的观测记录，不包含正文、凭据或 HTTP 重试推算。"""
+    __tablename__ = 'model_call_usage'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False)
+    call_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default='started')
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    cache_hit_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    cache_write_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint('execution_id','call_index',name='uq_model_call_usage_execution_index'),)
 
 
 class WorkspaceBinding(Base):

@@ -49,6 +49,7 @@ docs/protocol/
 | 其他列表分页与兼容性 | 预留/总则；消息窗口见消息领域 | 本文档 |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 | Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
+| 角色执行用量 | 已实现待验收，仅 Owner 观测 | [public/rest/execution-usage.md](protocol/public/rest/execution-usage.md) |
 | World Agent 默认预算 | T4.3a 已人工验收 | [public/rest/agent-budget.md](protocol/public/rest/agent-budget.md) |
 | Agent 执行预算与计数 | T4.2 准确停止已人工验收；配置与截止待实现 | [internal/agent-budget.md](protocol/internal/agent-budget.md) |
 | 执行事实与可信收尾 | T1 已验收；预算未派发记录已人工验收 | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
