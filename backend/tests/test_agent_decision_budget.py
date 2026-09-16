@@ -5,7 +5,7 @@ from langchain_core.tools import StructuredTool
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('limit,width', [(1, 1), (2, 3), (8, 2), (32, 1)])
+@pytest.mark.parametrize('limit,width', [(1, 1), (2, 3), (8, 2), (32, 1), (257, 1)])
 async def test_last_decision_tools_complete_before_budget_stop(limit, width):
     """Args:
         limit：实际模型决策上限。
@@ -83,8 +83,13 @@ async def test_incomplete_response_never_dispatches_tools(reason, with_tool):
 
 
 @pytest.mark.anyio
-async def test_cancellation_during_last_tool_does_not_become_budget_stop():
-    """用户取消最后一轮等待，不得被决策预算终态覆盖或开始后续模型。"""
+@pytest.mark.parametrize('limit', [1, None])
+async def test_cancellation_during_last_tool_does_not_become_budget_stop(limit):
+    """用户取消等待，不得被决策预算终态覆盖。
+
+    Args:
+        limit：有限或不限模式。
+    """
     from app.agent import loop, domain
     from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
     entered, exited = asyncio.Event(), asyncio.Event()
@@ -101,7 +106,7 @@ async def test_cancellation_during_last_tool_does_not_become_budget_stop():
     events = []
     async def consume():
         """收集领域事件供取消边界验证。"""
-        async for event in loop.run_agent(model=model, tools=[tool], prompt='等待取消', decision_limit=1):
+        async for event in loop.run_agent(model=model, tools=[tool], prompt='等待取消', decision_limit=limit):
             events.append(event)
     task = asyncio.create_task(consume())
     try:
@@ -117,7 +122,7 @@ async def test_cancellation_during_last_tool_does_not_become_budget_stop():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('limit', [0, -1, True, 257, 1.5])
+@pytest.mark.parametrize('limit', [0, -1, True, 2**53, 1.5])
 async def test_invalid_decision_budget_is_rejected_before_model(limit):
     """Args:
         limit：不得被当成无限额度或隐式取整的内部输入。
@@ -131,8 +136,13 @@ async def test_invalid_decision_budget_is_rejected_before_model(limit):
 
 
 @pytest.mark.anyio
-async def test_rejected_tool_still_consumes_decision():
-    """权限拒绝不能退还决策额度，避免失败后无限重试。"""
+@pytest.mark.parametrize('limit', [1, None])
+async def test_rejected_tool_still_consumes_decision(limit):
+    """权限拒绝在不限模式下仍生效，且不抹除调用计数。
+
+    Args:
+        limit：有限或不限模式。
+    """
     from app.agent import loop, domain
     from app.agent.tools import guard_tools
     from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
@@ -142,11 +152,11 @@ async def test_rejected_tool_still_consumes_decision():
         called.append(True)
         return 'ok'
     tool = StructuredTool.from_function(dangerous, name='dangerous', description='受控危险操作')
-    model = ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name':'dangerous','args':{},'id':'denied'}])])
-    events = [e async for e in loop.run_agent(model=model, tools=guard_tools([tool], allow_dangerous=False), prompt='权限', decision_limit=1)]
-    assert not called and model.index == 1
+    model = ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name':'dangerous','args':{},'id':'denied'}]),ScriptedTurn(text='已拒绝')])
+    events = [e async for e in loop.run_agent(model=model, tools=guard_tools([tool], allow_dangerous=False), prompt='权限', decision_limit=limit)]
+    assert not called and model.index == (1 if limit else 2)
     assert [e.status for e in events if isinstance(e, domain.ToolCallFinished)] == ['rejected']
-    assert events[-1].stop_reason == 'decision_budget'
+    assert events[-1].stop_reason == ('decision_budget' if limit else 'completed')
 
 
 @pytest.mark.anyio
@@ -164,3 +174,26 @@ async def test_duplicate_tool_ids_are_rejected_before_side_effects():
     events = [e async for e in loop.run_agent(model=model, tools=[tool], prompt='重复身份', decision_limit=1)]
     assert not applied and not any(isinstance(e, domain.ToolCallStarted) for e in events)
     assert events[-1].code == 'AGENT_TOOL_CALL_ID_INVALID' and events[-1].stop_reason == 'protocol_error'
+
+
+@pytest.mark.anyio
+async def test_unlimited_runs_beyond_old_ceiling_and_finishes():
+    """真实框架循环超过旧上限，保留工具结果，最终回答自然结束。"""
+    from app.agent import loop, domain
+    from app.agent.fake_provider import ScriptedChatModel, ScriptedTurn
+    applied=[]
+    def record(value: int) -> str:
+        """Args:
+            value：受控操作序号。
+        """
+        applied.append(value)
+        return 'ok'
+    tool=StructuredTool.from_function(record,name='record',description='受控提交')
+    model=ScriptedChatModel(delay=0,turns=[
+        ScriptedTurn(tool_calls=[{'name':'record','args':{'value':i},'id':str(i)}]) for i in range(260)
+    ]+[ScriptedTurn(text='完成')])
+    events=[event async for event in loop.run_agent(model=model,tools=[tool],prompt='长循环',decision_limit=None)]
+    assert applied==list(range(260))
+    assert model.index==261
+    assert sum(isinstance(event,domain.ToolCallFinished) for event in events)==260
+    assert events[-1].stop_reason=='completed'

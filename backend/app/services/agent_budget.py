@@ -1,7 +1,6 @@
 """消息链决策预算，数据库原子消费与执行序号共同防止重试重复扣减。"""
 import asyncio
-from sqlalchemy import select, update
-from ..config import settings
+from sqlalchemy import select, update, or_
 from ..models import AgentExecution, Generation, InstanceSettings, WorkflowBudget
 
 
@@ -14,15 +13,18 @@ async def freeze(session, message):
     """
     config = await session.get(InstanceSettings, 1)
     session.add(WorkflowBudget(chain_id=message.chain_id, conversation_id=message.conversation_id,
-        trigger_message_id=message.id, decision_limit=min(config.decision_limit, settings.agent_decision_ceiling),
+        trigger_message_id=message.id, decision_limit=config.decision_limit,
         configuration_revision=config.budget_revision, created_at=message.created_at))
 
 
-async def limit_for(session, chain_id: str, conversation_id: int) -> int:
+async def limit_for(session, chain_id: str, conversation_id: int) -> int | None:
     """Args:
         session：只读业务会话。
         chain_id：当前执行已有的消息链。
         conversation_id：防止快照归属串线。
+
+    Returns:
+        已冻结上限，None 表示明确不限；缺失快照或归属不符抛出异常。
     """
     budget = await session.get(WorkflowBudget, chain_id)
     if budget is None or budget.conversation_id != conversation_id:
@@ -31,7 +33,7 @@ async def limit_for(session, chain_id: str, conversation_id: int) -> int:
 
 
 async def consume(execution_id: str, index: int) -> bool:
-    """请求模型前原子扣减；成功返回只授权当前宿主此次模型决策。
+    """请求模型前原子计数；不限模式跳过限额比较但保留取消和幂等检查。
 
     Args:
         execution_id：既有单所有者执行标识，不对外提供任意扣减入口。
@@ -54,7 +56,7 @@ async def consume(execution_id: str, index: int) -> bool:
             result = await session.execute(update(WorkflowBudget).where(
                 WorkflowBudget.chain_id == execution.chain_id,
                 WorkflowBudget.conversation_id == execution.conversation_id,
-                WorkflowBudget.used_decisions < WorkflowBudget.decision_limit,
+                or_(WorkflowBudget.decision_limit.is_(None), WorkflowBudget.used_decisions < WorkflowBudget.decision_limit),
             ).values(used_decisions=WorkflowBudget.used_decisions + 1))
             if result.rowcount != 1:
                 return False

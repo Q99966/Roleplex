@@ -28,7 +28,7 @@ class InstanceSettings(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     process_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    decision_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    decision_limit: Mapped[int | None] = mapped_column(BigInteger().evaluates_none(), nullable=True, default=8)
     budget_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -223,8 +223,8 @@ class WorkflowBudget(Base):
     chain_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
     trigger_message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, unique=True)
-    decision_limit: Mapped[int] = mapped_column(Integer, nullable=False)
-    used_decisions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    used_decisions: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -254,7 +254,7 @@ class AgentExecution(Base):
     execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     dispatch_order: Mapped[int | None] = mapped_column(Integer)
     usage_tracked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    decision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_text: Mapped[str | None] = mapped_column(Text)
     context_hint_text: Mapped[str | None] = mapped_column(Text)
@@ -286,7 +286,7 @@ class ModelCallUsage(Base):
     __tablename__ = 'model_call_usage'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False)
-    call_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    call_index: Mapped[int] = mapped_column(BigInteger, nullable=False)
     provider_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default='started')

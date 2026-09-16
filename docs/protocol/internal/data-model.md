@@ -502,3 +502,9 @@ input_tokens/output_tokens/cache_hit_tokens/cache_write_tokens/duration_ms 为�
 迁移 0015 同时增加 agent_executions(conversation_id,role_id,id) 索引，支撑角色最近执行与累计查询；不新增角色全局统计入口。
 
 迁移 0016 增加 generations(assistant_message_id) 索引，用于核对旧角色回复是否缺少 execution 关联；不回填或推算这些旧回复的 Token。
+
+
+### T4.3c 决策配置与计数迁移
+0017 将 instance_settings.decision_limit、workflow_budgets.decision_limit 改为 nullable BigInteger；null 表示不限，旧整数保持原值，默认配置仍为8。
+agent_executions.decision_count、workflow_budgets.used_decisions、model_call_usage.call_index 同步使用 BigInteger，保留既有唯一性、关联和计数语义。
+降级前必须将不限或超过256的配置与快照显式调整为旧版1..256有限值，且所有相关计数在32位整数范围内；迁移拒绝不兼容数据，不静默将不限改为8。

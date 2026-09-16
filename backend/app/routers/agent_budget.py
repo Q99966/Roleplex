@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import update
-from ..config import settings
+from ..config.decision_budget import MAX_DECISION_LIMIT
 from ..db import SessionLocal, with_locked_retry
 from ..models import InstanceSettings, User
 from ..security import require_owner
@@ -12,9 +12,9 @@ router = APIRouter(prefix='/api/agent-budget', tags=['agent-budget'])
 
 
 class BudgetConfiguration(BaseModel):
-    """严格整数额度与乐观锁版本，不接受模型参数或其他作用域。"""
+    """正整数或显式 null（不限）与乐观锁版本，不接受其他作用域。"""
     model_config = ConfigDict(extra='forbid', strict=True)
-    decision_limit: int = Field(ge=1, le=256)
+    decision_limit: int | None = Field(..., ge=1, le=MAX_DECISION_LIMIT)
     expected_revision: int = Field(ge=0)
 
 
@@ -22,8 +22,8 @@ def view(row):
     """Args:
         row：当前 World 单例配置，仅返回预算白名单字段。
     """
-    return {'decision_limit': row.decision_limit, 'effective_limit': min(row.decision_limit, settings.agent_decision_ceiling),
-        'ceiling': settings.agent_decision_ceiling, 'revision': row.budget_revision}
+    return {'decision_limit': row.decision_limit, 'effective_limit': row.decision_limit,
+        'ceiling': None, 'revision': row.budget_revision}
 
 
 @router.get('/config')
@@ -45,8 +45,6 @@ async def put_config(payload: BudgetConfiguration, response: Response, user: Ann
         user：仅 Owner 可修改，Guest 没有入口。
     """
     response.headers['Cache-Control'] = 'no-store'
-    if payload.decision_limit > settings.agent_decision_ceiling:
-        raise HTTPException(422, 'AGENT_BUDGET_LIMIT_INVALID')
     async def operation():
         """CAS 更新同 World 配置，暂时锁定可安全重试。"""
         async with SessionLocal() as session:

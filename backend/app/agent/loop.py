@@ -344,7 +344,7 @@ async def run_agent(
     system_prompt: str | None = None,
     history: Sequence[BaseMessage] | None = None,
     recursion_limit: int | None = None,
-    decision_limit: int = DEFAULT_DECISION_LIMIT,
+    decision_limit: int | None = DEFAULT_DECISION_LIMIT,
     before_decision: Callable[[int], Awaitable[bool]] | None = None,
     time_source: Callable[[], float] | None = None,
 ) -> AsyncIterator[AgentEvent]:
@@ -357,7 +357,7 @@ async def run_agent(
         system_prompt：角色的系统提示词。
         history：更早的对话历史，按框架消息类型传入。
         recursion_limit：内部强制图保护；省略时按当前拓扑为决策和结果交接预留空间。
-        decision_limit：本轮冻结的模型决策上限，1..256。
+        decision_limit：本轮冻结的正整数决策上限；None 表示不限次数。
         before_decision：可选共享预算原子消费，参数为本执行的决策序号。
         time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
 
@@ -370,13 +370,15 @@ async def run_agent(
         asyncio.CancelledError：调用方取消本次生成时原样向上传播，
             由调度层按 stopped 收尾，不在此处伪装成错误事件。
     """
-    if isinstance(decision_limit, bool) or not isinstance(decision_limit, int) or not 1 <= decision_limit <= 256:
-        raise ValueError('decision_limit must be an integer in 1..256')
+    from ..config.decision_budget import MAX_DECISION_LIMIT
+    if decision_limit is not None and (type(decision_limit) is not int or not 1 <= decision_limit <= MAX_DECISION_LIMIT):
+        raise ValueError('decision_limit must be a positive safe integer or None')
     if recursion_limit is not None and (isinstance(recursion_limit, bool) or not isinstance(recursion_limit, int) or recursion_limit < 1):
         raise ValueError('recursion_limit must be a positive integer')
-    graph_limit = recursion_limit if recursion_limit is not None else 2 * decision_limit + 2
+    # 当前锁定框架按 step > stop 判断耗尽；inf 仅留在防腐层，不进入公开协议或 Provider 参数。
+    graph_limit = recursion_limit if recursion_limit is not None else (2 * decision_limit + 2 if decision_limit is not None else float('inf'))
     decisions = 0
-    remaining_steps: int | None = None
+    remaining_steps: int | float | None = None
 
     async def graph_prompt(state: dict) -> list:
         """在防腐层观察锁定图版本的派发预算，不把框架状态暴露给业务层。
@@ -385,7 +387,7 @@ async def run_agent(
             state：每次模型调用前的图状态；检查决策额度、读取图余量并保留原消息。
         """
         nonlocal remaining_steps, decisions
-        if decisions >= decision_limit:
+        if decision_limit is not None and decisions >= decision_limit:
             raise _DecisionBudgetReached()
         if before_decision is not None and not await before_decision(decisions + 1):
             raise _DecisionBudgetReached()

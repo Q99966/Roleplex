@@ -6,28 +6,29 @@ from test_workspace_commands import command_root, isolated_command_database, com
 
 
 @pytest.mark.anyio
-async def test_configuration_owner_revision_and_ceiling(command_root, isolated_command_database, monkeypatch):
+async def test_configuration_owner_revision_and_modes(command_root, isolated_command_database):
     """Args:
         command_root：隔离目录。
         isolated_command_database：每例新数据库。
-        monkeypatch：受控部署上限。
     """
     from accounts import guest_username
-    from app.config import settings
     async with command_conversation(command_root) as (client, headers, cid, rid, wid):
         before = (await client.get('/api/agent-budget/config', headers=headers)).json()
-        assert before == {'decision_limit':8, 'effective_limit':8, 'ceiling':256, 'revision':0}
+        assert before == {'decision_limit':8, 'effective_limit':8, 'ceiling':None, 'revision':0}
         results = await asyncio.gather(*[client.put('/api/agent-budget/config', headers=headers,
             json={'decision_limit':value, 'expected_revision':0}) for value in [32, 64]])
         assert sorted(result.status_code for result in results) == [200, 409]
-        for value in [0, True, 1.5, 257]:
+        for value in [0, True, 1.5, 2**53, -1, "512"]:
             assert (await client.put('/api/agent-budget/config', headers=headers,
                 json={'decision_limit':value, 'expected_revision':1})).status_code == 422
-        monkeypatch.setattr(settings, 'agent_decision_ceiling', 16)
-        limited = (await client.get('/api/agent-budget/config', headers=headers)).json()
-        assert limited['effective_limit'] == 16 and limited['revision'] == 1
-        assert (await client.put('/api/agent-budget/config', headers=headers,
-            json={'decision_limit':32, 'expected_revision':1})).status_code == 422
+        for revision,value in enumerate([512,None,2**53-1],1):
+            response=await client.put('/api/agent-budget/config',headers=headers,
+                json={'decision_limit':value,'expected_revision':revision})
+            assert response.status_code==200
+            assert response.json()['effective_limit']==value
+            assert (await client.get('/api/agent-budget/config',headers=headers)).json()['decision_limit']==value
+        assert (await client.put('/api/agent-budget/config',headers=headers,
+            json={'expected_revision':4})).status_code==422
         guest = await client.post('/api/auth/register', json={'username':guest_username('budget'), 'nickname':'测试', 'password':'Roleplex-Test-1234'})
         guest_headers = {'Authorization': 'Bearer ' + guest.json()['access_token']}
         assert (await client.get('/api/agent-budget/config', headers=guest_headers)).status_code == 403
@@ -36,18 +37,20 @@ async def test_configuration_owner_revision_and_ceiling(command_root, isolated_c
 
 
 @pytest.mark.anyio
-async def test_concurrent_decisions_share_frozen_budget_and_retry_is_idempotent(command_root, isolated_command_database):
+@pytest.mark.parametrize('limit', [5, None])
+async def test_concurrent_decisions_share_frozen_budget_and_retry_is_idempotent(command_root, isolated_command_database, limit):
     """Args:
         command_root：隔离目录。
         isolated_command_database：并发测试独占全新数据库。
+        limit：有限或不限共享模式。
     """
     from app.db import SessionLocal
     from app.models import Message, Generation, AgentExecution, WorkflowBudget
-    from app.services.agent_budget import consume, freeze
+    from app.services.agent_budget import consume, freeze, limit_for
     from sqlalchemy import select
     async with command_conversation(command_root) as (client, headers, cid, rid, wid):
         assert (await client.put('/api/agent-budget/config', headers=headers,
-            json={'decision_limit':5,'expected_revision':0})).status_code == 200
+            json={'decision_limit':limit,'expected_revision':0})).status_code == 200
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
             message = Message(conversation_id=cid, sender_type='user', sender_id=1, status='done', chain_id='shared-budget', created_at=now)
@@ -61,15 +64,20 @@ async def test_concurrent_decisions_share_frozen_budget_and_retry_is_idempotent(
         assert (await client.put('/api/agent-budget/config', headers=headers,
             json={'decision_limit':64,'expected_revision':1})).status_code == 200
         results = await asyncio.gather(*[consume(f'budget-{index}', 1) for index in range(20)])
-        assert sum(results) == 5
+        assert sum(results) == (5 if limit else 20)
         first = results.index(True)
         assert await consume(f'budget-{first}', 1) is True
-        assert await consume(f'budget-{first}', 2) is False
+        assert await consume(f'budget-{first}', 2) is (limit is None)
         async with SessionLocal() as session:
+            assert await limit_for(session,'shared-budget',cid)==limit
+            with pytest.raises(ValueError,match='WORKFLOW_BUDGET_NOT_FOUND'):
+                await limit_for(session,'missing-snapshot',cid)
+            with pytest.raises(ValueError,match='WORKFLOW_BUDGET_NOT_FOUND'):
+                await limit_for(session,'shared-budget',cid+10000)
             budget = await session.get(WorkflowBudget, 'shared-budget')
-            assert (budget.decision_limit, budget.used_decisions, budget.configuration_revision) == (5,5,1)
+            assert (budget.decision_limit, budget.used_decisions, budget.configuration_revision) == (limit,5 if limit else 21,1)
             executions = list((await session.scalars(select(AgentExecution).where(AgentExecution.chain_id=='shared-budget'))).all())
-            assert sum(row.decision_count for row in executions) == 5
+            assert sum(row.decision_count for row in executions) == (5 if limit else 21)
 
 
 @pytest.mark.anyio
@@ -110,15 +118,18 @@ async def test_group_roles_share_one_grant_and_idempotent_message_does_not_refil
 
 
 @pytest.mark.anyio
-async def test_stop_request_prevents_decision_charge(command_root, isolated_command_database):
+@pytest.mark.parametrize('limit', [8, None])
+async def test_stop_request_prevents_decision_charge(command_root, isolated_command_database, limit):
     """Args:
         command_root：隔离目录。
         isolated_command_database：每例独立数据库。
+        limit：停止时的配置模式。
     """
     from app.db import SessionLocal
     from app.models import Message, Generation, AgentExecution, WorkflowBudget
     from app.services.agent_budget import consume, freeze
     async with command_conversation(command_root) as (client, headers, cid, rid, wid):
+        await client.put('/api/agent-budget/config',headers=headers,json={'decision_limit':limit,'expected_revision':0})
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
             message = Message(conversation_id=cid,sender_type='user',sender_id=1,status='done',chain_id='cancel-budget',created_at=now)

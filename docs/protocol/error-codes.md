@@ -250,7 +250,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `PROVIDER_RATE_LIMITED` | 已实现 | Agent/WS/数据库/日志 | — | failed | yes | 厂商返回 429 或限流类异常，应退避后有限重试 |
 | `PROVIDER_AUTH_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商凭据无效或没有权限，必须修正模型配置 |
 | `PROVIDER_BAD_REQUEST` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 厂商拒绝请求结构或参数，原请求不应原样重试 |
-| `AGENT_BUDGET_LIMIT_INVALID` | 已实现 | REST | 422 | rejected | no | 决策额度超过部署上限 |
+| `AGENT_BUDGET_LIMIT_INVALID` | 废弃（预算 v2 不再产生） | REST | 422 | rejected | no | 旧版决策额度超过部署上限；现行非法输入走参数校验 |
 | `AGENT_BUDGET_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 配置修订已变化，重新读取后再保存 |
 | `PROVIDER_RESPONSE_INCOMPLETE` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 响应明确截断或内容过滤；不派发其中工具，不自动重试 |
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |

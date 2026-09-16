@@ -4,11 +4,11 @@ import { readRunEvents } from '../e2e-log-assertions'
 
 test.use({ screenshot: 'off', trace: 'off', video: 'off' })
 
-for (const limit of [1, 4]) {
+for (const limit of [1, 512, null]) {
   test(`真实 World 群聊共享决策预算 ${limit}，刷新保留结果`, async ({ page }, testInfo) => {
     const stamp = process.env.ROLEPLEX_REAL_WORLD_E2E_STAMP!
     const base = process.env.ROLEPLEX_E2E_API_ORIGIN!
-    const title = limit === 1 ? '真实预算验收：额度不足（1 次）' : '真实预算验收：额度充足（4 次）'
+    const title = limit === 1 ? '真实预算验收：额度不足（1 次）' : limit === null ? '真实预算验收：不限次数' : '真实预算验收：自定义 512 次'
     let cid: number | null = null, stage = 'World 与登录', failedStage: string | null = null, cleaned = false
     let observation: Record<string, unknown> = { limit }
     try {
@@ -25,11 +25,19 @@ for (const limit of [1, 4]) {
       await page.getByRole('tab', { name: /运行世界与存储/ }).click()
       const budget = page.getByRole('region', { name: '任务决策预算' })
       await expect(budget.getByRole('button', { name: '保存任务预算' })).toBeEnabled()
-      await page.getByLabel('每个任务的决策上限', { exact: true }).fill(String(limit))
+      if (limit === null) await budget.getByRole('button', { name:'不限次数',exact:true }).click()
+      else {
+        await budget.getByRole('button', { name:'自定义次数',exact:true }).click()
+        await page.getByLabel('每个任务的决策上限', { exact: true }).fill(String(limit))
+      }
       await budget.getByRole('button', { name: '保存任务预算' }).click()
       await expect(budget.getByRole('status')).toHaveText('已保存，仅新任务生效。')
       await page.getByRole('button', { name: '关闭系统与环境设置' }).click()
 
+      const saved = await (await page.request.get(base + '/api/agent-budget/config', {
+        headers: { Authorization: await page.evaluate(() => 'Bearer ' + localStorage.getItem('roleplex_token')) },
+      })).json()
+      expect(saved.decision_limit).toBe(limit)
       stage = '创建两个真实角色'
       cid = await page.evaluate(async ({ base, title, limit }) => {
         const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }
