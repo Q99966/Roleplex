@@ -1,5 +1,7 @@
 # T4.1 计数与停止边界验证
 
+> 本页保留对应阶段的验证记录与参考步骤，不表示本次已重新运行。当前测试选择、环境与收费执行条件见[测试指南](README.md)；历史排期和验收关口不自动约束新任务。
+
 - 状态：T4.1 离线核查完成；以下是该阶段历史基线，T4.2 修复与现行行为见[后续验证](agent-budget-t42.md)。
 - 复核日期：2026-09-15；维护者：Roleplex。
 - 权威口径与待实现边界：[Agent 执行预算](../protocol/internal/agent-budget.md)。
@@ -38,4 +40,4 @@ python -m pytest -q tests/test_agent_budget_accounting.py tests/test_agent_loop.
 
 ## 下一小步
 
-后续顺序以 [T4 小阶段与退出条件](../plan/tool-reliability-capability-roadmap-v1.md#85-小阶段与退出条件)为准：T4.2 先修复准确停止及最后工具结果交接，预算配置与快照归 T4.3，继续能力归 T4.4。本记录仅证明 T4.1 现状，不表示上述功能已实现。
+当时的后续拆分见[历史 T4 计划](../archive/plan/tool-reliability-capability-roadmap-v1.md#85-小阶段与退出条件)。T4.2、预算配置/不限模式和中断事实交接现已完成，状态见[阶段结果](../plan/tool-reliability-capability-roadmap-v1.md)；本页只保留 T4.1 取证，不再安排下一阶段。

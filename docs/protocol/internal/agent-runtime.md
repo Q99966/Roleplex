@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 内部（不承诺客户端兼容性） |
-| 状态 | 部分已实现（M0 Agent 基础、M4a 会话调度与 E0 execution 身份） |
+| 状态 | 聊天执行、工具与上下文已实现；MCP 为内部验证，Orchestrator 未接入产品 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-15 |
+| 复核日期 | 2026-09-16 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -47,7 +47,7 @@ E1 编辑工具只提取 path_fingerprint、old_text_bytes、new_text_bytes、ha
 结果仅向共享工具卡增加显式白名单中的固定错误码。匹配/参数/版本拒绝是正常 rejected 终态，不记录片段、路径或异常原文。
 工作区策略版本随工具集合/说明升级；仅在实际暴露 workspace_edit 时向 write 的说明追加局部编辑建议。
 E2 workspace_read 的 items 形式参数审计只含 item_count，不提取私有路径/内容；共享结果只含固定读取/批量错误码。
-工具策略版本升级为 13，read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具。
+read/write/edit 各自的单文件与 items 共用原权限，不新增独立批量工具；策略版本随实际定义变化，不把 E2 当时的版本 13 当成当前常量。
 S2 原生修改以类型化拒绝交付准确原因；身份/归属失败仍不披露资源信息，能力与服务/清理门槛分别判断。
 诊断推荐工具取本轮实际暴露集合与当前权限的交集；完整诊断仅供模型与 Owner 详情，审计/共享事件只提取固定错误码。
 S1 workspace_service_status 的工厂与策略描述独立于文件 lease/启动开关，仍要求当前 Owner single 与角色显式权限。
@@ -64,7 +64,7 @@ ToolCallFinished.private_output 交给消息所有者。原文不进入模型工
 取消时消息所有者保存已观察到的写入事实并清除作用域；进程崩溃不补造差异，不另造 Trace 或业务调度器。
 详情与兼容字段以[工具详情](../public/messaging/tool-details.md)为准。
 
-单聊、后续群聊角色和 Orchestrator 必须通过 `app/context/` 构造模型输入。当前实现以已落库用户消息 ID
+单聊和串行群聊角色通过 `app/context/` 构造模型输入；Orchestrator 尚未接入。当前实现以已落库用户消息 ID
 作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
 revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。
 
@@ -113,7 +113,7 @@ read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后�
 ## 防腐层边界与实测结论
 
 框架事件到领域事件的转换全部收敛在 `app/agent/loop.py`，测试用源码扫描保证其他模块
-不出现框架事件名。锁定版本（langgraph 0.2.74 / langchain-core 0.3.36）下的实测结论：
+不出现框架事件名。下面记录锁定版本（langgraph 0.2.74 / langchain-core 0.3.36）在早期阶段的探针结果；当前决策配置/图保护以[执行预算](agent-budget.md)为准，中断事实以[中断上下文](interruption-context.md)为准：
 
 - **同一锁定版本既会抛异常，也会静默结束**。2026-09-14 T0 探针纠正原“不会抛异常”的结论：
   重复工具脚本在上限 1/3/5/15 抛 `GraphRecursionError`，2/4/6 静默结束；这是该脚本的观测，
@@ -258,6 +258,6 @@ ProviderError 兼容可选 error_type/error_phase，仅传输固定安全诊断�
 
 工具主动抛出的 ToolException 使用 TOOL_EXECUTION_FAILED 返回模型并保留实际开始/结束；不回显异常正文，也不声称未执行。其他未知执行异常仍终止为 AGENT_RUNTIME_ERROR，避免把已发生副作用的故障当成安全参数重试。
 
-工具说明策略版本 18：用途/关键规则/典型示例置于工具 description，参数用途和互斥关系置于 Field.description，实际数值约束仍由原 schema/执行层强制。workspace_tool_policy 的 exposed_tools 增加 parameters，预算估算与指纹覆盖完整原生参数 schema；该对象只用于内部估算与指纹，不重复注入 system_prompt。没有新增动态发现或“先标题再加载详情”的行为。
+工具说明整理阶段使用策略版本 18；后续版本以 `workspaces/tools.py` 的实际 `workspace_tool_policy` 为准。现行结构：用途/关键规则/典型示例置于工具 description，参数用途和互斥关系置于 Field.description，实际数值约束仍由原 schema/执行层强制。workspace_tool_policy 的 exposed_tools 增加 parameters，预算估算与指纹覆盖完整原生参数 schema；该对象只用于内部估算与指纹，不重复注入 system_prompt。没有新增动态发现或“先标题再加载详情”的行为。
 
 Context schema 5兼容增加中断事实交接，原文投影规则保持；具体边界以[中断上下文](interruption-context.md)为准，不恢复旧图状态或新增关键词入口。

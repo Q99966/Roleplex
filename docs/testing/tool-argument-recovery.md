@@ -1,5 +1,7 @@
 # 工具参数错误恢复与诊断
 
+> 本页保留对应阶段的验证记录与参考步骤，不表示本次已重新运行。当前测试选择、环境与收费执行条件见[测试指南](README.md)；历史排期和验收关口不自动约束新任务。
+
 - 状态：修正及验证完成，用户已确认当前版本并授权提交；复核日期：2026-09-15。
 - 权威范围：[完整计划](../plan/tool-reliability-capability-roadmap-v1.md)、[Agent 运行时](../protocol/internal/agent-runtime.md)、[Owner 工具详情](../protocol/public/messaging/tool-details.md)、[错误码](../protocol/error-codes.md)。
 

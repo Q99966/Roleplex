@@ -2,15 +2,15 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-消息与 WebSocket（含历史窗口分页）已经拆分到领域文档；本文件对这些领域只保留摘要、状态和链接。尚未实现的邀请、Artifact 和其他列表分页协议暂留在本文件，实现时按同样方式拆出。
+复核日期：2026-09-16。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
 
-> 只有已经存在对应后端处理和前端行为的内容，才能视为当前可用；其余内容属于原型或后续里程碑预留。
+> API 已实现表示存在对应服务端处理与验证；完整产品能力还需对应客户端行为。仅有 schema、数据表或风险验证的内容单独标为原型/预留。
 
 ## 文档状态与拆分规则
 
 协议领域文档使用以下状态：
 
-- **已实现**：存在服务端处理、客户端行为和相应测试。
+- **已实现**：对应处理逻辑及测试已存在；若缺少产品入口，应在领域文档说明。
 - **原型**：存在部分代码或风险验证，但尚未形成完整可用链路。
 - **预留**：只有 schema、计划或协议设计，当前不可调用。
 - **废弃**：不再建议使用，并提供替代方案或迁移说明。
@@ -20,11 +20,10 @@
 ```text
 docs/protocol/
 ├── public/       # 客户端可依赖的 REST、消息、WebSocket 和资源协议
-├── internal/     # Agent、MCP、调度、领域事件和审计等内部约定
-└── testing/      # 协议及模型厂商契约测试约定
+└── internal/     # Agent、MCP、调度、领域事件和审计等内部约定
 ```
 
-领域文档至少标注受众、状态、协议版本、维护者、事实来源和复核日期，并链接关联的路由、schema、客户端类型和测试。公开协议承诺兼容性；内部协议不自动成为客户端可以依赖的 wire contract。
+领域文档标明受众、状态、适用版本、事实来源与复核日期，并链接相关实现和测试；仅说明本领域适用的鉴权、并发、错误和降级规则，不机械复制无关模板。协议与厂商验证入口在 [docs/testing/](testing/README.md)，不维护空的 `protocol/testing/` 目录。公开协议的兼容性按下文处理，内部约定不自动成为客户端可依赖的 wire contract。
 
 ## 当前领域索引
 
@@ -32,28 +31,28 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
-| REST 会话管理与回收站 | 已实现（单聊与 M4a 群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
+| REST 会话管理与回收站 | 已实现（单聊与串行群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
-| REST 当前 World 工作区 | E1/E2 已验收；T3 多片段编辑已人工验收 | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
-| 工作区搜索与范围读取 | 内部/已实现（T2，已人工验收） | [internal/workspace-search-read.md](protocol/internal/workspace-search-read.md) |
-| 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
-| 消息发送、历史与停止生成 | 已实现（B 最近窗口与 M 多行输入均已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
-| 工具执行顺序与 Owner 详情 | D/E1/E2/S2 已验收；父目录副作用详情已人工验收；v7批次限制调整已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
+| REST 当前 World 工作区 | 已实现（Owner 单聊；含批量修改与多片段编辑） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
+| 工作区搜索与范围读取 | 内部/已实现 | [internal/workspace-search-read.md](protocol/internal/workspace-search-read.md) |
+| 工作区结构化命令 | 内部/已实现 | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
+| 消息发送、历史与停止生成 | 已实现（含历史窗口与多行输入） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
+| 工具执行顺序与 Owner 详情 | 已实现（含 diff、批次结果和拒绝诊断） | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
 | 旧系统执行摘要 | 废弃，仅旧记录兼容；停止原因见消息协议 | [public/messaging/execution-summary.md](protocol/public/messaging/execution-summary.md) |
-| Shell 逐次审批 | W1c 已验收；审批与写锁分离已人工验收 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
-| 会话运行实例、服务与回收 | W1d/G 与 S1 服务发现已人工验收 | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |
+| Shell 逐次审批 | 已实现；逐次审批 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
+| 会话运行实例、服务与回收 | 已实现（后台服务仅 Linux） | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |
 | WebSocket 连接、订阅与恢复 | 已实现（含登录会话级连接与最近窗口快照） | [public/websocket/conversation-stream.md](protocol/public/websocket/conversation-stream.md) |
-| 邀请兑换 | 预留 | 本文档（待实现时拆分） |
+| 邀请兑换 | 预留，无可调用产品接口 | [尚未实现的范围](#尚未实现的范围) |
 | Artifact 原始内容读取与 iframe 隔离 | 原型 | [public/resources/artifact-raw.md](protocol/public/resources/artifact-raw.md) |
-| Artifact 创建与版本更新 | 预留 | 本文档（待实现时拆分） |
-| 其他列表分页与兼容性 | 预留/总则；消息窗口见消息领域 | 本文档 |
+| Artifact 创建与版本更新 | 预留，无可调用产品接口 | [尚未实现的范围](#尚未实现的范围) |
+| 其他列表分页与兼容性 | 未统一；各已实现领域自行定义 | [尚未实现的范围](#尚未实现的范围) |
 | 数据模型（表与字段） | 内部 | [internal/data-model.md](protocol/internal/data-model.md) |
 | Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
-| 角色执行用量 | 已实现待验收，仅 Owner 观测 | [public/rest/execution-usage.md](protocol/public/rest/execution-usage.md) |
-| World Agent 默认预算 | v2：T4.3c 自定义与不限模式已人工验收 | [public/rest/agent-budget.md](protocol/public/rest/agent-budget.md) |
-| 中断执行事实交接 | 已人工验收，内部协议 | [internal/interruption-context.md](protocol/internal/interruption-context.md) |
-| Agent 执行预算与计数 | T4.2/T4.3a 已验收；不限模式已人工验收，时间截止暂缓 | [internal/agent-budget.md](protocol/internal/agent-budget.md) |
-| 执行事实与可信收尾 | T1 已验收；预算未派发记录已人工验收 | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
+| 角色执行用量 | 已实现，仅 Owner 观测 | [public/rest/execution-usage.md](protocol/public/rest/execution-usage.md) |
+| World Agent 默认预算 | 已实现，v2 自定义与不限模式 | [public/rest/agent-budget.md](protocol/public/rest/agent-budget.md) |
+| 中断执行事实交接 | 内部/已实现 | [internal/interruption-context.md](protocol/internal/interruption-context.md) |
+| Agent 执行预算与计数 | 内部/已实现；无统一时间截止 | [internal/agent-budget.md](protocol/internal/agent-budget.md) |
+| 执行事实与可信收尾 | 内部/已实现 | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
 | 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |
 
 ## 认证
@@ -86,7 +85,7 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 服务端还会在所有 HTTP 响应返回同值的 `X-Request-ID`；调用方可以传入该请求头以复用自己的关联 ID，
 未传时由服务端生成。
 
-当前状态：REST 认证和基础资源接口已使用错误信封；尚未实现的接口必须继续复用该格式。
+现有 REST 接口使用该错误信封；新接口沿用同一格式，具体码值在领域文档和错误码注册表同步。
 
 ## 消息
 
@@ -101,68 +100,18 @@ M4a 群聊创建、成员管理和 `@` 串行调度已实现；当前 wire contr
 
 事件的可靠恢复来源是持久化事件日志：事件先落库再广播，内存广播只服务在线订阅者。客户端必须按 `event_seq` 与 `(message_id, revision, delta_seq)` 幂等应用事件，并对未知事件类型提供降级行为。
 
-## 邀请兑换（预留）
+## 尚未实现的范围
 
-```http
-POST /api/invites/{code}/redeem
-```
+- 邀请数据模型已预留，但邀请创建、兑换和 Guest 入群路由未实现。旧候选路径/字段不构成可调用接口或冻结设计；实施时按当前成员授权和原子兑换需求定稿。
+- Artifact 数据表与原始内容读取/iframe 隔离原型已存在，创建、更新和前端预览未接入。现有原型见[原始内容协议](protocol/public/resources/artifact-raw.md)。
+- 消息窗口、工作区/服务查询已各有自己的分页契约；角色、会话等列表尚未统一分页，不承诺全站固定游标格式。
 
-兑换操作必须是原子的：邀请已过期、已撤销或已达到使用次数时返回 `INVITE_INVALID`；成功时在同一事务中递增 `used_count` 并创建用户成员关系。已经加入的用户重复兑换应视为幂等成功。
+原型与预留状态不产生当前客户端兼容承诺；新增产品链路时再更新领域协议、实现、测试和本索引。
 
-当前状态：邀请数据模型已预留；邀请创建、兑换和 Guest 入群路由尚未实现。
+## 兼容性与同步
 
-## Artifact 更新（预留）
+当前 REST 使用 `/api` 前缀，没有统一的 `/api/v1` 或全局 payload 版本字段；WS 通过 `auth_ok.capabilities` 声明订阅/历史窗口能力。领域文档中的“协议版本”是该领域的契约修订号，只有明确列出的 `version` 字段才是 wire 字段，不能把文档版本当作请求参数。
 
-创建接口：
+已实现接口优先兼容新增字段与事件；客户端对未知事件忽略或按领域规则降级，对未知消息 part 显示占位。改变现有字段语义时说明兼容影响，按实际需要选择领域版本、迁移或前后端同步部署；例如 nullable 决策预算要求配套前端，见[预算 v2](protocol/public/rest/agent-budget.md)。不要求每次新增兼容字段都复制整套协议或新增版本路径。
 
-```http
-POST /api/conversations/{conversation_id}/artifacts
-```
-
-创建产物时生成版本 `1`。更新必须使用不可变产物 ID 和乐观版本号：
-
-```json
-{
-  "artifact_id":7,
-  "expected_version":1,
-  "content":"<html>...</html>"
-}
-```
-
-版本不匹配时返回 `409 ARTIFACT_VERSION_CONFLICT`。客户端应重新读取最新版本后决定是否重试。消息 part 引用固定版本：
-
-```json
-{"type":"artifact","artifact_id":7,"version":2}
-```
-
-因此后续版本创建后，历史消息中的旧版本不会漂移。
-
-当前状态：Artifact 数据模型已预留；创建、更新和前端预览尚未实现。原始内容读取端点与
-iframe 隔离已作为风险验证实现，见 [产物原始内容读取](protocol/public/resources/artifact-raw.md)。
-
-## 其他列表分页（预留）
-
-消息最近窗口分页已实现，参数和体积预算只以[消息领域协议](protocol/public/messaging/messages.md)为准。
-本节不覆盖消息窗口，仅记录其他列表的预留方向。
-
-列表接口引入分页后使用游标：
-
-```text
-?cursor=<opaque>&limit=50
-```
-
-游标是不透明值，客户端不得解析其内部结构。响应格式为：
-
-```json
-{"items":[],"next_cursor":null}
-```
-
-`next_cursor: null` 表示列表已经结束。
-
-当前状态：当前 M0/M1 列表接口尚未统一实现游标分页。
-
-## 兼容性
-
-REST 和 WebSocket payload 应在 API 根路径和握手元数据中携带协议版本。新增事件类型必须允许旧客户端忽略；新增消息 part 类型应由旧客户端渲染为未知类型占位，而不是导致页面白屏。
-
-已有字段不得重命名或改变原有语义；新增字段优先保持向后兼容。协议示例只能使用占位值，不得包含真实密码、API Key、Token、用户隐私或可直接执行的危险命令。
+修改协议时核对路由、schema、客户端类型、错误码和相关测试，在同一变更中同步权威领域文档；仅在索引/状态变化时修改本入口。示例只用占位数据，不包含真实凭据、用户隐私或危险执行内容。

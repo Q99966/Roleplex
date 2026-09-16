@@ -8,13 +8,15 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `app/agent/loop.py`、`tools.py`、`write_capture.py`、`app/services/chat.py`、`tool_details.py`、`app/models.py`、锁定框架源码 |
 | 关联测试 | `backend/tests/test_tool_reliability_t0.py`、`test_workspace_batch_mutation.py`、`test_write_diff.py`、`test_agent_pipeline.py` |
-| 复核日期 | 2026-09-14 |
+| 复核日期 | 2026-09-16 |
 
-范围与验收关口见[路线计划](../../plan/tool-reliability-capability-roadmap-v1.md)，探针结果与可重复命令见
+历史范围见[阶段记录](../../plan/tool-reliability-capability-roadmap-v1.md)，探针结果与可重复命令见
 [T0 验证记录](../../testing/tool-reliability-t0.md)。本文负责事实投影与收尾契约；公开摘要字段只在
 [执行摘要](../public/messaging/execution-summary.md)定义。T1 的实现、回归和真实复测见 [T1 验证记录](../../testing/tool-reliability-t1.md)。
 
-## 一、T0 基线事实来源与缺口
+## 一、T0 历史基线事实来源与缺口
+
+本节为 2026-09-14 取证时的快照，含后来已修复的取消/保存缺口，不作为当前实现声明。现行文件边界持久证据与核对规则见[中断上下文](interruption-context.md)，当前收尾规则见以下各节。
 
 | 来源与关联代码 | 能证明什么 | 不能证明什么 / 保存时点 |
 |---|---|---|
@@ -47,7 +49,7 @@
 具体文件/版本/逐项结果与命令、服务回执继续受原详情权限和七天保留约束，不合并成一份回合总结。
 
 同一执行的 Provider 提议和返回仍在防腐层按真实 ID 配对，宿主身份不由模型指定。图预算停止凭
-GraphRecursionError 或受控 remaining_steps/派发状态确认；缺失结果使用 AGENT_PROTOCOL_ERROR，
+GraphRecursionError 或受控 remaining_steps/派发状态确认；缺失结果使用 AGENT_TOOL_RESULT_MISSING，旧 AGENT_PROTOCOL_ERROR 仅保留历史兼容，
 不凭 pending 数量猜测触顶，不用兜底文本判定预算。用户停止原样取消，不追加模型解释请求。
 
 原消息终态在同一短事务保存 `meta_json.stop_reason`，字段定义见[消息协议](../public/messaging/messages.md)。
@@ -66,7 +68,7 @@ ContextBuilder 继续校验会话、角色、成员和消息边界，使用既�
 
 ## 四、持久化、并发与兼容
 
-无表/列/索引变化，不需要迁移。`stop_reason` 使用现有消息 JSON 元数据，具体证据沿用原工具卡与加密详情。
+T1 本身未新增表/列/索引；`stop_reason` 使用既有消息 JSON 元数据，证据沿用工具卡与加密详情。后续中断事实交接已通过 `0018_file_effects` 增加文件边界证据表，见[数据模型](data-model.md)，不能据本节断言当前没有该持久化机制。
 新消息不再带 execution_summary_version 标记或 execution_summary part；已结束的旧记录不批量改写、不删除。
 旧前端可能只能显示“已停止”；新版通过消息 stop_reason 显示图预算提示，旧摘要保持隐藏。
 

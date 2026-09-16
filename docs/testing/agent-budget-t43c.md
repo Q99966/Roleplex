@@ -1,5 +1,7 @@
 # T4.3c 自定义与不限决策次数验收
 
+> 本页保留对应阶段的验证记录与参考步骤，不表示本次已重新运行。当前测试选择、环境与收费执行条件见[测试指南](README.md)；历史排期和验收关口不自动约束新任务。
+
 - 日期：2026-09-16。
 - 状态：实现与验证完成，用户已确认并授权提交。
 - 范围与语义以 [T4 计划](../plan/tool-reliability-capability-roadmap-v1.md)、[预算 v2](../protocol/public/rest/agent-budget.md)、[内部循环契约](../protocol/internal/agent-budget.md) 为准。

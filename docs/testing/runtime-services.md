@@ -1,5 +1,7 @@
 # W1d 后台服务收尾：验证与人工检查
 
+> 本页保留对应阶段的验证记录与参考步骤，不表示本次已重新运行。当前测试选择、环境与收费执行条件见[测试指南](README.md)；历史排期和验收关口不自动约束新任务。
+
 | 元数据 | 值 |
 |---|---|
 | 受众 | 测试维护者、Owner 人工验收 |
@@ -7,7 +9,7 @@
 | 复核日期 | 2026-09-11 |
 | 事实来源 | `backend/tests/test_runtime_*.py`、`test_world_runtime_operations.py`、Playwright 专项 |
 
-范围以[阶段计划](../plan/conversation-services-v1.md)为准，接口与限制以
+历史范围见[阶段记录](../plan/conversation-services-v1.md)，当前接口与限制以
 [运行实例协议](../protocol/public/messaging/runtime-services.md)和[World 协议](../protocol/public/rest/worlds.md)为准。
 数据目录、固定占位测试账号、轮次保留与端口沿用[统一测试指南](README.md)，不另建一套目录规则。
 

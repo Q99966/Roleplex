@@ -1,5 +1,7 @@
 # T4.2 准确停止与结果交接验证
 
+> 本页保留对应阶段的验证记录与参考步骤，不表示本次已重新运行。当前测试选择、环境与收费执行条件见[测试指南](README.md)；历史排期和验收关口不自动约束新任务。
+
 - 状态：实现及离线/真实验证完成，用户已确认并授权提交；复核日期：2026-09-15。
 - 范围：[T4 计划](../plan/tool-reliability-capability-roadmap-v1.md#85-小阶段与退出条件)。
 - 权威契约：[内部预算](../protocol/internal/agent-budget.md)、[消息停止原因](../protocol/public/messaging/messages.md)。

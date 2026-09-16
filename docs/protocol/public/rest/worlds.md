@@ -6,14 +6,14 @@
 | 状态 | 已实现 |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
-| 事实来源 | `backend/app/worlds/manager.py`、`backend/app/routers/worlds.py`、`backend/app/main.py` |
-| 关联测试 | `backend/tests/test_worlds.py`、`frontend/tests/world-switching.spec.ts` |
-| 复核日期 | 2026-09-11 |
+| 事实来源 | `backend/app/worlds/manager.py`、`backend/app/routers/worlds.py`、`backend/app/main.py`、`backend/scripts/run_world_server.py` |
+| 关联测试 | `backend/tests/test_worlds.py`、`frontend/tests/world-managed/world-switching.spec.ts` |
+| 复核日期 | 2026-09-16 |
 
 ## 世界与运行模式
 
 一个世界对应一个物理目录，数据库、JWT 签名密钥、模型 Key 加密密钥和附件文件均归该目录所有。
-正常模式由 `ROLEPLEX_WORLD` 选择世界；显式设置 `DATABASE_URL` 时进入兼容模式，数据库路径不再由
+后端进程通过 `ROLEPLEX_WORLD` 选择世界；正常包装器使用 CLI 的 `--world` / `--worlds-dir` 并传入环境，清除继承的 `DATABASE_URL`。直接启动后端时显式设置 `DATABASE_URL` 会进入兼容模式，数据库路径不再由
 世界推导，pytest 和既有 E2E 因而不受影响。兼容模式仍公开当前世界名，但不能通过界面切换。
 世界托管模式会忽略全局 `JWT_SECRET`，强制读取世界内 `.jwt-secret`，避免配置残留破坏跨世界隔离；
 兼容模式仍允许显式 `JWT_SECRET`。

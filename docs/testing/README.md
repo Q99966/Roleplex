@@ -6,7 +6,7 @@
 | 状态 | 已实现测试体系的使用指南 |
 | 维护者 | Roleplex |
 | 事实来源 | `backend/tests/`、`frontend/tests/`、Playwright 配置、pytest 配置与日志 v2 |
-| 复核日期 | 2026-09-10 |
+| 复核日期 | 2026-09-16 |
 
 本文是 Roleplex 测试分层、命令、端口、数据、账号、日志和人工排查方式的统一入口。接口断言仍以对应
 协议文档为权威，日志字段以 [日志 v2](../design/logging-v2.md) 为权威；本文不复制完整 wire schema。
@@ -19,11 +19,11 @@
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
 | 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 单聊、M4a 群聊与其他浏览器用户流程 |
 | 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 + 外部工作区 | 否 | W1a/C2/M4a、包装器重启、世界与工作区隔离 |
-| 结构化命令 E2E | `npm run test:e2e:commands` | fake | 临时 default 世界 + 外部工作区 | 否 | W1b 真实进程、输出/退出码、超时/停止与刷新恢复 |
+| 工作区/工具 E2E | `npm run test:e2e:commands` | fake | 临时 default 世界 + 外部工作区 | 否 | 文件/搜索/编辑、审批、后台服务、预算及相关界面 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
 | 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 + 外部工作区 | 是 | W1a 文件、W1b 命令、C2、M4a 与正常世界全链路 |
 
-默认开发回归只需要：
+按本次改动选择足以证明行为的层级；纯文档核对链接、命令和实现，低风险展示调整可复用现有相关测试。常用基础离线回归为：
 
 ```bash
 cd backend
@@ -34,6 +34,8 @@ npm run build
 npm run test:e2e
 ```
 
+工作区/工具与 World 流程分别使用 `test:e2e:commands` 和 `test:e2e:worlds`，不包含在普通 `test:e2e` 中；按受影响流程补充。
+
 涉及迁移时额外执行：
 
 ```bash
@@ -41,110 +43,28 @@ cd backend
 python scripts/check_migrations.py
 ```
 
-真实命令必须通过上表中的独立命令显式运行，不属于普通 CI 或默认回归。“显式”描述的是命令和配置隔离，
-不是要求必须由用户本人在终端执行：当用户已授权推进或完成一个验收标准包含真实 Provider 的阶段时，Agent
-应在说明联网与计费后主动运行对应真实命令。只有凭据缺失、用户明确禁止或该阶段尚未要求真实验收时才跳过，
-并必须明确报告未覆盖项。
+真实命令使用独立配置，不属于普通 CI 或默认回归。用户明确要求真实验证，或本次采用的验收范围包含它时，Agent 在说明联网计费后执行，无需再要求用户亲自运行。旧计划和历史验收记录本身不触发新的收费测试；缺凭据、环境受限或未覆盖的分支如实记录。
+
+浏览器测试前安装前后端依赖，在 `frontend/` 执行 `npx playwright install chromium`。启动测试的终端中，`python` 需指向已安装后端依赖的环境，Conda 或 venv 均可。
 
 ## 二、测试层级与边界
 
-T2 搜索与范围读取：`pytest tests/test_workspace_search_read.py tests/test_workspace_read_many.py -q`；
-浏览器 `npm run test:e2e:commands -- search-read.spec.ts read-many.spec.ts exploration.spec.ts`。
-离线基准 `python scripts/benchmark_workspace_scan.py`，只生成占位文件，按 data/scan-benchmarks/时间戳/files 分层，保留五轮。
-真实验收显式使用 `npm run test:e2e:real-world -- search-read-provider.spec.ts runtime-service-provider.spec.ts`，会联网计费，
-关闭真实截图/trace/video，原 Key 仍只在后端加密播种。数值、结果与未覆盖项见[T2 测试记录](tool-reliability-t2.md)。
+常用定向入口如下。后端命令在 `backend/` 执行；表中浏览器文件名在 `frontend/tests/` 对应目录，按所列 npm 脚本加 `-- <文件名>` 运行，不表示每项改动都运行整表。
 
-T1 调用证据与中断处理（新回复不生成统计摘要、不注入历史）：`pytest tests/test_execution_summary.py tests/test_tool_reliability_t0.py -q`；
-浏览器 `npm run test:e2e:commands -- execution-summary.spec.ts`。完整回归、真实 Provider 命令、实际用量、
-截图和人工验收见[T1 验证记录](tool-reliability-t1.md)。沿用命令类别/轮次/用例隔离，普通回归仍固定 fake。
-后端隔离命令与群聊 fixture 的 JWT 签发/校验共用单调推进的 UTC，以隔离已观察到的宿主墙钟回退；
-不增加认证容差，显式未来签发与过期 Token 仍须被拒绝，产品和真实浏览器认证时钟不变。
+| 改动范围 | 后端主要入口 | 浏览器主要入口 |
+|---|---|---|
+| 认证/资源边界 | `test_owner_bootstrap.py`、`test_password_policy.py`、`test_delete_semantics.py` | `test:e2e -- password-policy.spec.ts recycle-and-tombstone.spec.ts` |
+| 消息/群聊/上下文 | `test_chat_flow.py`、`test_context_builder.py`、`test_group_chat.py` | `test:e2e -- m2-chat.spec.ts m4-group-chat.spec.ts multiline-composer.spec.ts` |
+| 连接/历史窗口 | `test_ws_session.py`、`test_ws_recovery.py`、`test_history_window.py` | `test:e2e -- connection-session.spec.ts history-window.spec.ts` |
+| 搜索/读取 | `test_workspace_search_read.py`、`test_workspace_read_many.py` | `test:e2e:commands -- search-read.spec.ts read-many.spec.ts exploration.spec.ts` |
+| 写入/编辑/批次/diff | `test_workspaces.py`、`test_workspace_edit.py`、`test_workspace_replacements.py`、`test_workspace_batch_mutation.py`、`test_write_diff.py` | `test:e2e:commands -- workspace-edit.spec.ts replacements.spec.ts batch-mutation.spec.ts batch-unlimited.spec.ts write-diff.spec.ts` |
+| 写入等待/审批 | `test_write_admission.py`、`test_shell_approvals.py`、`test_shell_details.py` | `test:e2e:commands -- write-wait.spec.ts shell-approvals.spec.ts` |
+| 服务/诊断/World | [服务专项](runtime-services.md)、`test_service_discovery.py`、`test_write_diagnostics.py` | `test:e2e:commands -- runtime-services.spec.ts service-discovery.spec.ts write-diagnostics.spec.ts`；World 操作使用 `test:e2e:worlds` |
+| 决策预算/用量 | `test_agent_decision_budget.py`、`test_workflow_budget.py`、`test_execution_usage.py` | `test:e2e:commands -- agent-budget-settings.spec.ts role-usage.spec.ts` |
+| 参数拒绝/中断事实 | `test_tool_argument_recovery.py`、`test_interruption_context.py` | `test:e2e:commands -- argument-recovery.spec.ts interruption-context.spec.ts` |
+| 侧栏/角色/会话详情 | 按受影响 API 选择 | `test:e2e -- sidebar-tabs.spec.ts role-output-settings.spec.ts conversation-details.spec.ts` |
 
-T0 工具可靠性探针：`pytest tests/test_tool_reliability_t0.py -q`，只使用离线模型；
-完整组合命令、框架版本结论、缺陷复现与 T1 验收关口见[T0 验证记录](tool-reliability-t0.md)。
-现状断言通过不代表修复，T1 实施时须替换相应缺陷断言。T0 没有新增用户界面，不要求浏览器流程。
-用户追加授权的 T0 真实验证：backend 中显式运行
-`pytest tests/contract/test_tool_reliability_real.py -m contract -k openai_compatible -q -s --tb=no`，
-并复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`；两者联网计费，结论及未覆盖项见同一验证记录。
-前者只保存受控状态/回执比对和厂商 usage，使用既有命令类别/轮次/用例目录，不保存模型原始输入输出。
-
-S2 写入拒绝诊断：`pytest tests/test_write_diagnostics.py -q`；浏览器 `npm run test:e2e:commands -- write-diagnostics.spec.ts`。
-覆盖单项/批次可用性、清理优先级、跨会话明细隐藏、当前权限与实际暴露工具交集、身份失败无资源信息、
-以及已提交首项后的新阻塞。浏览器使用真实服务，检查 Owner 原位私有原因/建议、正常停服后继续修改、历史不重建及 Guest 隔离，
-目录为命令类别/本轮时间戳/default/write-diagnostics；关闭或失败均正常回收本轮服务，不清理正式服务。
-真实回归复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，单独报告拒绝诊断是否触发与结构核验，
-不强制模型先犯错，也不把正常先停服的成功场景称为已覆盖拒绝分支。S3 运行中编辑仍未实施。
-
-S1 服务发现：`pytest tests/test_service_discovery.py -q`；浏览器 `npm run test:e2e:commands -- service-discovery.spec.ts`。
-专项覆盖无 ID 列表、分页/状态变化、旧单项查询、身份/资源隔离、无可写 lease 或启动能力时仍能查询、
-故障不冒充空列表，以及当前消息/历史无原 runtime_id 的确定性查询。浏览器使用真实托管进程和 fake Provider，
-目录为命令类别/本轮时间戳/default/service-discovery；退出或失败均经本轮 Owner 正常停止并核验端口释放。
-真实验证复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，仅记录实际列表调用、详情及是否找到首轮实例，
-不强制模型忘记 ID、不强制列表路径，也不为期望路径重跑。S2 拒绝诊断及 S3 运行中编辑不在本轮验收范围。
-
-E2 批量写入/编辑：`pytest tests/test_workspace_batch_mutation.py -q`，覆盖整批预检、硬链接/重复目标、
-旧参数兼容及互斥、输入预算、顺序提交、部分成功、只重试失败项、未知 OS 写入、取消、重新授权、
-服务占用且不擅停、锁等待/两批准入、整批 diff 预算、采集/加密失败与崩溃结果缺口。
-`npm run test:e2e:commands -- batch-mutation.spec.ts` 覆盖实际文件/diff、逐文件折叠、预检失败不重写、
-刷新、Guest 隔离及 390px 窄屏；目录沿用命令类别/本轮时间戳/default/batch-mutation。
-真实入口仍为 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`，
-完整场景两轮创建/修改 index.html 与 note.txt，独立验证文件、页面和保留内容，并按实际私有 write_batch 观察采用路径。
-不强制 items；未触发的多文件编辑仍由确定性测试覆盖，真实报告分别列出实际路径，不为取得路径重跑计费。
-跨调用 exactly-once、自动回滚、未知结果自动重放不在本功能范围内。
-
-E2 批量读取切片：`pytest tests/test_workspace_read_many.py -q` 验证逐项失败、全文件 hash/续读、JSON 转义后预算、
-最大文件批次、严格参数、权限撤销、两批准入/每批两项、取消收尾、路径/敏感文件/链接、重复观察、
-加密失败降级和崩溃结果缺口。`npm run test:e2e:commands -- read-many.spec.ts` 验证一次调用的多文件节点、
-独立展开、部分失败、刷新仍看原版本及 Guest 不请求私有详情；目录为命令类别/本轮时间戳/default/read-many。
-真实入口仍复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，包含多文件读取目标并记录实际工具选择，
-触发批量读取时核验详情结构；不为取得该路径重复计费。该切片不覆盖尚未实现的批量写入/编辑及其重放语义。
-入口已统一为 workspace_read(items=...)；同一专项同时验证旧 path 形式的五字段响应、混合参数拒绝、原 read 权限撤销
-与实验名不再暴露。浏览器同时展开两种形式，确保单项旧记录不会被误显示为批量未记录；真实观察按私有 read_batch
-判定是否触发 items，不将所有 workspace_read 调用都算成批量。历史测试文件名保留，不代表仍暴露实验工具。
-
-E2 探索归组切片：`npm run test:e2e -- exploration-grouping.spec.ts` 验证顺序、边界、旧版/未知版本、
-重复身份与异常摘要；`npm run test:e2e:commands -- exploration.spec.ts` 使用真实前后端和确定性文件工具，
-验证连续 Read/List、重复读取计数、缺失文件、流式折叠选择、断线/刷新、正文与跨轮边界、Owner/Guest 详情隔离，
-以及隐藏子项阅读锚点和收起侧栏后的 390px 窄屏。测试目录为命令类别/本轮时间戳/default/exploration，沿用整轮清理。
-真实回归复用 `npm run test:e2e:real-world -- runtime-service-provider.spec.ts`，不新增或强迫特定读取路径的收费场景；
-此切片尚未实现批量文件执行，不据此声称覆盖 E2 的批量预算、部分提交、重放与子项状态。
-
-E1 局部编辑专项：`pytest tests/test_workspace_edit.py -q` 与
-`npm run test:e2e:commands -- workspace-edit.spec.ts`。验证唯一字面匹配（含重叠拒绝）、全文件 hash、
-UTF-8 片段预算、edit/write 共用提交与并发锁、服务占用拒绝、取消后已应用事实、详情保存降级及 Owner/Guest 隔离。
-测试目录复用命令类别/本轮时间戳/用例布局；浏览器仅新增单项编辑成功/冲突展示，不复制完整开发场景。
-真实入口仍为 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`：
-前者验证明确的 read → edit 工具契约；后者启用完整工具集并记录实际选择，不强制 edit，分别报告尝试数、成功数与 diff 核验。
-按阶段要求运行前告知联网计费，关闭真实截图/trace/video，结束时正常回收本轮服务；未触发能力不声称覆盖。
-
-D 写入 diff：后端 `pytest tests/test_write_diff.py -q`；浏览器
-`npm run test:e2e:commands -- write-diff.spec.ts`，覆盖实际文件写入、时间线位置、写入卡默认展开与单层折叠、长行软换行、刷新、Guest 隔离及展示降级。
-后端另验证队列/输入/输出预算、取消/关闭回收、密文身份、过期、历史不重建，以及计算/保存失败不重写文件。
-复用命令测试类别下本轮 `write-diff/` 用例目录，不平铺随机工作区；结束回收测试服务。
-真实入口复用 `npm run test:e2e:real-world -- workspace-provider.spec.ts runtime-service-provider.spec.ts`，会联网计费，
-验证原生创建/修改的私有差异和既有完整工具集两轮开发。未触发工具路径不冒充覆盖，真实截图/trace/video 关闭。
-差异预算、状态与隐私契约见[工具详情](../protocol/public/messaging/tool-details.md)，D 未包含局部编辑或批量文件执行。
-
-G 共同执行授权、read 全文件 hash 闭环、diff 候选试验与真实两轮场景的结果和未覆盖项见
-[G 验证记录](tool-execution-g.md)。工具开关/服务生命周期不因 diff 选型而改为固定启动入口；候选试验不属于产品功能。
-
-M 多行输入专项：`npm run test:e2e -- multiline-composer.spec.ts`；后端正文与模型投影验证：
-`pytest tests/test_context_builder.py tests/test_chat_flow.py -q`。浏览器覆盖剪贴板多行粘贴、Enter/Shift+Enter、
-组合事件与 229 确认键、光标中间 @ 补全、HTTP 失败/迟到响应、加载草稿、Owner/Guest `/ps`、自动增高及阅读锚点。
-复用普通 fake 前后端与隔离数据库；Guest 成员通过 `tests/seed_tool_viewer.py` 在严格匹配的本轮测试库播种，
-不增加产品成员管理旁路。桌面/窄屏截图仅使用无实际价值的占位代码。
-触屏软键盘验证是浏览器模拟，真实中文输入法和手机键盘仍需人工检查；M 不要求真实 Provider 计费验证。
-人工验收前刷新前端并重启后端，使模型侧使用保留正文空白的新投影。切换会话或刷新不保留未提交草稿，
-失败草稿保护仅作用于仍挂载的当前输入框，不是持久草稿功能。
-
-连接解耦 A 的专项浏览器命令是 `npm run test:e2e -- connection-session.spec.ts`，包含同一物理连接切换、
-组件重挂载、延迟同步确认、旧订阅错误/快照、真实掉线恢复、历史超时重试、Token 撤销与旧身份配置隔离。
-这些确定性场景复用普通 fake 测试服务和数据库，不新增测试数据目录类型。后端控制契约见
-`tests/test_ws_session.py`。`test:e2e:worlds` 继续覆盖世界切换，`test:e2e:real-world -- commands-provider.spec.ts`
-验证真实消息/工具链中切换会话仍复用连接；后者会联网计费。
-
-A 验收前需重启后端并刷新前端，使双方都支持 subscription_control_v1；旧后端会显示明确的协议能力错误。
-界面出现“正在同步会话”表示尚未收到同步完成确认，不是按固定延时推断连接失败。
+并发、取消、未知副作用、权限撤销和故障恢复以确定性测试为主；真实模型成功不能代替这些边界。新增或实质改变用户操作流程时覆盖成功及关键失败/权限路径。历史测试结果入口见文末。
 
 ### 2.1 后端 pytest
 
@@ -154,7 +74,6 @@ W1d 的故障矩阵、World 协调操作、专项命令和人工步骤统一见
 工作目录：`backend/`
 
 ```bash
-conda activate roleplex
 pytest -q
 ```
 
@@ -249,7 +168,7 @@ data/roleplex-real-e2e-<时间戳>.db
 
 ### 2.6 真实世界 E2E
 
-真实 Provider 阶段验收必须使用本流程，生成下述标准 World 目录，方便用户查看角色与会话；临时库契约测试仅作补充。不得以临时库通过代替本层，也不另外复制到项目 worlds 根或增加登记机制。
+需要证明正常 World 包装器、世界密钥、前后端和真实 Provider 的完整产品链路时使用本层，并保留标准 World 供查看。只核对 Provider 格式可选择 contract；隔离 Provider/Context 问题可选择 real 兼容库。不能用其中一层声称覆盖另一层。
 
 ```bash
 npm run test:e2e:real-world
@@ -274,7 +193,7 @@ data/roleplex-real-world-e2e-<时间戳>/
 fake 世界 E2E 负责，避免一次失败混入两个高风险变量。
 
 W1a 工作区与 World 使用同一 stamp，但位于两个根：World 在项目 `data/`，工作区在
-`/home/chen/workspace/testworkspace/roleplex-real-world-e2e-<时间戳>/default`。测试必须断言两者没有落入
+`<外部测试根>/roleplex-real-world-e2e-<时间戳>/default`。测试必须断言两者没有落入
 同一物理目录，真实 Key 只进入 World 加密数据库，不得进入浏览器或工作区。
 
 W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-provider.spec.ts`，仍复用本层配置、
@@ -294,7 +213,7 @@ W1b 的真实验收可单独运行 `npm run test:e2e:real-world -- commands-prov
 确定性边界入口为 `npm run test:e2e -- history-window.spec.ts` 和 `pytest tests/test_history_window.py -q`，
 覆盖超大单条、体积/条数、连续游标、局部失败、快照失效、版本竞态、LRU 与布局变化，不用真实生成替代这些边界测试。
 
-### 2.7 W1b 结构化命令与 W1c 审批 E2E
+### 2.7 工作区、命令与审批 E2E
 
 W1c 的独立入口是 `npm run test:e2e:commands -- shell-approvals.spec.ts`，复用本层 fake World、端口与轮次，
 用例位于该轮外部工作区的 `default/shell-approvals/`。覆盖 pending 前无执行、刷新恢复、批准、拒绝、停止和到期；
@@ -335,7 +254,7 @@ Owner 展开与刷新恢复、Guest 登录后的仅摘要展示及详情 API 403
 | fake commands E2E | 51178 | 8005 |
 
 测试配置使用 `127.0.0.1`，避免 Windows 上 `localhost` 解析到 IPv6 而后端只监听 IPv4。Playwright 设置
-`reuseExistingServer=false`，端口被其他进程占用时应先停止冲突进程，而不是让测试复用未知服务。
+`reuseExistingServer=false`；端口冲突时先确认占用进程的归属，只清理本次测试拥有的服务，或调整独立测试配置，不终止未知/用户服务。
 
 ## 四、数据、账号与保留
 
@@ -348,18 +267,18 @@ Owner 展开与刷新恢复、Guest 登录后的仅摘要展示及详情 API 403
 | real-world | `data/roleplex-real-world-e2e-<时间戳>/default` | `realtest<时间戳>` | `Roleplex-Real-E2E-1` | 5 轮 |
 | fake commands | `data/roleplex-command-e2e-<时间戳>/default` | `test<时间戳>` | `Roleplex-Test-1234` | 5 轮 |
 
-fake worlds 与 real-world 的外部工作区按相同 stamp 保存在
-`/home/chen/workspace/testworkspace/{roleplex-world-e2e-,roleplex-real-world-e2e-}<时间戳>/`，同样保留最近五轮。
-commands 的外部目录为 `/home/chen/workspace/testworkspace/roleplex-command-e2e-<时间戳>/default/`，与 World
-共用 stamp；在下一轮开始时保留最近五轮。停止/落库竞态额外使用用例独占、经迁移创建的新数据库。
+fake worlds、real-world 和 commands 的外部工作区使用 `ROLEPLEX_E2E_WORKSPACE_ROOT`，与 World 共享时间戳，按“类别/轮次 → World → 用例”组织。当前配置的默认值仍是 `/home/chen/workspace/testworkspace`，这是现有测试环境的兼容值，不是项目目录要求。其他机器运行前应指定可写的仓库外测试目录，例如从 `frontend/` 执行：
 
-工作区目录按测试类别、本轮时间戳、用例分层；不得把每个用例的随机目录直接堆在 `testworkspace` 根下。
-命令后端测试统一使用 `testworkspace/roleplex-command/test-<时间戳>/case-<随机标识>/`，清理以整轮为单位，
-保留最近五轮。旧布局归整时保留时间戳/用例对应关系，仍保留的测试库绑定同步指向新根；历史 execution
-快照保持当时路径，不改写执行历史。
-此前平铺的命令用例已归档到 `roleplex-command/legacy/test-<原时间戳>/<原随机标识>/`；没有时间戳的
-早期夹具放入 `legacy/undated/`，不伪造时间。`legacy/relocations-20260909.json` 保存相对路径映射，
-历史归档未删除且不参与新测试的自动淘汰；已按轮分组的旧目录迁入类别目录，沿用按轮保留规则。
+```bash
+mkdir -p ../../testworkspace
+ROLEPLEX_E2E_WORKSPACE_ROOT="$(realpath ../../testworkspace)" npm run test:e2e:commands
+```
+
+示例创建仓库外的专用 `testworkspace` 目录；PowerShell 可用 `$env:ROLEPLEX_E2E_WORKSPACE_ROOT` 设置绝对路径。该变量仅覆盖对应 Playwright 配置，不能声称已覆盖所有 pytest 夹具：`backend/tests/test_workspace_commands.py` 的 Linux 根仍硬编码为上述默认路径，Windows 使用 pytest 临时根。受该限制的机器需调整夹具后再运行相关测试，本次文档整理未改动测试实现。
+
+保留策略按整轮执行，当前目标为最近 5 轮。pytest 与 commands setup 在新轮开始时清理；普通 fake/real E2E 及 fake worlds/real-world 的 teardown 在结束时清理，不再统一描述成“全部在下一轮开始”。异常退出可能留下待下轮处理的数据。
+
+命令后端工作区为 `<测试根>/roleplex-command/test-<时间戳>/case-<随机标识>/`。旧平铺数据的 `legacy/` 与重定位记录属于历史保留资料，不参与新轮自动淘汰；修改目录时不能改写历史 execution 快照。
 
 要查看某轮 commands E2E，可从 `backend/` 运行
 `python scripts/run_world_server.py --world default --worlds-dir ../data/roleplex-command-e2e-<时间戳> --port 8000`，
@@ -402,8 +321,7 @@ real-world 都进入 real。区分真实测试存储模式：
 - `summary.database`：显式数据库 real smoke；
 - `summary.worlds`：real-world 世界路径。
 
-所有 E2E 默认关闭 trace/video，避免认证字段、DOM 和真实回复泄露；失败截图与经过脱敏的文本诊断可以
-进入 artifacts。
+现有 E2E 配置关闭 trace/video。截图策略并不统一：配置基线为 `only-on-failure`，多数真实工具专项通过 `test.use` 关闭截图；旧两轮 Provider 通用流程还会主动截图。因此不能把 real/real-world 整套描述为“截图全部关闭”。运行具体真实用例前核对其配置、主动截图和失败附件路径；真实内容、认证输入和凭据不应进入浏览器产物。fake 的受控占位页面可截图检查布局。
 
 ## 六、人工查看保留结果
 
@@ -457,7 +375,7 @@ real-world 账号是 `realtest<时间戳>`，密码是本页第四节的固定�
 
 - pytest fake 不证明真实 usage 字段；
 - real Provider 成功不证明世界切换；
-- E2E 全绿不替代新页面截图和人工查看；
+- 布局与可访问性需要相应浏览器断言或受控截图，人工验收是否为交付关口由本次任务决定；
 - 编译成功不代表权限、迁移或用户流程正确。
 
 ## 八、常见失败排查
@@ -499,57 +417,26 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 
 ## 九、新增测试时的规则
 
-- 先选最低且足够证明风险的层级，不把所有逻辑都塞进 Playwright；
-- 每轮使用隔离数据库/世界，不能依赖本机开发库；
-- 数量断言避免依赖其他 spec 造的数据；
-- 安全相关测试做变异验证，确认坏实现会使测试变红；
-- 新页面除断言外还要截图查看；
-- Provider fake 与真实测试物理、命令和日志分开；
-- 真实 Key 只能从环境或 `.env` 进入后端加密边界；
-- 不保存 trace/video、完整 Prompt、完整模型输出或原始工具参数；
-- 表结构变化必须运行迁移检查；
-- 测试完成后先人工验收，再提交。
+- 按改动风险选层级，先复用相关测试；纯文档或低风险展示调整不强制新增测试。
+- 使用隔离数据库/World 和受控文件；并发用例隔离共享状态，E2E 不依赖其他 spec 的数据数量或顺序。
+- 对安全与一致性缺陷保留能捕获回归的确定性断言；平台缺口、skip 和真实模型未触发路径单独说明。
+- 新增或改变用户流程时验证成功与关键失败路径；视觉检查使用可安全保存的页面。
+- fake 与真实 Provider 使用各自命令/配置，真实 Key 只在后端进入加密边界，不保存敏感截图、trace、Prompt 或输出原文。
+- schema 变化运行迁移检查；测试结束清理本轮启动的服务，按现有入口保留结果。
+- 完成报告说明实际运行范围。人工验收、提交与发布按当前任务授权处理，不从历史测试记录继承额外关口。
 
-工程级强约束见 [AGENTS.md](../../AGENTS.md)，各领域的具体关联测试见对应协议文档元数据。
+工程规则见 [AGENTS.md](../../AGENTS.md)，接口断言以领域协议为准。
 
-写入自动创建父目录的小阶段验证与人工检查见[父目录写入测试记录](workspace-write-parents.md)。
+## 十、历史验证记录索引
 
-写入队列与 Shell 审批互斥验证：`pytest tests/test_write_admission.py tests/test_shell_approvals.py tests/test_workspace_batch_mutation.py -q`；浏览器 `npm run test:e2e:commands -- write-wait.spec.ts shell-approvals.spec.ts batch-mutation.spec.ts`。结果见[写入等待测试记录](workspace-write-wait.md)。
+以下记录保留当时环境、命令、结果和缺口，不代表本次已重新运行，也不产生新的收费测试要求。当前行为与旧记录冲突时，核对现行领域协议和对应实现。
 
-小阶段 3 独立真实验证：`npm run test:e2e:real-world -- write-wait-provider.spec.ts`，会联网计费；使用隔离世界、后端加密播种，关闭截图/trace/video。批准与拒绝的实际并发路径结果见[写入等待测试记录](workspace-write-wait.md#补充真实-provider-验证)。
-
-小阶段 4 的历史 Token 求和、同配置真实小请求和证据缺口见[输出 Token 核查](token-usage-audit.md)。本次未改变模型默认参数或用量统计代码。
-
-角色最大输出的可视化输入、保存和恢复验证见[输出设置测试记录](role-output-settings.md)。
-
-侧栏切换、角色搜索与浅色主题浏览器回归见 `sidebar-tabs.spec.ts`，配合角色设置、认证、会话与回收站用例；设计范围见[侧栏与主题](../design/frontend-navigation-theme.md)。
-
-侧栏与浅蓝/薄荷主题的最终回归、截图和覆盖边界见[侧栏主题验证](sidebar-theme.md)。
-
-会话右侧概览/成员、扇形选择及窄屏抽屉验证见[会话详情测试](conversation-details.md)。
-
-小阶段 5 的预算未派发记录、部分提交/未知结果、取消竞争与独立真实 Provider 验证见[预算停止事实验证](budget-stop-facts.md)。
-
-T3 单文件多片段编辑的确定性、浏览器及独立真实 Provider 验证见[T3 验证记录](tool-reliability-t3.md)。
-
-T4.1 的图步数、模型决策、批次节点、SDK 重试与最后纯文本停止边界见[预算口径验证](agent-budget-t41.md)。
-
-Token Rhythm 中转的最小请求、流式和工具往返已单独核验，配置来源与历史失败边界见[中转接口核验](tokenrhythm-contract-check.md)。
-
-T4.2 的直接决策计数、最后工具交接、正常终态及中转真实 Provider 验证见[准确停止验证](agent-budget-t42.md)。
-
-T4.3a 的配置、消息链共享额度、迁移与真实群聊验证见[共享预算验证](agent-budget-t43a.md)。
-
-T4.3a 真实 World 群聊预算补验收：`npm run test:e2e:real-world -- workflow-budget-provider.spec.ts`。通过界面设置额度并 @全部 发送真实群聊，刷新核对结果；详情见[共享预算验证](agent-budget-t43a.md)。
-
-工具参数错误恢复的离线、浏览器与标准真实 World 验证见[参数恢复记录](tool-argument-recovery.md)，真实入口为 `npm run test:e2e:real-world -- argument-recovery-provider.spec.ts`。
-
-工作区工具说明、字段帮助、示例与实际导出 schema 对齐验证见[工具说明整理](workspace-tool-guidance.md)，真实 World 入口为 `npm run test:e2e:real-world -- tool-guidance-provider.spec.ts`。
-
-右侧角色执行用量、历史缺口与取消交接验证见[角色用量记录](role-execution-usage.md)。真实 World 命令：`npm run test:e2e:real-world -- role-usage-provider.spec.ts`。
-
-T4.3c 自定义超过256、不限模式、长循环与标准真实 World 验证见[自定义与不限次数验收](agent-budget-t43c.md)。
-
-批量 write/edit 取消固定项数与整批参数限制的回归、浏览器和标准真实 World 验收见[批次限制调整](batch-mutation-limits.md)。
-
-中断事实交接的权限、崩溃窗口、浏览器及标准真实 World验证见[中断执行验收](interruption-context.md)。
+| 主题 | 记录 |
+|---|---|
+| 工具取证与可信收尾 | [T0](tool-reliability-t0.md)、[T1](tool-reliability-t1.md)、[停止事实](budget-stop-facts.md) |
+| 文件搜索、编辑与写入 | [T2](tool-reliability-t2.md)、[T3](tool-reliability-t3.md)、[父目录](workspace-write-parents.md)、[写入等待](workspace-write-wait.md)、[批次限制调整](batch-mutation-limits.md) |
+| 服务与共同授权 | [后台服务](runtime-services.md)、[G 验证](tool-execution-g.md) |
+| 预算与用量 | [T4.1](agent-budget-t41.md)、[T4.2](agent-budget-t42.md)、[T4.3a](agent-budget-t43a.md)、[T4.3c](agent-budget-t43c.md)、[角色用量](role-execution-usage.md) |
+| 参数、说明与中断事实 | [参数恢复](tool-argument-recovery.md)、[工具说明](workspace-tool-guidance.md)、[中断交接](interruption-context.md) |
+| 界面 | [输出设置](role-output-settings.md)、[侧栏主题](sidebar-theme.md)、[会话详情](conversation-details.md) |
+| Provider 排障 | [Token 核查](token-usage-audit.md)、[中转接口核验](tokenrhythm-contract-check.md) |
