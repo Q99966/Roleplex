@@ -231,7 +231,8 @@ test('runs C2 and M4a in a fake physical world, then switches worlds', async ({ 
   const selector = page.getByLabel('切换世界')
   await expect(selector).toBeEnabled()
   await expect(selector).toHaveValue('alpha')
-  await expect(selector.locator('option')).toHaveCount(2)
+  await expect(selector.locator('option[value="alpha"]')).toHaveCount(1)
+  await expect(selector.locator('option[value="beta"]')).toHaveCount(1)
 
   page.once('dialog', (dialog) => void dialog.accept())
   await selector.selectOption('beta')

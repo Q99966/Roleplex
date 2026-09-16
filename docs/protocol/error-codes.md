@@ -114,7 +114,7 @@ WebSocket error frame 使用：
 | `RUNTIME_AUDIT_UNAVAILABLE` | 已实现 | 运行实例清理 | 409 | rejected | conditional | 回收审计记录不可用；保留失败门槛，不伪造完成 |
 | `WORLD_OPERATION_REQUIRES_MANAGED` | 已实现 | REST | 409 | rejected | no | 当前操作需要物理 World 模式 |
 | `WORLD_OPERATION_IN_PROGRESS` | 已实现 | REST | 409 | rejected | conditional | World 已接受切换，不允许覆盖或继续备份 |
-| `WORLD_OPERATION_FAILED` | 已实现 | REST | 503 | failed | conditional | World 导出/控制文件操作失败；不回显磁盘路径或异常原文 |
+| `WORLD_OPERATION_FAILED` | 已实现 | REST | 503 | failed | conditional | World 创建/导出/控制文件操作失败；不回显磁盘路径或异常原文 |
 | `WORLD_ACTIVE` | 已实现 | REST | 409 | rejected | conditional | 目标世界仍被后端使用，不能直接切入或破坏其租约 |
 | `HISTORY_CURSOR_EXPIRED` | 已实现 | REST | 409 | rejected | conditional | epoch 已改变；作废缓存后从最近窗口重新加载 |
 | `REQUEST_FAILED` | 已实现（兜底） | REST/日志 | 通常 500 | failed | conditional | 无法从异常 detail 提取稳定码时的最后兜底，不应用于已知业务分支 |
@@ -278,6 +278,8 @@ Provider 映射条件的权威说明见 [Agent 运行时](internal/agent-runtime
 |---|---|---|---:|---|---|---|
 | `WORLD_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 目标世界不存在或元数据无效 |
 | `WORLD_ALREADY_ACTIVE` | 已实现 | REST | 409 | rejected | no | 目标就是当前世界，无需重启 |
+| `WORLD_ALREADY_EXISTS` | 已实现 | REST | 409 | rejected | no | 创建名称已被目录占用，不覆盖既有内容 |
+| `WORLD_NAME_INVALID` | 已实现 | REST | 422 | rejected | no | 世界名为空白、路径或包含非法字符 |
 | `WORLD_SWITCH_REQUIRES_WRAPPER` | 已实现 | REST | 409 | rejected | conditional | 后端不是由世界包装器启动，不能安全退出并重启 |
 | `WORLD_REQUIRES_NEWER_ROLEPLEX` | 部分实现 | startup | — | rejected | conditional | 世界格式或 Alembic revision 更新；当前已有可读阻断异常，但尚未输出独立机器码字段 |
 

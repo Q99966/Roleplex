@@ -8,6 +8,7 @@ type AppState = {
   worldName: string
   worlds: WorldSummary[]
   worldSwitchingSupported: boolean
+  worldCreationSupported: boolean
   switchingWorld: string | null
   /** 仅存活角色：侧边栏、成员选择器和统计都只应看到这些。 */
   roles: Role[]
@@ -29,6 +30,7 @@ type AppState = {
   logout: () => void
   loadWorkspace: () => Promise<void>
   loadWorlds: () => Promise<void>
+  createWorld: (name: string) => Promise<WorldSummary>
   switchWorld: (name: string) => Promise<void>
   loadWorkspaceBindings: () => Promise<void>
   createWorkspaceBinding: (body: Parameters<typeof api.createWorkspace>[0]) => Promise<void>
@@ -60,6 +62,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   worldName: 'default',
   worlds: [],
   worldSwitchingSupported: false,
+  worldCreationSupported: false,
   switchingWorld: null,
   roles: [],
   roleDirectory: {},
@@ -162,11 +165,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         worldName: result.current,
         worlds: result.items,
         worldSwitchingSupported: result.switching_supported,
+        worldCreationSupported: result.creation_supported === true,
       })
     } catch {
       if (epoch !== getAuthEpoch() || get().switchingWorld) return
-      set({ worlds: [], worldSwitchingSupported: false })
+      set({ worlds: [], worldSwitchingSupported: false, worldCreationSupported: false })
     }
+  },
+
+  /** 创建成功直接合并列表；刷新失败不能把已完成的创建误报为失败。 */
+  createWorld: async (name) => {
+    const epoch = getAuthEpoch()
+    const world = await api.createWorld(name)
+    if (epoch === getAuthEpoch() && !get().switchingWorld) {
+      set((state) => ({ worlds: [...state.worlds.filter((item) => item.name !== world.name), world]
+        .sort((a, b) => a.name.localeCompare(b.name)) }))
+    }
+    return world
   },
 
   /** 请求包装器切换世界，等待新健康检查后清除跨世界 Token 并重新加载。 */

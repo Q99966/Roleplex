@@ -12,6 +12,7 @@ test.describe('A1 world visibility', () => {
     const selector = page.getByLabel('切换世界')
     await expect(selector).toBeVisible()
     await expect(selector).toBeDisabled()
+    await expect(page.getByRole('button', { name: '创建世界', exact: true })).toBeDisabled()
     await expect(page.getByText('需使用世界包装器启动').first()).toBeVisible()
   })
 
@@ -36,5 +37,15 @@ test.describe('A1 world visibility', () => {
     await page.getByTitle('打开设置', { exact: true }).click()
     await expect(page.getByRole('dialog', { name: '系统与环境设置' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '工作区', exact: true })).toHaveCount(0)
+    await page.getByRole('tab', { name: '运行世界与存储' }).click()
+    await expect(page.getByRole('button', { name: '创建世界', exact: true })).toHaveCount(0)
+    const denied = await page.evaluate(async () => {
+      const response = await fetch('/api/worlds', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` },
+        body: JSON.stringify({ name: 'guest-forbidden-world' }),
+      })
+      return response.status
+    })
+    expect(denied).toBe(403)
   })
 })

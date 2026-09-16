@@ -9,6 +9,7 @@ import { type Conversation, type Role } from '../api/client'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 import { RuntimeLimit } from './RuntimeLimit'
 import { WorldBackup } from './WorldBackup'
+import { WorldCreate } from './WorldCreate'
 
 export interface ModalProps {
   onClose: () => void
@@ -340,6 +341,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
               </div>
 
               {/* 切换世界操作区 */}
+              <WorldCreate />
               <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
                   <Server size={14} className="text-indigo-400" />

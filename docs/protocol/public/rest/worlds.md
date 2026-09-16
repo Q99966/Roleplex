@@ -7,7 +7,7 @@
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/worlds/manager.py`、`backend/app/routers/worlds.py`、`backend/app/main.py`、`backend/scripts/run_world_server.py` |
-| 关联测试 | `backend/tests/test_worlds.py`、`frontend/tests/world-managed/world-switching.spec.ts` |
+| 关联测试 | `backend/tests/test_worlds.py`、`backend/tests/test_world_creation.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/world-managed/world-creation.spec.ts` |
 | 复核日期 | 2026-09-16 |
 
 ## 世界与运行模式
@@ -35,6 +35,7 @@ Authorization: Bearer <Owner Token>
 {
   "current":"default",
   "switching_supported":true,
+  "creation_supported":true,
   "items":[
     {"name":"default","current":true,"created_at":"2026-08-25T09:00:00+00:00"}
   ]
@@ -42,6 +43,23 @@ Authorization: Bearer <Owner Token>
 ```
 
 仅 Owner 可调用。目录缺少合法世界元数据时不进入列表，避免把任意目录暴露为可切换世界。
+
+`creation_supported` 表示当前使用物理 World 模式；不要求包装器控制文件。旧服务未返回此字段时，前端禁用创建入口。
+
+## 创建世界
+
+`POST /api/worlds` 仅当前 World Owner 可调用，body 为 `{"name":"another-world"}`，不接受额外字段。
+成功返回 `201` 和 `{"name":"another-world","current":false,"created_at":"..."}`。
+名称为 1–64 字符，去除首尾空白后由 WorldManager 校验；拒绝空白、`.`、`..`、控制字符和 Windows 非法路径字符。
+
+创建独立空数据库、附件目录和双密钥，不复制账号、模型配置或聊天记录；数据库表仍由首次启动的 Alembic 迁移创建。
+创建不会切换当前 World，也不会停止当前任务或后台服务。前端成功后更新世界列表，用户另行选择切换，沿用既有回收确认；新世界首次注册成为 Owner。
+
+同名目录（包括不完整目录）返回 `409 WORLD_ALREADY_EXISTS`，不覆盖、不认领已有内容；并发同名请求最多一个成功。
+非法名称返回 `422 WORLD_NAME_INVALID`，请求结构不合法沿用统一校验错误。
+兼容数据库模式返回 `409 WORLD_OPERATION_REQUIRES_MANAGED`；已接受切换返回 `409 WORLD_OPERATION_IN_PROGRESS`。
+创建与切换、备份共用操作锁；磁盘创建在线程中执行，请求取消仍等待操作完成。取消或网络断开可能发生在创建成功后，客户端应刷新列表核对，不能自动重试。
+磁盘失败返回 `503 WORLD_OPERATION_FAILED`，不回显路径或异常原文。
 
 ## 切换世界
 

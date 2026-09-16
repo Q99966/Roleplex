@@ -134,7 +134,7 @@ export type MessageHistory = HistoryWindow & { items: Message[]; event_seq: numb
 export type SendMessageResult = { message: Message; generation_id: number | null; generation_ids: number[]; duplicate: boolean }
 export type HealthStatus = { status: string; stream_epoch: string; world_name: string; world_managed: boolean }
 export type WorldSummary = { name: string; current: boolean; created_at: string }
-export type WorldList = { current: string; switching_supported: boolean; items: WorldSummary[] }
+export type WorldList = { current: string; switching_supported: boolean; creation_supported?: boolean; items: WorldSummary[] }
 export type WorkspaceAvailability = 'available' | 'unavailable' | 'busy' | 'disabled'
 export type WorkspaceBinding = {
   id: number
@@ -282,6 +282,9 @@ export const api = {
 
   // 世界存档：列表仅 Owner 可读，切换必须由包装器托管后端。
   worlds: () => request<WorldList>('/api/worlds'),
+  createWorld: (name: string) => request<WorldSummary>('/api/worlds', {
+    method: 'POST', body: JSON.stringify({ name }),
+  }),
   backupWorld: (signal?: AbortSignal) => request<Blob>('/api/worlds/backup', {
     method: 'POST', body: JSON.stringify({ confirm_cleanup: true }), cache: 'no-store', signal,
   }, 'blob'),

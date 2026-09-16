@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import sqlite3
 import threading
 import asyncio
 import tempfile
@@ -32,6 +33,13 @@ manager = WorldManager(settings.worlds_dir)
 class WorldSwitchRequest(BaseModel):
     """世界切换请求。"""
 
+    name: str = Field(min_length=1, max_length=64)
+
+
+class WorldCreateRequest(BaseModel):
+    """创建独立空世界；名称的路径约束由 WorldManager 统一校验。"""
+
+    model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=64)
 
 
@@ -114,6 +122,7 @@ async def list_worlds(_owner: Annotated[User, Depends(require_owner)]) -> dict:
     return {
         "current": settings.world_name,
         "switching_supported": switching_supported(),
+        "creation_supported": settings.world_managed,
         "items": [
             {
                 "name": world.name,
@@ -123,6 +132,33 @@ async def list_worlds(_owner: Annotated[User, Depends(require_owner)]) -> dict:
             for world in manager.list_worlds()
         ],
     }
+
+
+@router.post("", status_code=201)
+async def create_world(
+    payload: WorldCreateRequest,
+    _owner: Annotated[User, Depends(require_owner)],
+) -> dict:
+    """当前 Owner 创建空世界，不复制账号、不切换或停止当前任务。
+
+    同名目录由排他 mkdir 拒绝；请求取消后等待磁盘操作完成，避免与切换交错。
+    数据库表由新世界首次启动时的 Alembic 迁移创建。
+    """
+    if not settings.world_managed:
+        raise HTTPException(409, 'WORLD_OPERATION_REQUIRES_MANAGED')
+    async with runtime_manager.world_operation_lock:
+        if runtime_manager.switch_target is not None:
+            raise HTTPException(409, 'WORLD_OPERATION_IN_PROGRESS')
+        try:
+            world = await settled(asyncio.create_task(
+                asyncio.to_thread(manager.create, payload.name), context=copy_context()))
+        except FileExistsError:
+            raise HTTPException(409, 'WORLD_ALREADY_EXISTS') from None
+        except ValueError:
+            raise HTTPException(422, 'WORLD_NAME_INVALID') from None
+        except (OSError, sqlite3.Error):
+            raise HTTPException(503, 'WORLD_OPERATION_FAILED') from None
+    return {"name": world.name, "current": False, "created_at": world.created_at}
 
 
 @router.post("/switch", status_code=202)

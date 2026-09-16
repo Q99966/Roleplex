@@ -18,7 +18,7 @@
 | 后端 pytest | `pytest -q` | fake | 每轮独立 SQLite DB | 否 | 服务、权限、状态机、迁移相关业务行为 |
 | Provider contract | `pytest tests/contract -m contract -q` | real | 不走产品会话 DB | 是 | 厂商流式、工具、取消、usage 和错误格式 |
 | 普通浏览器 E2E | `npm run test:e2e` | fake | 每轮独立 SQLite DB | 否 | 单聊、M4a 群聊与其他浏览器用户流程 |
-| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 世界 + 外部工作区 | 否 | W1a/C2/M4a、包装器重启、世界与工作区隔离 |
+| 世界切换 E2E | `npm run test:e2e:worlds` | fake | 临时 alpha/beta 及界面新建世界 + 外部工作区 | 否 | 界面创建、W1a/C2/M4a、包装器重启、世界与工作区隔离 |
 | 工作区/工具 E2E | `npm run test:e2e:commands` | fake | 临时 default 世界 + 外部工作区 | 否 | 文件/搜索/编辑、审批、后台服务、预算及相关界面 |
 | 真实 Provider E2E | `npm run test:e2e:real` | real | 每轮独立 SQLite DB | 是 | 真实浏览器到 Provider，隔离世界基础设施干扰 |
 | 真实世界 E2E | `npm run test:e2e:real-world` | real | 临时 default 世界 + 外部工作区 | 是 | W1a 文件、W1b 命令、C2、M4a 与正常世界全链路 |
@@ -143,13 +143,17 @@ npm run test:e2e:worlds
 ```text
 data/roleplex-world-e2e-<时间戳>/
 ├── alpha/
-└── beta/
+├── beta/
+└── 新世界-<时间戳>/
 ```
 
 后端通过正常 `run_world_server.py` 包装器启动。测试验证 alpha → beta 重启、Token 失效、物理数据库与
 双密钥隔离，以及切换后重新注册 Owner。切换前先在 alpha 中完成 C2 两轮 fake 单聊和 M4a 两角色串行
 群聊，并直接核对 JSONL 的稳定层、history、chain/execution 与 fake usage。该测试因此同时证明 C2/M4a
 在正常世界包装器中的确定性路径，不产生模型费用。
+
+`world-creation.spec.ts` 验证界面创建、非法名称、重名、取消切换、新世界首次 Owner 注册及空配置，结束时切回来源世界。
+后端 `tests/test_world_creation.py` 覆盖创建权限、兼容模式、同名并发、切换互斥和磁盘失败；普通 E2E 的 `worlds.spec.ts` 覆盖 Guest 隐藏入口与接口拒绝。
 
 ### 2.5 真实 Provider E2E（兼容数据库）
 
