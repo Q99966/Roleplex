@@ -1,15 +1,16 @@
+import { WorkflowModule } from './workflows/WorkflowModule'
 import { ConversationWorkspace } from './ConversationWorkspace'
 import { RoleUsagePanel } from './RoleUsagePanel'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Bot, Info, UsersRound, LockKeyhole } from 'lucide-react'
+import { Bot, Info, UsersRound, LockKeyhole, GitBranch } from 'lucide-react'
 import type { Conversation, Role } from '../api/client'
 import { useAppStore } from '../store/app'
 
-type Module = 'overview' | 'members'
-const MODULES = [{ id: 'overview', name: '会话概览', Icon: Info }, { id: 'members', name: '会话成员', Icon: UsersRound }] as const
+type Module = 'overview' | 'members' | 'workflows'
+const MODULES = [{ id: 'overview', name: '会话概览', Icon: Info }, { id: 'members', name: '会话成员', Icon: UsersRound }, { id: 'workflows', name: '工作流', Icon: GitBranch }] as const
 
-type WheelId = Module | 'reserved-1' | 'reserved-2' | 'reserved-3'
-const WHEEL_ITEMS = [...MODULES, ...(['reserved-1', 'reserved-2', 'reserved-3'] as const).map(id => ({ id, name: '未开放', Icon: LockKeyhole }))]
+type WheelId = Module | 'reserved-1' | 'reserved-2'
+const WHEEL_ITEMS = [...MODULES, ...(['reserved-1', 'reserved-2'] as const).map(id => ({ id, name: '未开放', Icon: LockKeyhole }))]
 const SLOT_COUNT = 5
 const STEP_ANGLE = 90 / SLOT_COUNT
 const FAN_RADIUS = 320
@@ -47,7 +48,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
   const { roles, roleDirectory, worldName, user } = useAppStore()
   const [module, setModule] = useState<Module>('overview')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [order, setOrder] = useState<WheelId[]>(['overview', 'members', 'reserved-1', 'reserved-2', 'reserved-3'])
+  const [order, setOrder] = useState<WheelId[]>(['overview', 'members', 'workflows', 'reserved-1', 'reserved-2'])
   const [radius, setRadius] = useState(FAN_RADIUS)
   const [paint, setPaint] = useState({ background: '#f4fafc', text: '#435e6d', line: '#dce9ef' })
   const [rotation, setRotation] = useState(0)
@@ -57,7 +58,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const positions = useRef({ overview: 0, members: 0 })
+  const positions = useRef({ overview: 0, members: 0, workflows: 0 })
   const current = MODULES.find(value => value.id === module)!
 
   useLayoutEffect(() => {
@@ -186,11 +187,11 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
             }}>
             {(drawer ? MODULES : [...order, ...order.slice(0, SLOT_COUNT - 1)].map(id => WHEEL_ITEMS.find(item => item.id === id)!)).map(({ id, name, Icon }, index) => {
               const ghost = !drawer && index >= SLOT_COUNT
-              const reserved = id !== 'overview' && id !== 'members'
+              const reserved = id !== 'overview' && id !== 'members' && id !== 'workflows'
               const sector = fanSector(index, SLOT_COUNT, radius)
               return <button key={`${index}:${id}`} type="button" role="menuitemradio" aria-label={name} aria-checked={module === id}
                 aria-hidden={ghost || undefined} disabled={reserved || ghost} tabIndex={ghost || reserved ? -1 : 0} aria-disabled={reserved || !!rotation}
-                title={name} onClick={() => { if (id === 'overview' || id === 'members') select(id) }} style={drawer ? undefined : {
+                title={name} onClick={() => { if (id === 'overview' || id === 'members' || id === 'workflows') select(id) }} style={drawer ? undefined : {
                   clipPath: `path("${sector.path}")`, backgroundColor: paint.background, color: paint.text,
                 }}
                 className={drawer
@@ -202,7 +203,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
                 </svg>}
                 <span className={drawer ? 'flex items-center gap-2' : 'absolute flex flex-col items-center gap-1 whitespace-nowrap'}
                   style={drawer ? undefined : { left: sector.label[0], top: sector.label[1], transform: `translate(-50%, -50%) rotate(${-rotation}deg)`, transition: rotation ? 'transform 300ms ease-in-out' : 'none' }}>
-                  <Icon size={14} />{drawer ? name : id === 'overview' ? '概览' : id === 'members' ? '成员' : '未开放'}
+                  <Icon size={14} />{drawer ? name : id === 'overview' ? '概览' : id === 'members' ? '成员' : id === 'workflows' ? '工作流' : '未开放'}
                 </span>
               </button>
             })}
@@ -238,6 +239,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
           })}
           {!conversation.role_ids.length && <p className="py-6 text-center text-xs text-slate-500">会话内暂未绑定任何角色</p>}
         </div>
+        <div hidden={module !== 'workflows'}><WorkflowModule drawer={drawer} onExpand={() => { if (drawer) close() }} /></div>
       </div>
     </aside>
   </>

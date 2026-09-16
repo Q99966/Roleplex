@@ -10,10 +10,14 @@ from .config.logging import current_request_id
 
 
 async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
-    """将请求校验失败映射为稳定的公开错误信封。"""
+    """将请求校验失败映射为稳定错误信封，只返回字段位置与原因。
+
+    不回显原始 input/异常 ctx：坐标指数溢出等非有限值不能让 422 序列化变成 500。
+    """
+    details = [{key: error[key] for key in ('type', 'loc', 'msg') if key in error} for error in exc.errors()]
     return JSONResponse(
         status_code=422,
-        content={"error": {"code": "VALIDATION_ERROR", "message": "请求参数无效", "details": exc.errors(), "request_id": current_request_id()}},
+        content={"error": {"code": "VALIDATION_ERROR", "message": "请求参数无效", "details": details, "request_id": current_request_id()}},
     )
 
 

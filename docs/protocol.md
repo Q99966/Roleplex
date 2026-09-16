@@ -31,6 +31,7 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
+| REST 会话工作流 | 已实现串行编排与节点控制 | [public/rest/workflows.md](protocol/public/rest/workflows.md) |
 | REST 会话管理与回收站 | 已实现（单聊与串行群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
 | REST 当前 World 工作区 | 已实现（Owner 单聊及群聊文件工具；含批量修改与多片段编辑） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |

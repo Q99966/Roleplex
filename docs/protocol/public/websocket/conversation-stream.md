@@ -157,3 +157,9 @@ page_bytes 计入完整 snapshot 信封（含 subscription_id）。未提交该�
 - 同一 `(message_id, revision, delta_seq)` 已应用过的事件必须丢弃
 - 未知事件类型或未知 part 类型必须忽略或降级为占位，不得导致页面崩溃
 - 收到的 `stream_epoch` 与本地记录不一致时，必须放弃本地游标并按快照重建
+
+### 工作流状态提示
+
+兼容新增 `workflow_updated`：负载 `{run_id,status,revision}`，在运行状态提交后发布，复用 conversation_id、event_seq 和 stream_epoch。
+不推送私有任务、目录或工具详情。Owner 使用工作流 REST 完整快照恢复；Guest 仅获得该公开提示。
+事件可以重复/乱序，快照按运行 revision 合并，未知客户端可忽略并继续推进事件游标。

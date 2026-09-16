@@ -344,3 +344,25 @@ class ErrorCode(StrEnum):
 5. 部分领域文档仍复制错误码含义，后续应改为“适用范围 + 本文链接”，避免双重权威。
 
 WORKSPACE_BATCH_BUSY 的写入等待原因按[工作区协议](public/rest/workspaces.md#原生修改的有界等待)定义；兼容主码，阶段/原因不从异常文本生成。
+
+## 会话工作流
+
+| 错误码 | HTTP | 语义 |
+|---|---|---|
+| `WORKFLOW_NOT_FOUND` / `WORKFLOW_ATTEMPT_NOT_FOUND` | 404 | 对象不存在或不属于当前会话/运行 |
+| `WORKFLOW_REVISION_CONFLICT` | 409 | 保存或控制版本过期，读取新状态后显式重试 |
+| `WORKFLOW_REQUEST_CONFLICT` | 409 | 同一启动键被用于不同请求 |
+| `WORKFLOW_RUN_ACTIVE` | 409 | 当前会话已有活动运行，不能再启动或激活历史运行 |
+| `WORKFLOW_EXECUTION_UNSUPPORTED` | 422 | 图可保存，但当前执行器仅接受覆盖全部节点的唯一串行路径；分支、环路和断路不派发任务 |
+| `WORKFLOW_ROLE_UNAVAILABLE` | 422 / 运行 blocked | 角色已退出、停用、删除或不属于 Owner |
+| `WORKFLOW_INPUT_UNAVAILABLE` | 409/422 / 运行 blocked | 输入引用不属于执行路径的前序节点，或选中的上游尝试未完成/不是当前结果 |
+| `WORKFLOW_CAPABILITY_CHANGED` | 409 / 运行 blocked | 运行启动时已有的角色/工作区工具权限被撤销，需核查后明确重试 |
+| `WORKFLOW_RESOURCE_CHANGED` | 409 / 运行 blocked | 工作区身份、根或有效性变化 |
+| `WORKFLOW_WORLD_CLOSING` | 409 / 运行 blocked | World 正在关闭，禁止继续派发 |
+| `WORKFLOW_STATE_CONFLICT` | 409 | 当前状态不能接受确认操作 |
+| `WORKFLOW_RETRY_REVIEW_REQUIRED` | 409 | 运行仍活动或未明确确认事实核对 |
+| `WORKFLOW_INTERRUPTED` | — | 后端重启收敛旧活动运行，不自动重放 |
+| `WORKFLOW_STATE_UNAVAILABLE` | — | 协调读取/写入暂不可用，仅固定安全诊断，不输出异常正文 |
+
+图形字段错误沿用 `VALIDATION_ERROR`；图校验细分 type 为 workflow_path_invalid、workflow_node_invalid、workflow_input_invalid。
+工作区换绑的 `WORKSPACE_BUSY` 包含等待人工确认的活动流程。详细状态和权限见[工作流协议](public/rest/workflows.md)。

@@ -1,3 +1,6 @@
+import { WorkflowProvider } from './workflows/WorkflowContext'
+import { WorkflowSurface } from './workflows/WorkflowCanvas'
+import { getAuthEpoch } from '../api/client'
 import { ConversationDetails } from './ConversationDetails'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -90,6 +93,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   }
 
   return (
+    <WorkflowProvider key={`workflow:${getAuthEpoch()}:${worldName}:${user?.id}:${activeConv.id}`} conversation={activeConv}>
     <section className="flex flex-1 min-w-0 h-full overflow-hidden bg-slate-950 text-slate-300">
       <div className="flex-1 flex flex-col h-full min-w-0">
         {processPanel && user?.is_owner && <ProcessPanel key={`process:${worldName}:${user.id}:${activeConv.id}`} conversationId={activeConv.id} onClose={() => setProcessPanel(false)} />}
@@ -156,6 +160,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
           </div>
         </div>
 
+        <WorkflowSurface>
         <div ref={feedRef} role="log" aria-label="会话消息" aria-live="off" onScroll={onScroll}
           style={{ overflowAnchor: 'none' }} className="flex-1 overflow-y-auto p-6">
           <div ref={contentRef} className="space-y-4">
@@ -233,10 +238,12 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             if (user?.is_owner) setProcessPanel(true)
             else setProcessNotice('仅 Owner 可查看和管理会话进程。')
           }} />
+        </WorkflowSurface>
       </div>
 
       <ConversationDetails conversation={activeConv} open={detailsOpen} drawer={!wideDetails} onClose={() => setDetailsOpen(false)}
         onEditRole={onOpenRoleModal} onManageMembers={onManageMembers} />
     </section>
+    </WorkflowProvider>
   )
 }

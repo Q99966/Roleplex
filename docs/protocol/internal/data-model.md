@@ -511,3 +511,17 @@ agent_executions.decision_count、workflow_budgets.used_decisions、model_call_u
 
 ### FileEffect（中断事实，0018）
 原生文件提交边界的最小证据：id、execution_id（级联归属AgentExecution）、call_id、item_index、payload_encrypted、updated_at、expires_at。唯一键(execution_id,call_id,item_index)，按execution_id/id查询。加密体包含同一身份及相对路径、操作类型、prepared/confirmed、前后hash、结果字节及目录计数，不保存源码。七天后密文不可读并按启动清理；旧工具详情保持原结构。记录不证明跨文件事务或任意崩溃恰好一次。
+
+### 会话工作流（0019）
+
+- `workflow_definitions`：字符串主键 id、conversation_id（级联删除）、name、revision、graph JSON、created_at/updated_at；按 conversation_id 索引。保存使用乐观版本，不直接修改运行。
+- `workflow_runs`：id、conversation_id、definition_id、owner_id、definition_revision、snapshot JSON、workspace_binding_id/root 快照、唯一 chain_id、trigger_message_id、request_key/digest、input_text、status、revision、cursor、selected JSON、rerun_downstream、error_code、时间戳。conversation_id + request_key 唯一；conversation_id + status 索引。workspace 身份是不可变历史快照，不随资源删除 SET NULL；执行时按当前资源重新授权。
+- `workflow_attempts`：id、run_id（级联删除）、node_id、number、status、upstream_ids JSON、retry_source_id、instruction、input_message_id、唯一 generation_id、唯一 execution_id、error_code、created_at/ended_at。run_id + node_id + number 唯一；消息/generation/execution 引用缺失时保留尝试并明确未知。
+
+控制状态不复制消息、工具密文或文件内容；沿用 WorkflowBudget、AgentExecution、FileEffect。流程正文属于业务数据库私有内容，不进入日志。SQLite 迁移实际重放、降级和模型一致性已验证；PostgreSQL 仅离线 SQL，不代表运行部署验收。公开对象与控制语义见[会话工作流](../public/rest/workflows.md)。
+
+工作流 graph JSON 兼容保存 `nodes[].position`（可空有限 x/y 坐标）及分支、环路的连线；不新增表列。
+启动时只接受唯一完整串行路径，按拓扑冻结节点顺序和位置快照；坐标变化不改变权限或执行顺序。
+
+工作流节点 JSON 兼容新增可空 color（严格六位十六进制颜色）。节点类型与颜色随定义进入运行快照，
+属于现有 JSON 的编辑元数据，不增加 SQL 表列；旧节点未设置颜色时前端按类型显示默认色。

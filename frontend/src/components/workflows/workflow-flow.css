@@ -1,0 +1,16 @@
+/* 沿用工作台浅色面板和蓝灰连线，只限定 React Flow 画布内部。 */
+.workflow-flow .react-flow {
+  --xy-background-color: #f3f9fc;
+  --xy-edge-stroke: #739bb0;
+  --xy-edge-stroke-selected: #357999;
+  --xy-controls-button-background-color: #fff;
+  --xy-controls-button-background-color-hover: #e6f1f6;
+  --xy-controls-button-color: #435e6d;
+  --xy-controls-button-border-color: #dce9ef;
+  --xy-minimap-background-color: #f4fafc;
+}
+.workflow-flow .workflow-task { width: 204px; min-height: 112px; }
+.workflow-flow .react-flow__handle { width: 11px; height: 11px; background: #739bb0; border: 2px solid white; }
+.workflow-flow .react-flow__node:focus-visible { outline: 2px solid #357999; outline-offset: 4px; border-radius: 16px; }
+.workflow-flow .react-flow__controls-button { width: 30px; height: 30px; }
+.workflow-flow .react-flow__edge.selected .react-flow__edge-path { stroke-width: 3; }

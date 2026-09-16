@@ -527,3 +527,6 @@ class FileEffect(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
     __table_args__=(UniqueConstraint('execution_id','call_id','item_index',name='uq_file_effect_call_item'),
         Index('ix_file_effect_execution_id','execution_id','id'))
+
+# 统一 Alembic metadata 入口；工作流只关联原执行记录。
+from .workflows.models import WorkflowDefinition, WorkflowRun, WorkflowAttempt  # noqa: E402,F401

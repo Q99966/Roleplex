@@ -355,6 +355,11 @@ class ConversationScheduler:
             execution.started_at = job.started_at
             await session.commit()
 
+        from ..workflows.service import permit_generation
+        if not await permit_generation(int(job.generation_id)):
+            await self._fail_job(job_id)
+            return
+
         with log_context(
             request_id=payload.get("request_id"),
             user_id=payload["triggered_by_user_id"],

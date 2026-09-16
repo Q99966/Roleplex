@@ -8,7 +8,7 @@ from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..models import Conversation, ConversationMember, Generation, Role, User
+from ..models import Conversation, ConversationMember, Generation, Role, User, WorkflowRun
 from ..realtime import store as event_store
 from ..schemas import (
     ConversationCreate,
@@ -170,7 +170,8 @@ async def update_conversation_workspace(
     from ..runtime.registry import quota_view
     changed = conversation.workspace_binding_id != payload.workspace_binding_id
     active_chain = exists(select(Generation.id).where(Generation.conversation_id == conversation_id,
-        Generation.status.in_(['queued', 'running'])))
+        Generation.status.in_(['queued', 'running']))) | exists(select(WorkflowRun.id).where(
+        WorkflowRun.conversation_id == conversation_id, WorkflowRun.status.in_(['queued', 'running', 'waiting', 'stopping'])))
     if changed and await session.scalar(select(active_chain)):
         raise HTTPException(409, 'WORKSPACE_BUSY')
     if changed and (await quota_view('conversation', conversation_id))['used'] and not payload.confirm_cleanup:

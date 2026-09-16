@@ -25,7 +25,7 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import agent_budget, approvals, artifacts, auth, conversations, messages, model_configs, roles, runtime, workspaces, worlds
+from .routers import agent_budget, approvals, artifacts, auth, conversations, messages, model_configs, roles, runtime, workspaces, worlds, workflows
 from .runtime.manager import manager as runtime_manager
 from .runtime.registry import RuntimeRejected
 from .runtime.wrapper import watch_wrapper
@@ -100,6 +100,8 @@ async def lifespan(_app: FastAPI):
         initialize_current_pool()
         runtime_started = True
         await conversation_scheduler.start(chat.run_scheduled_generation)
+        from .workflows import service as workflow_service
+        await workflow_service.initialize()
         await retention.purge_expired_on_startup()
         close_wrapper_watch = watch_wrapper()
         yield
@@ -109,6 +111,8 @@ async def lifespan(_app: FastAPI):
         raise
     finally:
         close_wrapper_watch()
+        from .workflows import service as workflow_service
+        await workflow_service.shutdown()
         shutdown_error = None
         try:
             if runtime_started:
@@ -223,6 +227,7 @@ app.include_router(workspaces.router)
 app.include_router(approvals.router)
 app.include_router(runtime.router)
 app.include_router(agent_budget.router)
+app.include_router(workflows.router)
 app.include_router(ws_router)
 
 

@@ -115,3 +115,10 @@ W1c 继续复用上述执行事实；审批生命周期新增 tool.approval_requ
 T2 扫描沿用既有工具/执行身份，新增 tool.scan_completed 的字段与语义见日志 v2；不逐块记录，不保存查询或匹配正文。
 
 写入准入新增 tool.write_wait_completed，按既有 Trace/call 关联排队与锁等待耗时，语义与白名单见[日志设计](../../design/logging-v2.md)，不记录文件参数或正文。
+
+### 会话工作流
+
+节点仍复用原 request_id（保存在运行快照的启动来源）、chain_id、generation_id、execution_id、role_id 和工具身份，
+不建立并存 Trace。人工节点无 Provider usage。`workflow.coordination_failed` / `workflow.state_unavailable` 只记录固定
+WORKFLOW_STATE_UNAVAILABLE 与失败状态，不输出输入、定义、文件路径、模型正文或异常对象。
+公开 `workflow_updated` 是业务事件，事实源仍为控制表与既有执行表，不从日志恢复或重放节点。

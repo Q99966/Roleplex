@@ -30,7 +30,7 @@ def _bounded_text(value):
     return _text(value)
 
 
-async def interruption_context(session,*,conversation,role,current,triggered_by_user_id):
+async def interruption_context(session,*,conversation,role,current,triggered_by_user_id, source_message_id=None, workflow_source=False):
     """仅向当前Owner角色提供最近中断回复的最小事实。
 
     Args:
@@ -39,6 +39,8 @@ async def interruption_context(session,*,conversation,role,current,triggered_by_
         role：当前目标角色；群聊不读取其他角色的私有证据。
         current：严格消息边界，正文不作关键词判断。
         triggered_by_user_id：真实触发者，不接受模型覆盖。
+        source_message_id：工作流服务已关联的精确来源；普通聊天保持最近中断语义。
+        workflow_source：允许对已授权节点尝试（包括群聊、已完成结果）核对；不得来自模型参数。
     """
     if triggered_by_user_id is None or triggered_by_user_id!=role.created_by or current.sender_id!=triggered_by_user_id:
         return None
@@ -46,8 +48,9 @@ async def interruption_context(session,*,conversation,role,current,triggered_by_
     if owner is None or not owner.is_owner:
         return None
     source=await session.scalar(select(Message).where(Message.conversation_id==conversation.id,
-        Message.sender_type=='role',Message.sender_id==role.id,Message.id<current.id).order_by(Message.id.desc()).limit(1))
-    if source is None or source.status not in {'stopped','error','interrupted'}:
+        Message.sender_type=='role',Message.sender_id==role.id,
+        Message.id==source_message_id if workflow_source else Message.id<current.id).order_by(Message.id.desc()).limit(1))
+    if source is None or (not workflow_source and source.status not in {'stopped','error','interrupted'}):
         return None
     value={'source_message_id':source.id,'status':source.status,'facts':[],
         'scope':'仅当前角色最近中断执行；不是任务验收或其他角色执行的完整记录。','incomplete':False}
@@ -56,6 +59,8 @@ async def interruption_context(session,*,conversation,role,current,triggered_by_
     if execution is None:
         value.update(incomplete=True,reason='旧回复缺少可关联执行记录，不能推断未执行。')
         return _bounded_text(value)
+    if workflow_source:
+        value['scope']='仅所选工作流节点尝试的当前授权事实；不是其他尝试或任务验收。'
     value['source_execution_id']=execution.execution_id
     value['source_chain_id']=execution.chain_id
     # 非文件工具只保留服务器公开终态；不注入原始stdout、脚本或模型输出。
@@ -75,7 +80,7 @@ async def interruption_context(session,*,conversation,role,current,triggered_by_
         value['facts'].append(fact)
     lease=await session.scalar(select(ExecutionWorkspace).where(ExecutionWorkspace.execution_id==execution.execution_id))
     binding=await session.get(WorkspaceBinding,conversation.workspace_binding_id) if conversation.workspace_binding_id else None
-    if (conversation.type!='single' or lease is None or binding is None or not binding.active or not binding.file_tools_enabled
+    if ((conversation.type!='single' and not (workflow_source and conversation.type=='group')) or lease is None or binding is None or not binding.active or not binding.file_tools_enabled
         or binding.created_by!=triggered_by_user_id or lease.workspace_binding_id!=binding.id
         or lease.root_path_snapshot!=binding.root_path or binding.workspace_kind!='managed_directory'):
         value.update(incomplete=True,reason='没有可用且仍获授权的文件证据；现有调用状态仅供参考，不能由中断推断未执行。')

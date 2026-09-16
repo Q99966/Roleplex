@@ -10,6 +10,7 @@
 | 测试命令、端口、隔离数据、账号与排障 | [测试指南](testing/README.md) |
 | 当前日志结构与持久化设计 | [日志 v2](design/logging-v2.md) |
 | 当前工作台侧栏、配色与详情交互设计 | [工作台设计](design/frontend-navigation-theme.md) |
+| 会话工作流的范围与验收记录 | [可操作工作流图](plan/conversation-workflows-v1.md)、[接口契约](protocol/public/rest/workflows.md) |
 | 旧里程碑的结果、未实施方向与历史原文 | [计划索引](plan/README.md)、[归档说明](archive/README.md) |
 
 ## 阅读与维护

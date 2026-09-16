@@ -191,6 +191,27 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         .where(Message.conversation_id == conversation.id, history_boundary)
         .order_by(Message.id.asc())
     )).all()
+    # 节点只交接明确选择的上游尝试；旧运行/旧尝试不能从普通历史混入本轮结果。
+    workflow_attempt = None
+    if (current.meta_json or {}).get('workflow_attempt_id'):
+        from ..models import WorkflowAttempt, WorkflowRun, Generation
+        workflow_attempt = await session.get(WorkflowAttempt, current.meta_json['workflow_attempt_id'])
+        run = await session.get(WorkflowRun, workflow_attempt.run_id) if workflow_attempt else None
+        if (run is None or run.conversation_id != conversation.id or run.owner_id != request.triggered_by_user_id
+            or workflow_attempt.input_message_id != current.id):
+            raise ContextBuildError('WORKFLOW_ATTEMPT_NOT_FOUND')
+        upstream_messages = []
+        for aid in workflow_attempt.upstream_ids:
+            upstream = await session.get(WorkflowAttempt, aid)
+            if upstream is None or upstream.run_id != run.id or upstream.status != 'completed':
+                raise ContextBuildError('WORKFLOW_INPUT_UNAVAILABLE')
+            generation = await session.get(Generation, upstream.generation_id) if upstream.generation_id else None
+            if generation and generation.assistant_message_id:
+                row = await session.get(Message, generation.assistant_message_id)
+                if row is not None:
+                    upstream_messages.append(row)
+        history_rows = upstream_messages
+
     projected: list[_ProjectedHistory] = []
     for source in history_rows:
         message = project_message(source, target_role_id=role.id)
@@ -219,8 +240,16 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
 
     # 事实仅依赖已鉴权的中断来源，不匹配用户关键词，也不改写当前用户请求。
     from .interruption import interruption_context
-    recovery = await interruption_context(session,conversation=conversation,role=role,current=current,
-        triggered_by_user_id=request.triggered_by_user_id)
+    recovery = None
+    if workflow_attempt is not None:
+        if workflow_attempt.retry_source_id:
+            from ..workflows.service import attempt_facts
+            previous = await session.get(WorkflowAttempt, workflow_attempt.retry_source_id)
+            if previous and previous.run_id == run.id and previous.node_id == workflow_attempt.node_id:
+                recovery = await attempt_facts(session, run, previous)
+    else:
+        recovery = await interruption_context(session,conversation=conversation,role=role,current=current,
+            triggered_by_user_id=request.triggered_by_user_id)
     recovery_message = None
     if recovery:
         candidate = HumanMessage(content=recovery)
@@ -240,6 +269,12 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         input_budget=input_budget,
         pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)),
     )
+    if workflow_attempt is not None and len(history) != len(projected):
+        # 显式要求的上游结果不能静默裁掉；让 Owner 缩小节点输入后创建新尝试。
+        required = token_estimate(fixed_tokens + sum(item.estimated_tokens for item in projected))
+        raise ContextBudgetExceeded(estimated_tokens=required.estimated_tokens,
+            safety_margin_tokens=required.safety_margin_tokens, input_budget_tokens=input_budget,
+            estimator_kind=required.estimator_kind)
     if recovery_message is not None:
         history = (*history, recovery_message)
     total_estimate = token_estimate(fixed_tokens + history_tokens)
