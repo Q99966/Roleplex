@@ -513,3 +513,17 @@ class ToolExecutionDetail(Base):
 
 # 迁移和运行时共用同一 metadata 入口；不在业务路径执行 create_all。
 from .runtime.models import CleanupItem, CleanupOperation, RuntimeEntry, RuntimeGate  # noqa: E402,F401
+
+
+class FileEffect(Base):
+    """单文件操作边界的加密事实，写前和提交后更新同一身份。"""
+    __tablename__='file_effects'
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id',ondelete='CASCADE'),nullable=False)
+    call_id: Mapped[str] = mapped_column(String(128),nullable=False)
+    item_index: Mapped[int] = mapped_column(Integer,nullable=False)
+    payload_encrypted: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
+    __table_args__=(UniqueConstraint('execution_id','call_id','item_index',name='uq_file_effect_call_item'),
+        Index('ix_file_effect_execution_id','execution_id','id'))

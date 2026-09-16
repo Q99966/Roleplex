@@ -226,7 +226,7 @@ async def _mutate_many(operation: str, items: list[dict], *, authorize: Callable
                     raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
                 node.update(status='running', applied=None)
                 result = await getattr(service, operation)(item['path'], **{k: v for k, v in item.items() if k != 'path'},
-                    capture_applied=applied,
+                    capture_applied=applied, _effect_index=index, _recheck=authorize,
                     **({'capture_parent_created': receipt.current.parent_created} if operation == 'write' else {}))
                 node.update(status='success', applied=True, result=asdict(result))
             # 计算和等待不得占用文件锁/命令锁；下一项重新授权，服务可能已经变化。

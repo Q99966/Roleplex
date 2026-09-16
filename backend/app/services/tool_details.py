@@ -328,6 +328,8 @@ async def recover_details(session: AsyncSession) -> None:
     Args:
         session：启动恢复事务，由调用者提交。
     """
+    from ..models import FileEffect
+    await session.execute(update(FileEffect).where(FileEffect.expires_at <= datetime.now(timezone.utc)).values(payload_encrypted=None))
     await session.execute(update(ToolExecutionDetail).where(ToolExecutionDetail.expires_at <= datetime.now(timezone.utc))
                           .values(input_encrypted=None, output_encrypted=None))
     await session.execute(update(ToolExecutionDetail).where(ToolExecutionDetail.status == 'running').values(status='interrupted'))

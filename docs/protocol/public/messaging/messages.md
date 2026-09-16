@@ -182,3 +182,5 @@ Context schema 4 恢复原正常正文与工具占位投影；stopped 仅加简�
 不再提供 facts-only 预算降级，按原消息边界裁剪，不改变上下文窗口预算。停止原因不会成为正常历史的新增前缀。
 
 T4.2 兼容新增 decision_budget，表示已接纳工具结果保存后，无额度开始下一次模型决策；status=stopped，不代表任务失败或已验收，也不承诺自动恢复。graph_budget 保留底层保护含义。未知停止原因按通用停止显示。
+
+Context schema 5不改变上述消息wire：最近本角色回复中断时可在后续请求中交接已鉴权、核对后的执行事实，不把error/interrupted原文整体重放，不生成可见摘要或新恢复按钮。内部语义见[中断上下文](../../internal/interruption-context.md)。

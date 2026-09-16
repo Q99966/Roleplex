@@ -409,6 +409,7 @@ ContextBuilder 成功后记录一次 `context.loaded`，并把同一组诊断字
 | `conversation_prefix_hash` | string | L2 最终规范化内容的 SHA-256 |
 | `checkpoint_hash` | string（可选） | C3 后实际注入 checkpoint 的内容 SHA-256；C3 前省略 |
 | `tool_policy_hash` | string | 本轮可见工具策略的 SHA-256 |
+| `interruption_context_hash` | string | 仅有中断交接时记录其最终数据消息SHA-256，不记录路径或原文 |
 | `context_message_count` | integer | 实际进入历史的终态消息数，不含当前消息 |
 | `context_truncated_message_count` | integer | 因预算从历史中裁剪的消息数 |
 | `estimated_context_tokens` | integer | 本地估算的完整输入 token，不含安全余量 |
@@ -959,3 +960,5 @@ T4.2 沿用 generation.budget_stopped，reason 兼容新增 decision_budget；pr
 执行异常的 generation.failed 可增加 error_phase（provider_request/tool_execution/event_processing/runtime）与 error_type（固定允许的异常类标签，未知为 OtherError）；不保存异常正文。具体协议配对故障优先使用各自 AGENT_TOOL_* / AGENT_EVENT_STREAM_INCOMPLETE 错误码。
 
 用量观测增加 usage.record_failed 事件，仅含既有 generation_id/execution_id、可选 call_index 和固定 error_type；不记录 usage 原始载荷或异常正文。页面用量来自业务记录，不从日志反推；采集失败不终止任务。
+
+中断事实采集兼容新增 `tool.evidence_record_failed`：仅记录既有 execution_id、tool_call_id、安全 error_type；不得记录路径、证据体、源码或异常原文。记录失败不改写文件提交结果；无新增 Trace。

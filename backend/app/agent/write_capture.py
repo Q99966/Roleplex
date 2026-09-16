@@ -93,8 +93,13 @@ class WriteReceipt:
 class WriteCaptureScope:
     """一个 generation 的采集所有者；框架子任务只继承同一受控对象。"""
 
-    def __init__(self):
-        """创建仅由当前 generation 持有的空凭据集合。"""
+    def __init__(self, execution_id: str | None = None):
+        """创建当前generation凭据集合。
+
+        Args:
+            execution_id：聊天宿主执行；省略时不启用持久边界证据。
+        """
+        self.execution_id = execution_id
         self.receipts: dict[str, WriteReceipt | ReadBatchReceipt | BatchMutationReceipt] = {}
         self.started: dict[str, tuple[object, float]] = {}
 

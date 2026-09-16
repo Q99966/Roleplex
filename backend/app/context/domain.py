@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from langchain_core.messages import BaseMessage
 
 
-# v4 移除历史统计摘要注入，保留原正文、工具占位与准确的停止标记。
-CONTEXT_SCHEMA_VERSION = 4
+# v5 仅在中断来源存在时交接核对事实；动态事实不进入稳定system前缀。
+CONTEXT_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ class ContextFingerprints:
     role_prefix_hash: str
     conversation_prefix_hash: str
     tool_policy_hash: str
+    interruption_hash: str | None = None
 
 
 @dataclass(frozen=True)

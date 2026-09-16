@@ -51,6 +51,7 @@ docs/protocol/
 | Agent 运行时（领域事件、E0 execution、工具安全、MCP） | 内部/部分已实现 | [internal/agent-runtime.md](protocol/internal/agent-runtime.md) |
 | 角色执行用量 | 已实现待验收，仅 Owner 观测 | [public/rest/execution-usage.md](protocol/public/rest/execution-usage.md) |
 | World Agent 默认预算 | v2：T4.3c 自定义与不限模式已人工验收 | [public/rest/agent-budget.md](protocol/public/rest/agent-budget.md) |
+| 中断执行事实交接 | 已人工验收，内部协议 | [internal/interruption-context.md](protocol/internal/interruption-context.md) |
 | Agent 执行预算与计数 | T4.2/T4.3a 已验收；不限模式已人工验收，时间截止暂缓 | [internal/agent-budget.md](protocol/internal/agent-budget.md) |
 | 执行事实与可信收尾 | T1 已验收；预算未派发记录已人工验收 | [internal/execution-facts.md](protocol/internal/execution-facts.md) |
 | 日志、请求关联与异步链路观测 | 内部/已实现 | [internal/observability.md](protocol/internal/observability.md) |

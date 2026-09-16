@@ -54,6 +54,7 @@ def _context_log_fields(context: ContextBuildResult) -> dict[str, object]:
         "conversation_prefix_hash": fingerprints.conversation_prefix_hash,
         # Checkpoint 在 C3 前不存在；无值字段必须省略，不能用空串伪造一个版本。
         "tool_policy_hash": fingerprints.tool_policy_hash,
+        **({"interruption_context_hash": fingerprints.interruption_hash} if fingerprints.interruption_hash else {}),
         "context_message_count": context.budget.included_message_count,
         "context_truncated_message_count": context.budget.truncated_message_count,
         "estimated_context_tokens": estimate.estimated_tokens,
@@ -491,7 +492,7 @@ async def run_scheduled_generation(
     tool_args: dict[str, str] = {}
     command_calls: dict[str, tuple[ToolCallStarted, float]] = {}
     from ..agent.write_capture import WriteCaptureScope, write_capture_scope
-    write_captures = WriteCaptureScope()
+    write_captures = WriteCaptureScope(execution_id=execution_id)
     write_capture_token = write_capture_scope.set(write_captures)
     async def finish_pending(pending_status: str) -> None:
         """回收后消费仍由原任务持有的凭据，不重放工具。

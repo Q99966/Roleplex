@@ -651,7 +651,7 @@ async def create_workspace_tools(
                 async with locked(_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock())):
                     authorized = await mutation_service(tool_name)
                     operation = authorized.write if tool_name == 'workspace_write' else authorized.edit
-                    result = await operation(path, **arguments, capture_applied=receipt.applied,
+                    result = await operation(path, **arguments, capture_applied=receipt.applied, _recheck=lambda: mutation_service(tool_name),
                         **({'capture_parent_created': receipt.parent_created} if tool_name == 'workspace_write' else {}))
                     result_value = json.loads(authorized.json_result(result))
                     if tool_name == 'workspace_write':

@@ -209,34 +209,63 @@ class WorkspaceFileService:
 
     async def write(self, path: str, content: str, *, expected_sha256: str | None = None,
                     capture_applied: Callable[[bytes | None, bytes], None] | None = None,
-                    capture_parent_created: Callable[[], None] | None = None) -> WorkspaceWriteResult:
+                    capture_parent_created: Callable[[], None] | None = None, _effect_index: int = 0, _recheck: Callable | None = None) -> WorkspaceWriteResult:
         """新建或按 hash 替换；只在确认提交后交出本次前后版本。
 
         Args:
             path：授权工作区内相对路径。
             content：新 UTF-8 内容。
+            _effect_index：宿主批次节点序号，不由模型指定。
+            _recheck：保存写前证据后重新鉴权，避免异步等待期间撤权被绕过。
             capture_parent_created：每个父目录成功创建时同步记录计数，不包含路径。
             expected_sha256：更新时必需的全文件旧 hash。
             capture_applied：内部私有观察器，只能同步预留，不能等待计算或执行额外写入。
         """
         from .write_admission import locked
+        from ..services.file_effects import checkpoint
         async with locked(self._lock):
             target, current, encoded = self._prepare_write(path, content, expected_sha256)
-            if current is None:
-                self._create_write_parents(path, capture_parent_created=capture_parent_created)
-                # 目录创建不等于文件提交；外部新建目标必须重新走版本检查。
-                target, current, encoded = self._prepare_write(path, content, expected_sha256)
-                try:
-                    with target.open("xb") as handle:
-                        handle.write(encoded)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                except FileExistsError:
-                    raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT") from None
-                _capture_applied(capture_applied, None, encoded)
-                return WorkspaceWriteResult(created=True, bytes=len(encoded), sha256=_sha256(encoded))
-
-            return self._replace_existing(path, current, encoded, capture_applied)
+            before_hash = _sha256(current) if current is not None else None
+            after_hash = _sha256(encoded)
+            created_count = 0
+            def parent_created():
+                """同步累计已创建目录，再交给既有调用凭据。"""
+                nonlocal created_count
+                created_count += 1
+                if capture_parent_created is not None:
+                    capture_parent_created()
+            async def save(state):
+                """Args:
+                    state：操作前或确认提交后的最小证据状态。
+                """
+                return await checkpoint(self.execution_id,path=path,operation='write',item_index=_effect_index,
+                    before_hash=before_hash,after_hash=after_hash,bytes_count=len(encoded),state=state,
+                    created_parent_count=created_count)
+            evidence_waited = await save('prepared')
+            if evidence_waited and _recheck is not None and await _recheck() is None:
+                raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+            try:
+                if current is None:
+                    self._create_write_parents(path, capture_parent_created=parent_created)
+                    # 排队及建目录后目标出现时仍要求版本匹配，不把新建悄悄变成覆盖。
+                    target, current, encoded = self._prepare_write(path, content, expected_sha256)
+                    try:
+                        with target.open("xb") as handle:
+                            handle.write(encoded)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                    except FileExistsError:
+                        raise WorkspaceFileError("WORKSPACE_FILE_REVISION_CONFLICT") from None
+                    _capture_applied(capture_applied, None, encoded)
+                    result = WorkspaceWriteResult(created=True, bytes=len(encoded), sha256=_sha256(encoded))
+                else:
+                    result = self._replace_existing(path, current, encoded, capture_applied)
+            except BaseException:
+                # 没有提交回执只能保留prepared；目录副作用与文件是否提交分别表达。
+                await save('prepared')
+                raise
+            await save('confirmed')
+            return result
 
     def _write_target(self, path: str) -> Path:
         """无副作用检查全部已有祖先；缺失后缀只作为待创建路径返回。
@@ -351,11 +380,13 @@ class WorkspaceFileService:
 
     async def edit(self, path: str, old_text: str | None = None, new_text: str | None = None, *, expected_sha256: str,
                    replacements: list[dict] | None = None,
-                   capture_applied: Callable[[bytes | None, bytes], None] | None = None) -> WorkspaceWriteResult:
+                   capture_applied: Callable[[bytes | None, bytes], None] | None = None, _effect_index: int = 0, _recheck: Callable | None = None) -> WorkspaceWriteResult:
         """唯一字面匹配后修改已有 UTF-8 文件，不解释正则或自动补全上下文。
 
         Args:
             path：授权根内已有普通文件。
+            _effect_index：宿主批次节点序号，不由模型指定。
+            _recheck：保存写前证据后重新鉴权，避免异步等待期间撤权被绕过。
             replacements：多个基于同一原始版本的片段，与旧字段互斥。
             old_text：非空、必须唯一匹配的旧片段。
             new_text：替换片段，可为空但不删除文件。
@@ -363,9 +394,17 @@ class WorkspaceFileService:
             capture_applied：成功提交后共享 D 差异采集。
         """
         from .write_admission import locked
+        from ..services.file_effects import checkpoint
         async with locked(self._lock):
             current, encoded = self._prepare_edit(path, old_text, new_text, expected_sha256, replacements=replacements)
-            return self._replace_existing(path, current, encoded, capture_applied)
+            values = dict(path=path,operation='edit',item_index=_effect_index,
+                before_hash=_sha256(current),after_hash=_sha256(encoded),bytes_count=len(encoded))
+            evidence_waited = await checkpoint(self.execution_id,**values,state='prepared')
+            if evidence_waited and _recheck is not None and await _recheck() is None:
+                raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+            result = self._replace_existing(path, current, encoded, capture_applied)
+            await checkpoint(self.execution_id,**values,state='confirmed')
+            return result
 
     def _prepare_edit(self, path: str, old_text: str | None = None, new_text: str | None = None, expected_sha256: str | None = None, *, replacements: list[dict] | None = None) -> tuple[bytes, bytes]:
         """单文件提交与批量预检共用精确替换规则，不把预检内容作为未来提交快照。

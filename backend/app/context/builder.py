@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -217,12 +217,31 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
             estimator_kind=fixed_estimate.estimator_kind,
         )
 
+    # 事实仅依赖已鉴权的中断来源，不匹配用户关键词，也不改写当前用户请求。
+    from .interruption import interruption_context
+    recovery = await interruption_context(session,conversation=conversation,role=role,current=current,
+        triggered_by_user_id=request.triggered_by_user_id)
+    recovery_message = None
+    if recovery:
+        candidate = HumanMessage(content=recovery)
+        extra = estimate_messages_tokens([candidate])
+        estimate = token_estimate(fixed_tokens + extra)
+        if estimate.estimated_tokens + estimate.safety_margin_tokens > input_budget:
+            candidate = HumanMessage(content='最近一次回复发生中断，执行证据无法完整装入上下文；不能据此认定操作未执行。以当前用户要求为准，必要时核对当前状态，不盲重放。')
+            extra = estimate_messages_tokens([candidate])
+            estimate = token_estimate(fixed_tokens + extra)
+        if estimate.estimated_tokens + estimate.safety_margin_tokens <= input_budget:
+            recovery_message = candidate
+            fixed_tokens += extra
+
     history, history_tokens, truncated = _select_history(
         projected,
         fixed_tokens=fixed_tokens,
         input_budget=input_budget,
         pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)),
     )
+    if recovery_message is not None:
+        history = (*history, recovery_message)
     total_estimate = token_estimate(fixed_tokens + history_tokens)
     budget = ContextBudget(
         effective_context_window=effective_window,
@@ -233,6 +252,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         truncated_message_count=truncated,
     )
     fingerprints = ContextFingerprints(
+        interruption_hash=stable_hash(recovery_message.content) if recovery_message is not None else None,
         runtime_prefix_hash=stable_hash(runtime_prefix),
         role_prefix_hash=stable_hash(role_prefix),
         conversation_prefix_hash=stable_hash(conversation_prefix),

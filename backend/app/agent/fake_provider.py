@@ -192,6 +192,11 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':123},'id':'bad-schema'}]),
             ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':'confirmed'},'id':'corrected'}]),
             ScriptedTurn(text='参数修正后已完成。')])
+    if '[INTERRUPTION_SETUP_FAKE]' in prompt:
+        return ScriptedChatModel(turns=[ScriptedTurn(tool_calls=[{'name':'workspace_write','id':'interruption-create',
+            'args':{'path':'interruption.txt','content':'alpha=1\n'}}]),ScriptedTurn(text='等待用户停止。'*300)],delay=delay)
+    if '请将已写好的alpha改为2' in prompt:
+        return InterruptionAwareModel(delay=delay)
     if '[BATCH_UNLIMITED_FAKE]' in prompt:
         # 真实浏览器链路验证大批次、单文件超过旧批次额度，以及后续全部编辑。
         contents=['old\n'+'中'*100000]+['old']*59
@@ -371,3 +376,29 @@ class ArgumentRecoveryModel(ScriptedChatModel):
             return [ChatGenerationChunk(message=AIMessageChunk(content='',tool_call_chunks=[{
                 'name':'workspace_write','args':'{"path":"recovered.txt","content":not-json}', 'id':'bad-json','index':0}]))]
         return super()._chunks(turn)
+
+
+class InterruptionAwareModel(ScriptedChatModel):
+    """仅从实际上下文证据取版本，验证非继续关键词也能收到交接。"""
+
+    async def _astream(self,messages,stop=None,run_manager=None,**kwargs):
+        """Args:
+            messages：真实ContextBuilder与工具循环传入的历史。
+            stop：框架停止条件。
+            run_manager：框架回调。
+            kwargs：其他框架参数。
+        """
+        if self.index==0:
+            found=None
+            for message in messages:
+                content=getattr(message,'content','')
+                if isinstance(content,str) and content.startswith('以下是服务器观察到的最近中断执行数据'):
+                    value=json.loads(content.split('\n',1)[1])
+                    found=next((fact for fact in value['facts'] if fact.get('path')=='interruption.txt' and fact.get('current')=='matches_recorded_version'),None)
+            turn=ScriptedTurn(tool_calls=[{'name':'workspace_edit','id':'resume-edit','args':{
+                'path':'interruption.txt','old_text':'alpha=1','new_text':'alpha=2','expected_sha256':found['observed_sha256']}}]) if found else ScriptedTurn(text='缺少可信执行事实。')
+        else:turn=ScriptedTurn(text='已根据执行事实完成新要求。')
+        self.index+=1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk

@@ -508,3 +508,6 @@ input_tokens/output_tokens/cache_hit_tokens/cache_write_tokens/duration_ms 为�
 0017 将 instance_settings.decision_limit、workflow_budgets.decision_limit 改为 nullable BigInteger；null 表示不限，旧整数保持原值，默认配置仍为8。
 agent_executions.decision_count、workflow_budgets.used_decisions、model_call_usage.call_index 同步使用 BigInteger，保留既有唯一性、关联和计数语义。
 降级前必须将不限或超过256的配置与快照显式调整为旧版1..256有限值，且所有相关计数在32位整数范围内；迁移拒绝不兼容数据，不静默将不限改为8。
+
+### FileEffect（中断事实，0018）
+原生文件提交边界的最小证据：id、execution_id（级联归属AgentExecution）、call_id、item_index、payload_encrypted、updated_at、expires_at。唯一键(execution_id,call_id,item_index)，按execution_id/id查询。加密体包含同一身份及相对路径、操作类型、prepared/confirmed、前后hash、结果字节及目录计数，不保存源码。七天后密文不可读并按启动清理；旧工具详情保持原结构。记录不证明跨文件事务或任意崩溃恰好一次。
