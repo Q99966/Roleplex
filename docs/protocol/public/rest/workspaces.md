@@ -3,7 +3,7 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开（Owner 管理接口；Agent 工具为内部契约） |
-| 状态 | W1a/W1b/W1c/E1/E2/S2 已验收；T2 搜索与范围读取已实现并通过人工验收；群聊绑定属于 W2a |
+| 状态 | 已实现单聊/群聊绑定及原生文件工具；命令、Shell、后台服务工具仅限单聊 |
 | 协议版本 | 1 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
@@ -19,7 +19,7 @@ allowed-root 白名单限制 Owner 可登记的目录。
 
 W1a 只支持 `managed_directory`，不启动子进程，不提供 Shell、Git、删除、移动或 chmod；原生写入支持在授权根内自动创建缺失的父目录。
 文件内容可能发送给角色绑定的模型厂商，因此 `workspace_list/read/write` 均按 dangerous 工具处理；只有
-Owner 触发的 single 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease 为 ready 时
+Owner 触发的 single 或 group 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease 为 ready 时
 才向模型暴露，并在每次调用前重新鉴权和解析路径。
 
 ## 表示
@@ -103,7 +103,7 @@ DELETE /api/workspaces/{workspace_id}
 
 ## 会话绑定
 
-创建 single 会话时可以提交 `workspace_binding_id`；也可以随后更新：
+创建 single 或 group 会话时可以提交 `workspace_binding_id`；也可以随后更新：
 
 ```http
 PUT /api/conversations/{conversation_id}/workspace
@@ -113,9 +113,25 @@ PUT /api/conversations/{conversation_id}/workspace
 {"workspace_binding_id":1,"expected_revision":0}
 ```
 
-`workspace_binding_id=null` 表示解绑。仅 Owner 自己创建的 single 会话可绑定当前 World 中 active + available
-工作区；群聊返回 `422 SINGLE_CHAT_REQUIRED`。成功后会话 `revision + 1`、返回完整会话表示并产生
+`workspace_binding_id=null` 表示解绑。仅 Owner 自己创建且仍为成员的 single 或 group 会话可绑定当前 World 中 active + available
+工作区。成功后会话 `revision + 1`、返回完整会话表示并产生
 `conversation_updated` 事件。revision 不匹配返回 `409 CONVERSATION_REVISION_CONFLICT`。
+
+换绑或解绑时，存在 queued/running generation 返回 `409 WORKSPACE_BUSY`；需先停止或等待整条消息链完成。
+提交时再次检查活动链与 revision，防止等待期间新消息或其他窗口修改造成错绑。已有托管实例时要求
+`confirm_cleanup=true`，沿用运行实例回收协调流程；回收未确认不提交绑定。
+
+前端右侧“会话概览”模块显示工作区，Owner 可打开选择器绑定、更换或选择“不绑定工作区”后保存。
+Guest 仅看到是否绑定，不获得目录、配置或修改入口。
+
+### 群聊文件执行
+
+按现有 @ 顺序串行执行（无 @ 不触发角色），每个 `group_role` execution 独立获取并收口 ready lease，
+前一角色释放后下一角色才能使用同一工作区；每次工具调用检查 Owner、会话归属、用户和角色成员关系、
+角色存活及各自工具开关、工作区文件开关、当前绑定、lease 和 generation 未停止状态。
+移出角色、撤销权限或停止后，已捕获工具也不能继续执行；停止整链取消后续角色，已提交文件事实保留，不回滚或重放。
+群聊只开放 `workspace_list/read/search/write/edit`，即使角色开启命令、Shell 或后台服务工具也不暴露；
+Guest 触发的角色回复不获得文件工具。跨会话工作区租用、hash 冲突和服务占用门槛保持不变。
 
 ## W1a 文件工具内部契约
 
@@ -135,7 +151,7 @@ S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
 临时文件、flush/fsync 与 atomic replace 完成。`expected_sha256` 为空不表示允许覆盖。
 
-E1 edit 不隐含 read/write 开关：角色必须显式启用 workspace_edit，工作区沿用 file_tools_enabled，仍限 Owner single。
+E1 edit 不隐含 read/write 开关：角色必须显式启用 workspace_edit，工作区沿用 file_tools_enabled，限 Owner 触发的单聊或串行群聊。
 old_text 非空（纯空白片段可以编辑），new_text 可为空但不删除文件；两片段 UTF-8 合计最多 65536 字节，
 schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/未知参数/缺少或非法 hash 为 WORKSPACE_EDIT_ARGUMENT_INVALID。
 先复核全文件 hash，再字面搜索 old_text：零匹配或多处匹配（含重叠）分别拒绝，不做正则/模糊匹配、全局替换、缩进或换行归一化。
@@ -201,7 +217,7 @@ applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不
 ### S2 原生修改可用性诊断（已人工验收）
 
 write/edit 的 path/items 形式复用类型化可用性判断，不放开现行服务占用或生命周期门槛。
-先校验 Owner single、角色存活、双方成员、有效 execution/generation 及绑定所有权；身份/归属失效仍返回
+先校验 Owner 单聊或串行群聊、角色存活、双方成员、有效 execution/generation 及绑定所有权；身份/归属失效仍返回
 WORKSPACE_TOOL_NOT_AVAILABLE，不附 diagnostic，也不泄漏服务数量/ID。其后分别报告角色权限/工作区开关变化、
 绑定/根变化、租用失效、目录不可用；角色已删除/停用属于身份失效，不借诊断绕过鉴权。
 
@@ -228,7 +244,7 @@ services_truncated、other_sessions_blocking（未判断时 null）。reason 与
 `WORKSPACE_DIRECTORY_EXISTS`、`WORKSPACE_EXISTING_CONTENT_ACK_REQUIRED`、`WORKSPACE_NAME_CONFLICT`、
 `WORKSPACE_PATH_CONFLICT`、`WORKSPACE_UNAVAILABLE`、`WORKSPACE_BUSY`、`WORKSPACE_FILE_NOT_FOUND`、
 `WORKSPACE_FILE_NOT_TEXT`、`WORKSPACE_FILE_TOO_LARGE`、`WORKSPACE_FILE_REVISION_CONFLICT`、
-`WORKSPACE_PARENT_NOT_FOUND`、`WORKSPACE_TOOL_NOT_AVAILABLE` 与 `SINGLE_CHAT_REQUIRED`；状态码、终态和重试
+`WORKSPACE_PARENT_NOT_FOUND`、`WORKSPACE_TOOL_NOT_AVAILABLE`；状态码、终态和重试
 语义只以 [错误码注册表](../../error-codes.md) 为准。
 E1 另使用 WORKSPACE_EDIT_ARGUMENT_INVALID、WORKSPACE_EDIT_INPUT_TOO_LARGE、WORKSPACE_EDIT_MATCH_NOT_FOUND、
 WORKSPACE_EDIT_MATCH_AMBIGUOUS；这些写前拒绝可作为共享工具卡的固定错误码，不包含片段原文。

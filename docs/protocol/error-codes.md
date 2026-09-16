@@ -164,7 +164,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `CHAIN_LIMIT_EXCEEDED` | 已实现 | REST | 422 | rejected | conditional | 一条 mentions chain 展开后超过 20 个角色 |
 | `TEXT_PART_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 当前消息发送接口要求至少一个非空 text part |
 | `ARTIFACT_NOT_FOUND` | 已实现（读取原型） | REST | 404 | rejected | conditional | Artifact、版本不存在或请求者不是会话成员；不得泄露差异 |
-| `SINGLE_CHAT_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 工作区绑定或工具能力只允许 single 会话，群聊不得提交预留字段 |
+| `SINGLE_CHAT_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 保留历史兼容码；会话绑定现支持 single/group，群聊命令与服务工具仍不开放 |
 
 `CONVERSATION_HAS_NO_ROLE` 在消息落库前的 REST 拒绝和生成期防御检查中复用同一语义。
 消息与 WS 适用范围见 [消息协议](public/messaging/messages.md) 与
@@ -194,7 +194,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_TOOL_CAPABILITY_CHANGED` | 已实现 | 工具 | — | rejected/failed | conditional | 身份/归属有效，但角色工具权限或工作区能力开关已变化 |
 | `WORKSPACE_BINDING_CHANGED` | 已实现 | 工具 | — | rejected/failed | conditional | 会话绑定或根与当前执行快照不一致，不使用旧快照写入 |
 | `WORKSPACE_LEASE_UNAVAILABLE` | 已实现 | 工具 | — | rejected/failed | conditional | 当前执行租用缺失/失效或租用快照已不匹配 |
-| `WORKSPACE_BUSY` | 已实现 | REST/工具 | 409/— | rejected | yes | 同一 managed directory 已被另一个写 execution 租用 |
+| `WORKSPACE_BUSY` | 已实现 | REST/工具 | 409/— | rejected | yes | 工作区被活动 execution 租用，或会话消息链尚在排队/执行，暂不可换绑 |
 | `WORKSPACE_FILE_NOT_FOUND` | 已实现 | 工具 | — | rejected | conditional | 目标普通文件不存在 |
 | `WORKSPACE_FILE_NOT_TEXT` | 已实现 | 工具 | — | rejected | no | 文件不是合法 UTF-8 普通文本或目标类型不支持 |
 | `WORKSPACE_FILE_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 文件或待写内容超过 W1a 固定 1 MiB 上限 |

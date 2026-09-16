@@ -1,3 +1,4 @@
+import { ConversationWorkspace } from './ConversationWorkspace'
 import { RoleUsagePanel } from './RoleUsagePanel'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Bot, Info, UsersRound, LockKeyhole } from 'lucide-react'
@@ -43,7 +44,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
   conversation: Conversation; open: boolean; drawer: boolean; onClose: () => void;
   onEditRole: (role: Role) => void; onManageMembers: (conversation: Conversation) => void
 }) {
-  const { roles, roleDirectory, workspaceBindings, user } = useAppStore()
+  const { roles, roleDirectory, worldName, user } = useAppStore()
   const [module, setModule] = useState<Module>('overview')
   const [menuOpen, setMenuOpen] = useState(false)
   const [order, setOrder] = useState<WheelId[]>(['overview', 'members', 'reserved-1', 'reserved-2', 'reserved-3'])
@@ -58,7 +59,6 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
   const scrollRef = useRef<HTMLDivElement>(null)
   const positions = useRef({ overview: 0, members: 0 })
   const current = MODULES.find(value => value.id === module)!
-  const binding = workspaceBindings.find(value => value.id === conversation.workspace_binding_id)
 
   useLayoutEffect(() => {
     if (open && !menuOpen && restoreTrigger.current) {
@@ -218,8 +218,8 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
             <div className="flex justify-between gap-3"><dt className="text-slate-500">类型</dt><dd>{conversation.type === 'group' ? '群聊' : '单聊'}</dd></div>
             <div className="flex justify-between gap-3"><dt className="text-slate-500">参与角色</dt><dd>{conversation.role_ids.length}</dd></div>
             <div className="flex justify-between gap-3"><dt className="text-slate-500">会话状态</dt><dd>{conversation.archived ? '已归档' : '进行中'}{conversation.pinned ? ' · 已置顶' : ''}</dd></div>
-            {user?.is_owner && <div><dt className="text-slate-500">绑定工作区</dt><dd className="mt-2 break-words">{binding?.display_name ?? (conversation.workspace_binding_id ? '工作区信息暂不可用' : '未绑定工作区')}</dd></div>}
           </dl>
+          <ConversationWorkspace key={`workspace:${worldName}:${user?.id}:${conversation.id}`} conversation={conversation} />
         </div><div hidden={module !== 'members'} className="space-y-3">
           <div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-500">参与角色 · {conversation.role_ids.length}</p>
             {conversation.type === 'group' && user?.is_owner && <button type="button" onClick={() => { if (drawer) close(); onManageMembers(conversation) }} className="text-xs text-indigo-600">管理群聊成员</button>}</div>

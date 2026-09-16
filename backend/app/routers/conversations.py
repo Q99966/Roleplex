@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..models import Conversation, ConversationMember, Role, User
+from ..models import Conversation, ConversationMember, Generation, Role, User
 from ..realtime import store as event_store
 from ..schemas import (
     ConversationCreate,
@@ -112,8 +112,6 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
         raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRES_ONE_ROLE")
     if payload.type == "group" and len(payload.role_ids) < 2:
         raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
-    if payload.type != "single" and payload.workspace_binding_id is not None:
-        raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRED")
     if not payload.role_ids:
         raise HTTPException(status_code=422, detail="ROLE_REQUIRED")
     if len(payload.role_ids) != len(set(payload.role_ids)):
@@ -159,12 +157,11 @@ async def update_conversation_workspace(
     user: Annotated[User, Depends(require_owner)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """按 revision 为 Owner 的 single 会话绑定或解绑当前 World 工作区。"""
+    """按 revision 为 Owner 单聊或群聊换绑；活动消息链须先停止或完成。"""
     conversation = await _owned_conversation(session, conversation_id, user.id)
+    await require_member(session, conversation_id, user.id)
     if conversation.deleted_at is not None:
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
-    if conversation.type != "single":
-        raise HTTPException(status_code=422, detail="SINGLE_CHAT_REQUIRED")
     if conversation.revision != payload.expected_revision:
         raise HTTPException(409, 'CONVERSATION_REVISION_CONFLICT')
     if payload.workspace_binding_id is not None:
@@ -172,18 +169,29 @@ async def update_conversation_workspace(
     from ..runtime.manager import manager
     from ..runtime.registry import quota_view
     changed = conversation.workspace_binding_id != payload.workspace_binding_id
+    active_chain = exists(select(Generation.id).where(Generation.conversation_id == conversation_id,
+        Generation.status.in_(['queued', 'running'])))
+    if changed and await session.scalar(select(active_chain)):
+        raise HTTPException(409, 'WORKSPACE_BUSY')
     if changed and (await quota_view('conversation', conversation_id))['used'] and not payload.confirm_cleanup:
         raise HTTPException(409, 'RUNTIME_CLEANUP_CONFIRM_REQUIRED')
     owner_id = user.id
     await session.rollback()
     async def apply_binding():
         """门槛保持关闭期间提交绑定版本，再释放资源变更权限。"""
+        await require_member(session, conversation_id, owner_id)
+        if payload.workspace_binding_id is not None:
+            await available_workspace(session, payload.workspace_binding_id, owner_id)
         next_revision = payload.expected_revision + 1
         updated = await session.scalar(update(Conversation).where(Conversation.id == conversation_id,
-            Conversation.revision == payload.expected_revision).values(workspace_binding_id=payload.workspace_binding_id,
-            revision=next_revision).returning(Conversation.revision))
+            Conversation.revision == payload.expected_revision,
+            ~active_chain if changed else True).values(workspace_binding_id=payload.workspace_binding_id,
+            revision=next_revision).execution_options(synchronize_session=False).returning(Conversation.revision))
         if updated is None:
             await session.rollback()
+            current = await session.get(Conversation, conversation_id)
+            if changed and current is not None and current.revision == payload.expected_revision:
+                raise HTTPException(409, 'WORKSPACE_BUSY')
             raise HTTPException(409, 'CONVERSATION_REVISION_CONFLICT')
         pending = await event_store.append_event(session, conversation_id, 'conversation_updated',
             {'workspace_binding_id': payload.workspace_binding_id, 'revision': next_revision}, revision=next_revision)

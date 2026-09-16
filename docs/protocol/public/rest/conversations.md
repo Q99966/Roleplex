@@ -3,12 +3,12 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊与 M4a 群聊；W1a 工作区绑定仅限单聊；Orchestrator 未实现） |
+| 状态 | 已实现（单聊与 M4a 群聊；工作区绑定支持单聊与群聊；Orchestrator 未实现） |
 | 协议版本 | 3（兼容新增可空工作区绑定） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/conversations.py`、`backend/app/schemas.py`、`backend/app/services/retention.py` |
 | 关联测试 | `backend/tests/test_delete_semantics.py`、`backend/tests/test_group_chat.py`、`frontend/tests/recycle-and-tombstone.spec.ts`、`frontend/tests/m4-group-chat.spec.ts` |
-| 复核日期 | 2026-09-08 |
+| 复核日期 | 2026-09-16 |
 
 ## 范围
 

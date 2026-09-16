@@ -174,6 +174,41 @@ class ReplacementsModel(ScriptedChatModel):
             yield chunk
 
 
+class GroupFileModel(ScriptedChatModel):
+    """按本角色实际工具集选择写入或读取编辑，验证群聊租用交接。"""
+    _writer: bool = PrivateAttr(default=False)
+    _reader: bool = PrivateAttr(default=False)
+
+    def bind_tools(self, tools, **kwargs):
+        """仅观察宿主实际暴露工具，不为缺权限角色伪造成功。"""
+        names = {tool.name for tool in tools}
+        self._writer = 'workspace_write' in names
+        self._reader = 'workspace_read' in names and 'workspace_edit' in names
+        return self
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        """后续角色使用真实读取结果中的 hash 编辑前一角色创建的文件。"""
+        if self._writer and self.index == 0:
+            turn = ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'args': {
+                'path': 'group.txt', 'content': 'first'}, 'id': 'group-write'}])
+        elif self._reader and self.index == 0:
+            turn = ScriptedTurn(tool_calls=[{'name': 'workspace_read', 'args': {'path': 'group.txt'}, 'id': 'group-read'}])
+        elif self._reader and self.index == 1:
+            output = next(message for message in reversed(messages) if isinstance(message, ToolMessage))
+            try:
+                digest = json.loads(output.content)['sha256']
+                turn = ScriptedTurn(tool_calls=[{'name': 'workspace_edit', 'args': {'path': 'group.txt',
+                    'old_text': 'first', 'new_text': 'second', 'expected_sha256': digest}, 'id': 'group-edit'}])
+            except (ValueError, KeyError):
+                turn = ScriptedTurn(text='未获得可编辑版本。')
+        else:
+            turn = ScriptedTurn(text='群聊写入角色完成。' if self._writer else '群聊编辑角色完成。' if self._reader else '本角色未获文件工具授权。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """构造只产出固定回复文案的 fake 模型。
 
@@ -181,6 +216,8 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[GROUP_FILES_FAKE]' in prompt:
+        return GroupFileModel(delay=delay)
     if '[REPLACEMENTS_FAKE]' in prompt or '[REPLACEMENTS_BAD_FAKE]' in prompt:
         return ReplacementsModel(delay=delay, invalid='[REPLACEMENTS_BAD_FAKE]' in prompt)
     if '[SEARCH_READ_FAKE]' in prompt or '[SEARCH_STALE_FAKE]' in prompt:

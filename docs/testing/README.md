@@ -56,6 +56,7 @@ python scripts/check_migrations.py
 | 认证/资源边界 | `test_owner_bootstrap.py`、`test_password_policy.py`、`test_delete_semantics.py` | `test:e2e -- password-policy.spec.ts recycle-and-tombstone.spec.ts` |
 | 消息/群聊/上下文 | `test_chat_flow.py`、`test_context_builder.py`、`test_group_chat.py` | `test:e2e -- m2-chat.spec.ts m4-group-chat.spec.ts multiline-composer.spec.ts` |
 | 连接/历史窗口 | `test_ws_session.py`、`test_ws_recovery.py`、`test_history_window.py` | `test:e2e -- connection-session.spec.ts history-window.spec.ts` |
+| 会话工作区/群聊文件 | `test_group_workspaces.py`、`test_workspaces.py`、`test_group_chat.py` | `test:e2e:commands -- group-workspace.spec.ts` |
 | 搜索/读取 | `test_workspace_search_read.py`、`test_workspace_read_many.py` | `test:e2e:commands -- search-read.spec.ts read-many.spec.ts exploration.spec.ts` |
 | 写入/编辑/批次/diff | `test_workspaces.py`、`test_workspace_edit.py`、`test_workspace_replacements.py`、`test_workspace_batch_mutation.py`、`test_write_diff.py` | `test:e2e:commands -- workspace-edit.spec.ts replacements.spec.ts batch-mutation.spec.ts batch-unlimited.spec.ts write-diff.spec.ts` |
 | 写入等待/审批 | `test_write_admission.py`、`test_shell_approvals.py`、`test_shell_details.py` | `test:e2e:commands -- write-wait.spec.ts shell-approvals.spec.ts` |

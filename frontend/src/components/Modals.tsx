@@ -1006,7 +1006,7 @@ export function ConversationModal({ onClose }: ModalProps) {
       role_ids: form.selected_role_ids,
       orchestrator_enabled: form.type === 'group' ? form.orchestrator_enabled : false,
       orchestrator_role_id: (form.type === 'group' && form.orchestrator_enabled) ? form.orchestrator_role_id || null : null,
-      workspace_binding_id: form.type === 'single' ? form.workspace_binding_id || null : null,
+      workspace_binding_id: form.workspace_binding_id || null,
     }
 
     try {
@@ -1129,8 +1129,7 @@ export function ConversationModal({ onClose }: ModalProps) {
             </div>
           )}
 
-          {form.type === 'single' && (
-            <label className="block">
+          <label className="block">
               <span className="text-slate-400 font-medium">工作区（可选）</span>
               <select
                 aria-label="会话工作区"
@@ -1151,7 +1150,6 @@ export function ConversationModal({ onClose }: ModalProps) {
                 仅当角色和工作区都开启原生文件能力时，Owner 消息才会向模型暴露文件工具。
               </span>
             </label>
-          )}
 
           {errorMsg && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-start gap-1.5">

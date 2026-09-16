@@ -51,7 +51,7 @@ async def owned_workspace(
 async def available_workspace(
     session: AsyncSession, workspace_id: int, owner_id: int,
 ) -> WorkspaceBinding:
-    """解析可以绑定新 single 会话的工作区。"""
+    """解析可以绑定单聊或群聊的工作区。"""
     binding = await owned_workspace(session, workspace_id, owner_id)
     availability = await binding_availability(session, binding)
     if availability == "busy":

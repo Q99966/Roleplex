@@ -152,10 +152,10 @@ async def test_workspace_creation_rejects_escape_and_never_deletes_physical_dire
 
 
 @pytest.mark.anyio
-async def test_only_single_conversation_can_bind_an_available_workspace(
+async def test_single_and_group_conversations_can_bind_an_available_workspace(
     tmp_path: Path,
 ):
-    """会话绑定使用 revision 乐观锁，群聊不能提交 W1a 工作区。"""
+    """单聊和群聊均可绑定，使用 revision 乐观锁。"""
     from app.main import app
 
     workspace_root = tmp_path / "single"
@@ -210,8 +210,8 @@ async def test_only_single_conversation_can_bind_an_available_workspace(
                 f"/api/conversations/{group.json()['id']}/workspace", headers=headers,
                 json={"workspace_binding_id": workspace_id, "expected_revision": 0},
             )
-            assert rejected.status_code == 422
-            assert rejected.json()["error"]["code"] == "SINGLE_CHAT_REQUIRED"
+            assert rejected.status_code == 200
+            assert rejected.json()["workspace_binding_id"] == workspace_id
 
 
 @pytest.mark.anyio

@@ -12,7 +12,7 @@
 
 ## 权限与范围
 
-只在当前 Owner single 的 active managed_directory、角色显式启用对应工具、工作区原生文件能力开启时暴露。
+只在当前 Owner 触发的 single 或 group 的 active managed_directory、角色显式启用对应工具、工作区原生文件能力开启时暴露。
 workspace_search 新开关默认关闭；沿用 dangerous 分类。角色/成员/绑定在排队后、文件扫描前及结果返回前复核。
 宿主根、execution 与权限均由服务端绑定；查询不是 Shell，不读取真实凭据，不绕过既有路径/链接保护。
 写入、编辑仍限 1 MiB，停服保护不变。无 Git、后台索引、正则或跨会话搜索。

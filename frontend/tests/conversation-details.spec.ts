@@ -105,6 +105,8 @@ test('右侧模块扇形切换、键盘关闭和窄屏抽屉保留会话草稿',
   await expect(menu).toHaveCount(0)
   await trigger.focus()
   await page.keyboard.press('Tab')
+  await expect(drawer.getByRole('button', { name: /工作区：.*管理/ })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(trigger).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)

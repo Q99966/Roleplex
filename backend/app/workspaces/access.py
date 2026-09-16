@@ -2,12 +2,14 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .catalog import WORKSPACE_FILE_TOOLS
+
 from ..models import AgentExecution, Conversation, ConversationMember, Generation, Role, User
 
 
 async def authorized_member(session: AsyncSession, *, conversation_id: int, role_id: int,
                             user_id: int | None, tool_name: str, require_tool: bool = True) -> tuple[Conversation, Role] | None:
-    """核验 Owner single 的角色能力和双方成员关系，不授予文件或实例控制权限。
+    """核验 Owner、角色能力和双方成员关系；群聊仅允许原生文件工具，不据此授予执行权限。
 
     Args:
         session：调用方的短数据库会话。
@@ -22,7 +24,9 @@ async def authorized_member(session: AsyncSession, *, conversation_id: int, role
     conversation = await session.get(Conversation, conversation_id)
     role = await session.get(Role, role_id)
     user = await session.get(User, user_id)
-    if (conversation is None or conversation.type != 'single' or conversation.deleted_at is not None
+    if (conversation is None or conversation.type not in ('single', 'group')
+        or (conversation.type == 'group' and tool_name not in WORKSPACE_FILE_TOOLS)
+        or conversation.created_by != user_id or conversation.deleted_at is not None
         or role is None or not role.active or role.deleted_at is not None or role.created_by != user_id
         or (require_tool and tool_name not in (role.builtin_tools_json or [])) or user is None or not user.is_owner):
         return None
@@ -52,7 +56,7 @@ async def authorized_execution(session: AsyncSession, *, execution_id: str, conv
         return None
     execution = await session.scalar(select(AgentExecution).where(AgentExecution.execution_id == execution_id,
         AgentExecution.conversation_id == conversation_id, AgentExecution.role_id == role_id,
-        AgentExecution.execution_kind == 'single', AgentExecution.status == 'running'))
+        AgentExecution.execution_kind == ('single' if actor[0].type == 'single' else 'group_role'), AgentExecution.status == 'running'))
     generation = await session.get(Generation, execution.generation_id) if execution else None
     if (generation is None or generation.conversation_id != conversation_id or generation.status != 'running'
         or generation.stop_requested_at is not None):

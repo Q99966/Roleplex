@@ -141,7 +141,7 @@ page_bytes 计入完整 snapshot 信封（含 subscription_id）。未提交该�
 | `message_done` | 生成完成、停止或失败 | `{"message": {}, "error_code": null}` |
 | `message_part_update` | 工具过程 part 开始或结束 | `{"message": {}}` |
 | `member_updated` | Owner 修改群聊角色成员 | `{"role_ids":[2,1],"revision":3}` |
-| `conversation_updated` | Owner 绑定或解绑 single 会话工作区 | `{"workspace_binding_id":1,"revision":4}` |
+| `conversation_updated` | Owner 绑定、更换或解绑 single/group 会话工作区 | `{"workspace_binding_id":1,"revision":4}` |
 | `approval_changed` | Shell 审批创建或首次决定 | `{"approval_id":1,"status":"pending"}`；仅安全状态，完整内容见 [Shell 审批](../messaging/shell-approvals.md) |
 
 `message_done` 的终态体现在消息 `status`（`done | stopped | error`）；`error_code` 仅在失败时非空。

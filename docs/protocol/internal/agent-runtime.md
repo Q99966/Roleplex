@@ -78,7 +78,7 @@ M4a `group_role` 在上述历史之外，还读取当前真人消息之后、同
 
 ## T2 搜索与范围读取
 
-workspace_search 按现有 Owner single/dangerous 边界独立启用，查询参数审计只提取 mode/query_bytes。
+workspace_search 按现有 Owner 单聊或串行群聊/dangerous 边界独立启用，查询参数审计只提取 mode/query_bytes。
 read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后及返回前复核权限，逐项结果只给模型和 Owner 加密详情。
 工具策略和真实工具说明同步包含主机正文/扫描预算，规则见[搜索与范围读取](workspace-search-read.md)。
 扫描阶段在同一 tool_call_id/Trace 下记录队列与扫描耗时/字节，不生成每轮统计摘要或额外模型请求。
@@ -187,8 +187,8 @@ trace/video，具体运行与留存约定见 README。
 
 ## W1a 原生工作区工具
 
-- 只在 Owner 触发的 single 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease ready
-  时暴露 `workspace_list/read/write`；Guest、群聊、未绑定和能力关闭时连工具 schema 都不可见。
+- 只在 Owner 触发的 single 或 group 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease ready
+  时暴露 `workspace_list/read/search/write/edit`；Guest、未绑定和能力关闭时连工具 schema 都不可见。
 - ContextBuilder 在 Provider 调用前按实际暴露集合把 W1a 工具策略计入预算和 `tool_policy_hash`；随机
   execution ID 不进入稳定 hash。
 - 每次实际调用重新读取 execution、Owner、角色、会话、binding 和 lease，重新 canonicalize Workspace 绝对根；
