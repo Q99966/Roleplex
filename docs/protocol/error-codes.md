@@ -209,7 +209,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `WORKSPACE_BATCH_TARGET_CONFLICT` | 已实现 | 工具 | — | rejected | conditional | 全批预检发现重复规范目标或硬链接别名，未写入任何项 |
 | `WORKSPACE_BATCH_WRITE_UNCONFIRMED` | 已实现 | 工具 | — | failed | conditional | 文件操作结果无法确认，可能已部分/全部落地；先核查，禁止盲目重放 |
 | `WORKSPACE_BATCH_PRECHECK_FAILED` | 已实现 | 工具 | — | rejected/failed | conditional | 写前校验或授权发生内部/I/O 故障；逐项状态区分已有成功，异常原文不公开 |
-| `WORKSPACE_BATCH_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 批次输入、请求读取字节或修改结果元数据预留超预算，缩小批次 |
+| `WORKSPACE_BATCH_INPUT_TOO_LARGE` | 已实现 | 工具 | — | rejected | conditional | 读取批次参数超预算；write/edit 不再因项数、整批JSON或结果元数据预留产生此码 |
 | `WORKSPACE_BATCH_BUSY` | 已实现 | 工具 | — | rejected/failed | conditional | 单项/批量写入准入或锁等待失败，details/wait_diagnostic 区分数量、字节、超时与关闭；先前提交以逐项结果为准 |
 | `WORKSPACE_BATCH_PARTIAL` | 已实现 | 工具 | — | failed | conditional | 部分读取/修改成功；保留逐项结果，修改批次停止后续项，不自动回滚 |
 | `WORKSPACE_BATCH_FAILED` | 已实现 | 工具 | — | failed | conditional | 本批没有成功读取；具体原因仅在 Owner/模型逐项结果中 |

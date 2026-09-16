@@ -192,6 +192,16 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
             ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':123},'id':'bad-schema'}]),
             ScriptedTurn(tool_calls=[{'name':'workspace_write','args':{'path':'recovered.txt','content':'confirmed'},'id':'corrected'}]),
             ScriptedTurn(text='参数修正后已完成。')])
+    if '[BATCH_UNLIMITED_FAKE]' in prompt:
+        # 真实浏览器链路验证大批次、单文件超过旧批次额度，以及后续全部编辑。
+        contents=['old\n'+'中'*100000]+['old']*59
+        return ScriptedChatModel(turns=[
+            ScriptedTurn(tool_calls=[{'name':'workspace_write','id':'large-create','args':{'items':[
+                {'path':f'file-{i:02d}.txt','content':content} for i,content in enumerate(contents)]}}]),
+            ScriptedTurn(tool_calls=[{'name':'workspace_edit','id':'large-edit','args':{'items':[
+                {'path':f'file-{i:02d}.txt','old_text':'old','new_text':'new',
+                 'expected_sha256':hashlib.sha256(content.encode()).hexdigest()} for i,content in enumerate(contents)]}}]),
+            ScriptedTurn(text='大批次修改完成。')],delay=delay)
     if '[LONG_DECISIONS_FAKE]' in prompt:
         return ScriptedChatModel(turns=[*[ScriptedTurn(tool_calls=[{'name': 'workspace_list', 'args': {}, 'id': f'long-{index}'}])
             for index in range(10)], ScriptedTurn(text='长任务完成。')], delay=delay)

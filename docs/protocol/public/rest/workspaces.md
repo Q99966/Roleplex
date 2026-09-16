@@ -8,7 +8,7 @@
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/workspaces.py`、`backend/app/schemas.py`、`backend/app/workspaces/` |
 | 关联测试 | `backend/tests/test_workspaces.py`、`frontend/tests/world-managed/world-switching.spec.ts`、`frontend/tests/real-world/workspace-provider.spec.ts` |
-| 复核日期 | 2026-09-15 |
+| 复核日期 | 2026-09-16 |
 
 ## 范围与安全边界
 
@@ -164,13 +164,12 @@ Owner 逐项/行范围/搜索详情以[工具详情](../messaging/tool-details.m
 
 ### E2 多文件写入/编辑（已人工验收，内部工具契约）
 
-原 write/edit 各自增加 items=1..8，严格互斥于该工具所有旧顶层字段（含 null/默认值），不新增角色开关。
+write/edit 的 items 为非空数组，不设固定文件项数上限（2026-09-16 修改已人工验收），严格互斥于该工具所有旧顶层字段（含 null/默认值），不新增角色开关。
 items 内分别使用 write/edit 单项字段（edit 兼容本篇 T3 replacements）；不允许逐项指定操作、工作区、执行身份或额外参数。
 旧合法单文件响应不变；items 即使只有一项也返回批次信封。write 形态错误为 WORKSPACE_WRITE_ARGUMENT_INVALID，
 edit 沿用 WORKSPACE_EDIT_ARGUMENT_INVALID；内部整批校验另使用 WORKSPACE_BATCH_ARGUMENT_INVALID。
 创建 expected_sha256 为空；已有目标必须匹配最近读取的 hash。每个 edit 的片段仍限 64 KiB，最终文件仍限 1 MiB。
-整批紧凑 UTF-8 输入最多 256 KiB；元数据预留按每项 1536 + 2×JSON 路径字节数计算，合计不得超过 32 KiB，
-超额写前拒绝 WORKSPACE_BATCH_INPUT_TOO_LARGE。预留只为结果身份/diff 元数据，不是文件源码限额放宽。
+批量 write/edit 取消整批256 KiB参数及结果元数据预留准入检查；不改变单文件大小与编辑片段边界。既有写队列容量与等待参数累计量仍生效，负载拒绝使用原等待诊断，不再作为单批输入大小限制。
 
 修改准入现已覆盖单项和批量，采用[有界等待](#原生修改的有界等待)；复用工作区命令锁，繁忙原因按固定阶段区分。
 全批逐项授权并复用单文件准备校验：大小、待写内容及 edit 目标的 UTF-8、敏感路径/链接、父目录、hash、唯一匹配与最终文件大小；
@@ -180,7 +179,7 @@ edit 沿用 WORKSPACE_EDIT_ARGUMENT_INVALID；内部整批校验另使用 WORKSP
 没有持久请求键或跨调用 exactly-once 保证：重复旧批次通常因 hash/目标存在预检失败，no-op 可再次确认；
 hash 不防外部 ABA，也不是重放授权。generation/消息幂等和重启不重放语义不变。
 
-模型结果为紧凑 JSON：version=1、status、error_code（可空）、items；每项 id=item-0..item-7、path、operation=write/edit、
+模型结果为紧凑 JSON：version=1、status、error_code（可空）、items；每项 id=item-0..item-(n-1)、path、operation=write/edit、
 status、applied（true/false/null）、error_code（可空）、result（可空或原 created/bytes/sha256）。不包含 diff/原文。
 父状态 running/success/partial/failed/rejected/cancelled/result_unconfirmed；子状态 not_executed/running/success/failed/result_unconfirmed。
 applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不把“调用失败”当成“文件没改”。
@@ -188,8 +187,8 @@ applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不
 正常取消父 cancelled，保存已观察提交；未启动项保持 not_executed，已进入文件操作但无法确认的项为 result_unconfirmed。
 全成功无失败前缀；rejected 使用原拒绝前缀，其余非成功返回原失败前缀。共享卡只显示父固定错误码，无文件清单。
 
-模型 JSON 与 Owner 批次详情各限 64 KiB；Owner 全批 diff 最多 1000 行，各项的输入/计算/排队沿用 D 原池与预算。
-差异正文按预留元数据后份额缩减，标记 partial 并保留完整计算的增删统计，不把修改次数称为文件净变化。
+模型结果不含源码/diff，完整返回所有节点的路径、状态和结果；Owner详情同样保留完整逐项事实，整体不再限64 KiB。体积随项数和路径增长，不承诺恒定响应大小。
+仅所有非空 write 差异对象的紧凑JSON字节合计限64 KiB、diff合计限1000行；按节点均分展示预算，放不下时 write=null，绝不丢弃节点或提交结果。各项的diff输入/计算/排队沿用 D 原池与预算，不把展示省略变成写入失败。
 详情计算/保存失败不改变已成功文件结果，不回滚、不补写。取消或崩溃的私有事实边界见[工具详情](../messaging/tool-details.md)。
 不保存整批文件快照、不新增数据库表或调度系统。仍禁止擅自停止其他会话服务。
 
@@ -253,7 +252,7 @@ WORKSPACE_BATCH_BUSY 的 details/wait_diagnostic 仅携带 phase=queue/lock、re
 ### T3 多片段编辑
 
 workspace_edit 在旧 old_text/new_text 之外兼容增加 replacements=[{old_text,new_text}, ...]，两种形式严格互斥（含显式 null）。
-顶层单文件和 items 内节点均支持；每个文件节点 1..32 项，片段合计 UTF-8 64 KiB，最终文件 1 MiB；原 items/总 JSON/排队/权限/服务保护不变。
+顶层单文件和 items 内节点均支持；每个文件节点 1..32 项，片段合计 UTF-8 64 KiB，最终文件 1 MiB；单文件片段边界、排队/权限/服务保护不变；批次项数与总JSON按本篇E2最新修订。
 所有旧片段在同一原始版本唯一匹配，区间不得重复或重叠；允许相邻片段，不允许依赖前项生成文本。不做正则、Unicode 或换行规范化。
 全部通过后构造最终内容并复用一次原子替换与一份 diff。任意匹配校验失败，不改变原文件；不扩展为跨文件事务或断电保证。
 匹配失败的 details（批次节点为 edit_error）包含一基 replacement_index；重叠另含 conflicting_replacement_index。

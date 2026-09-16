@@ -59,13 +59,14 @@ def capture_input(tool_name: str, value: Any) -> dict[str, Any] | None:
             selected['replacements'] = replacement_sizes(item)
         elif key == 'queries' and isinstance(item, list):
             selected[key] = [term for term in item[:8] if isinstance(term, str)]
-        elif key == 'items' and isinstance(item, list) and len(item) <= 8:
+        elif key == 'items' and isinstance(item, list) and (tool_name in {'workspace_write', 'workspace_edit'} or len(item) <= 8):
             # 修改批次只保留目标和版本，不重复保存整批源码；未知嵌套字段默认排除。
             allowed = {'path', 'expected_sha256'} if tool_name in {'workspace_write', 'workspace_edit'} else {'path', 'offset_bytes', 'max_bytes', 'start_line', 'end_line', 'expected_sha256'}
             selected[key] = [{name: value for name, value in row.items()
                 if name in allowed and (value is None or isinstance(value, str) or type(value) is int)}
                 for row in item if isinstance(row, dict)]
             if tool_name in {'workspace_write', 'workspace_edit'}:
+                selected = {'item_count': len(item), **selected}
                 for target, source in zip(selected[key], (row for row in item if isinstance(row, dict))):
                     if tool_name == 'workspace_edit' and isinstance(source.get('replacements'), list):
                         target['replacement_count'] = len(source['replacements'])

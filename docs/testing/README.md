@@ -549,3 +549,5 @@ T4.3a 真实 World 群聊预算补验收：`npm run test:e2e:real-world -- workf
 右侧角色执行用量、历史缺口与取消交接验证见[角色用量记录](role-execution-usage.md)。真实 World 命令：`npm run test:e2e:real-world -- role-usage-provider.spec.ts`。
 
 T4.3c 自定义超过256、不限模式、长循环与标准真实 World 验证见[自定义与不限次数验收](agent-budget-t43c.md)。
+
+批量 write/edit 取消固定项数与整批参数限制的回归、浏览器和标准真实 World 验收见[批次限制调整](batch-mutation-limits.md)。

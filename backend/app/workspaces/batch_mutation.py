@@ -14,8 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .files import WorkspaceFileError, WorkspaceFileService
 from .replacements import ReplacementInput, MAX_REPLACEMENTS, validate_edit_shape
 
-INPUT_LIMIT = 256 * 1024
-OUTPUT_LIMIT = 65536
+DIFF_OUTPUT_LIMIT = 65536
 
 
 class WriteItemInput(BaseModel):
@@ -51,36 +50,28 @@ def encode(value: dict) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-def _reservation(item: dict) -> int:
-    """Args:
-        item：预留节点与差异文件各一份路径，以及结果/hash/状态元数据。
-    """
-    return 1536 + 2 * len(json.dumps(item['path'], ensure_ascii=False).encode())
-
-
 def validate_items(operation: str, items: list) -> list[dict]:
-    """在准入/写入前校验整批参数及元数据容量，不让成功结果无法表示。
+    """在准入/写入前校验每项形态；不按批次项数或总JSON大小拒绝。
 
     Args:
         operation：宿主工具绑定的 write/edit。
         items：待校验子项；错误不得回显原始源码。
     """
-    if operation not in {'write', 'edit'} or not isinstance(items, list) or not 1 <= len(items) <= 8:
+    if operation not in {'write', 'edit'} or not isinstance(items, list) or not items:
         raise WorkspaceFileError('WORKSPACE_BATCH_ARGUMENT_INVALID')
     schema = WriteItemInput if operation == 'write' else EditItemInput
     try:
         values = [schema.model_validate(item).model_dump(exclude_none=operation == 'edit') for item in items]
-        size = len(encode({'items': values}).encode())
-        reserved = sum(_reservation(item) for item in values)
+        # 保留UTF-8形态校验，逐项检查，不以整批编码长度拒绝。
+        for item in values:
+            encode(item).encode('utf-8')
     except (ValidationError, ValueError, TypeError, UnicodeError):
         raise WorkspaceFileError('WORKSPACE_BATCH_ARGUMENT_INVALID') from None
-    if size > INPUT_LIMIT or reserved > OUTPUT_LIMIT // 2:
-        raise WorkspaceFileError('WORKSPACE_BATCH_INPUT_TOO_LARGE')
     return values
 
 
 class BatchMutationReceipt:
-    """一个真实父调用的有界逐文件事实，仅保存当前项计算票据。"""
+    """一个真实父调用的完整逐文件事实；只有差异展示预算有界。"""
 
     def __init__(self, operation: str, items: list[dict]):
         """Args:
@@ -90,9 +81,8 @@ class BatchMutationReceipt:
         self.value = {'version': 1, 'status': 'running', 'error_code': None, 'items': [
             {'id': f'item-{index}', 'path': item['path'], 'operation': operation, 'status': 'not_executed',
              'applied': False, 'error_code': None, 'result': None, 'write': None, 'created_parent_count': 0} for index, item in enumerate(items)]}
-        reservations = [_reservation(item) for item in items]
-        spare = (OUTPUT_LIMIT - 512 - sum(reservations)) // len(items)
-        self.budgets = [size + spare for size in reservations]
+        # 提交事实始终完整保存，差异独立分享预算，不能倒逼限制输入项数。
+        self.budgets = [DIFF_OUTPUT_LIMIT // len(items)] * len(items)
         self.line_budget = 1000 // len(items)
         self.current = None
 
@@ -119,7 +109,8 @@ class BatchMutationReceipt:
             return
         node = self.value['items'][index]
         if node['applied'] is False:
-            node['write'] = {'version': 1, 'availability': 'not_executed', 'reason': None, 'files': []}
+            value = {'version': 1, 'availability': 'not_executed', 'reason': None, 'files': []}
+            node['write'] = value if len(encode(value).encode()) <= self.budgets[index] else None
             return
         original = self.current.value
         if node['applied'] is True and original['availability'] == 'result_unconfirmed':
@@ -148,7 +139,7 @@ class BatchMutationReceipt:
         while low < high:
             middle = (low + high + 1) // 2
             value = prefix(middle)
-            if len(encode({**node, 'write': value}).encode()) <= self.budgets[index]:
+            if len(encode(value).encode()) <= self.budgets[index]:
                 low = middle
             else:
                 high = middle - 1
@@ -156,8 +147,8 @@ class BatchMutationReceipt:
         if low < count and value['availability'] in {'recorded', 'partial'}:
             value.update(availability='partial', reason=None)
         node['write'] = value
-        if len(encode(node).encode()) > self.budgets[index]:
-            # 容量预留按正常协议保证元数据可放入；异常采集只降级 diff，不抹掉已应用状态。
+        if len(encode(value).encode()) > self.budgets[index]:
+            # 差异元数据本身也可能放不下；只省略 diff，完整提交事实仍留在节点。
             node['write'] = None
 
     def release(self) -> None:
@@ -168,7 +159,7 @@ class BatchMutationReceipt:
 
     def export(self, output: dict | None) -> dict:
         """Args:
-            output：模型结果不复制，已有 batch 节点包含有界结果。
+            output：模型结果不复制，batch 保留完整逐项事实与限额内差异。
         """
         return {'format': 'write-batch-v1', 'batch': self.value}
 
@@ -198,7 +189,7 @@ async def _mutate_many(operation: str, items: list[dict], *, authorize: Callable
     phase, index = 'precheck', 0
     node = receipt.value['items'][0]
     try:
-        paths, inodes = set(), set()
+        paths, ancestors, inodes = set(), set(), set()
         async with _locked(lock):
             for index, item in enumerate(items):
                 node = receipt.value['items'][index]
@@ -206,10 +197,13 @@ async def _mutate_many(operation: str, items: list[dict], *, authorize: Callable
                 if service is None:
                     raise WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
                 path, inode = await service.preflight(operation, item['path'], {k: v for k, v in item.items() if k != 'path'})
-                if (path in paths or (inode is not None and inode in inodes)
-                        or any(Path(path) in Path(other).parents or Path(other) in Path(path).parents for other in paths)):
+                parents = {str(parent) for parent in Path(path).parents}
+                # 按路径深度查祖先，避免取消项数限制后全批两两比较。
+                if (path in paths or path in ancestors or bool(parents & paths)
+                        or (inode is not None and inode in inodes)):
                     raise WorkspaceFileError('WORKSPACE_BATCH_TARGET_CONFLICT')
                 paths.add(path)
+                ancestors.update(parents)
                 if inode is not None:
                     inodes.add(inode)
         phase = 'apply'

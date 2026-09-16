@@ -28,7 +28,7 @@ def _encrypt(message_id: int, call_id: str, capture: dict) -> str:
     Args:
         message_id：所属消息。
         call_id：所属调用。
-        capture：已经限长的采集结果。
+        capture：白名单采集结果；文本与差异有界，修改批次提交元数据完整保留。
     """
     body = json.dumps({'message_id': message_id, 'call_id': call_id, 'capture': capture}, ensure_ascii=False)
     return _cipher().encrypt(body.encode()).decode()
@@ -64,7 +64,7 @@ async def update_detail(
         execution_id：持久 execution 身份。
         user_id：触发者，仅 Owner 可生成私有详情。
         private_input：显式白名单采集的有界输入，开始事件提供。
-        private_output：有界结果，结束事件提供。
+        private_output：结束事件提供的结果；修改批次保留完整节点，仅限制差异展示。
     """
     row = await session.scalar(select(ToolExecutionDetail).where(
         ToolExecutionDetail.message_id == message_id, ToolExecutionDetail.call_id == call_id,
@@ -196,10 +196,18 @@ def detail_payload(row: ToolExecutionDetail) -> dict:
                 payload.update(output=None, write_batch=None)
                 if output and output.get('format') == 'write-batch-v1':
                     value = BatchMutationDetailView.model_validate(output['batch']).model_dump()
-                    if len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > 65536 or sum(
-                        len(hunk['lines']) for node in value['items'] if node['write']
-                        for file in node['write']['files'] for hunk in file['hunks']) > 1000:
-                        raise ValueError('TOOL_DETAILS_UNAVAILABLE')
+                    # 完整逐项事实不能因展示体积丢失；仅对差异对象执行展示预算。
+                    remaining_bytes, remaining_lines = 65536, 1000
+                    for node in value['items']:
+                        if node['write'] is None:
+                            continue
+                        size = len(json.dumps(node['write'], ensure_ascii=False, separators=(',', ':')).encode())
+                        lines = sum(len(hunk['lines']) for file in node['write']['files'] for hunk in file['hunks'])
+                        if size > remaining_bytes or lines > remaining_lines:
+                            node['write'] = None
+                        else:
+                            remaining_bytes -= size
+                            remaining_lines -= lines
                     for node in value['items']:
                         if node['diagnostic'] is not None:
                             _diagnostic(node['diagnostic'])

@@ -215,11 +215,10 @@ async def test_batch_rechecks_authorization_and_hardlink_alias(command_root):
 
 
 @pytest.mark.parametrize('operation,items,code', [
-    ('write', [], 'WORKSPACE_BATCH_ARGUMENT_INVALID'), ('write', [{'path': 'a', 'content': 'x'}] * 9, 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
-    ('write', [{'path': 'a', 'content': '中' * 90000}], 'WORKSPACE_BATCH_INPUT_TOO_LARGE'),
+    ('write', [], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
     ('edit', [{'path': 'a', 'old_text': 'a', 'new_text': 'b'}], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
     ('write', [{'path': 'a', 'content': 'x', 'operation': 'edit'}], 'WORKSPACE_BATCH_ARGUMENT_INVALID'),
-], ids=['empty', 'count', 'utf8-budget', 'missing-hash', 'mixed-operations'])
+], ids=['empty', 'missing-hash', 'mixed-operations'])
 def test_batch_invalid_input_rejected_before_io(operation, items, code):
     """Args:
         operation：固定工具类型。
@@ -305,7 +304,8 @@ async def test_batch_aggregate_diff_budget_keeps_applied_metadata(command_root, 
     receipt = BatchMutationReceipt('write', items)
     result = await mutate_many('write', items, authorize=authorize, lock=asyncio.Lock(), receipt=receipt)
     value = BatchMutationDetailView.model_validate(receipt.value).model_dump()
-    assert len(result.encode()) <= 65536 and len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) <= 65536
+    assert len(json.loads(result)['items']) == len(items)
+    assert sum(len(json.dumps(node['write'], ensure_ascii=False, separators=(',', ':')).encode()) for node in value['items'] if node['write']) <= 65536
     assert all(node['applied'] and node['write']['availability'] == 'partial' for node in value['items'])
     assert sum(len(hunk['lines']) for node in value['items'] for file in node['write']['files'] for hunk in file['hunks']) <= 1000
     assert all(node['write']['files'][0]['added'] == 500 for node in value['items'])
@@ -610,3 +610,143 @@ async def test_batch_parent_count_survives_cancelled_file_operation(command_root
     node = receipt.export(None)['batch']['items'][0]
     assert node['created_parent_count'] == 2 and node['applied'] is None
     assert not (command_root / 'new/child/file.txt').exists()
+
+
+@pytest.mark.anyio
+async def test_large_write_and_edit_batches_keep_all_results(command_root):
+    """Args:
+        command_root：隔离真实文件，验证超过旧项数与JSON额度不要求拆批。
+    """
+    from app.workspaces.batch_mutation import mutate_many, BatchMutationReceipt, validate_items, encode
+    from app.workspaces.files import WorkspaceFileService
+    from app.workspaces.tools import WorkspaceWriteInput, WorkspaceEditInput
+    service=WorkspaceFileService(root=command_root,execution_id='large-batch')
+    async def authorize():
+        """返回已隔离的文件服务。"""
+        return service
+    # 中文UTF-8和JSON转义都计入旧门槛，正文各自仍在单文件范围内。
+    old='中\\"\n'*4000
+    new='改\\"\n'*4000
+    items=[{'path':f'{i}.txt','content':old} for i in range(12)]
+    assert len(encode({'items':items}).encode())>256*1024
+    WorkspaceWriteInput.model_validate({'items':items})
+    values=validate_items('write',items)
+    receipt=BatchMutationReceipt('write',values)
+    result=json.loads(await mutate_many('write',values,authorize=authorize,lock=asyncio.Lock(),receipt=receipt))
+    assert result['status']=='success' and len(result['items'])==12
+    edits=[{'path':node['path'],'old_text':old,'new_text':new,'expected_sha256':node['result']['sha256']} for node in result['items']]
+    assert len(encode({'items':edits}).encode())>256*1024
+    WorkspaceEditInput.model_validate({'items':edits})
+    values=validate_items('edit',edits)
+    result=json.loads(await mutate_many('edit',values,authorize=authorize,lock=asyncio.Lock(),receipt=BatchMutationReceipt('edit',values)))
+    assert result['status']=='success' and len(result['items'])==12
+    assert all(node['applied'] is True for node in result['items'])
+    assert all((command_root/f'{i}.txt').read_text()==new for i in range(12))
+
+
+@pytest.mark.anyio
+async def test_one_large_file_in_batch_is_not_rejected_by_old_json_limit(command_root):
+    """Args:
+        command_root：证明同一合法大文件既能单写，也能放入批次。
+    """
+    from app.workspaces.batch_mutation import mutate_many, BatchMutationReceipt, validate_items
+    from app.workspaces.files import WorkspaceFileService
+    service=WorkspaceFileService(root=command_root,execution_id='large-file')
+    async def authorize():
+        """返回受控服务。"""
+        return service
+    content='中'*100000
+    values=validate_items('write',[{'path':'large.txt','content':content}])
+    result=json.loads(await mutate_many('write',values,authorize=authorize,lock=asyncio.Lock(),receipt=BatchMutationReceipt('write',values)))
+    assert result['status']=='success'
+    assert result['items'][0]['result']['bytes']==300000
+    assert (command_root/'large.txt').read_text()==content
+
+
+def test_large_encrypted_batch_detail_keeps_every_item_and_only_drops_diff():
+    """大批次详情超过64 KiB仍可读取；展示超额不丢逐文件提交事实。"""
+    from datetime import datetime,timedelta,timezone
+    from app.models import ToolExecutionDetail
+    from app.services import tool_details
+    from app.workspaces.batch_mutation import BatchMutationReceipt
+    from app.agent.tool_capture import capture_input
+    items=[{'path':f'{i:04d}-'+'a'*80+'.txt','content':'x'} for i in range(300)]
+    receipt=BatchMutationReceipt('write',items)
+    receipt.value['status']='success'
+    for node in receipt.value['items']:
+        node.update(status='success',applied=True,result={'created':True,'bytes':1,'sha256':hashlib.sha256(b'x').hexdigest()})
+    from app.workspaces.diffs import change_metadata
+    oversized=change_metadata(items[0]['path'],None,b'x')
+    oversized['files'][0]['hunks']=[{'old_start':1,'old_lines':0,'new_start':1,'new_lines':600,
+        'lines':[{'kind':'insert','old_line':None,'new_line':i+1,'text':'x'*200,'ending':'lf'} for i in range(600)]}]
+    receipt.value['items'][0]['write']=oversized
+    assert len(json.dumps(receipt.value).encode())>65536
+    now=datetime.now(timezone.utc)
+    row=ToolExecutionDetail(message_id=1,call_id='large',execution_id='test',tool_name='workspace_write',status='success',
+        started_at=now,expires_at=now+timedelta(days=7),
+        input_encrypted=tool_details._encrypt(1,'large',capture_input('workspace_write',{'items':items})),
+        output_encrypted=tool_details._encrypt(1,'large',receipt.export(None)))
+    value=tool_details.detail_payload(row)
+    assert value['availability']=='available'
+    assert len(value['write_batch']['items'])==300
+    assert all(node['applied'] for node in value['write_batch']['items'])
+    assert value['write_batch']['items'][-1]['id']=='item-299'
+    assert value['write_batch']['items'][0]['write'] is None
+    assert value['write_batch']['items'][0]['result']['sha256']==hashlib.sha256(b'x').hexdigest()
+    # 输入是有界预览，完整结果仍保留；取消后的相同凭据也可核对。
+    row.status='cancelled'
+    assert len(tool_details.detail_payload(row)['write_batch']['items'])==300
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('stop_kind',['revoke','cancel'])
+async def test_large_batch_partial_and_cancel_keep_later_item_identity(command_root,monkeypatch,stop_kind):
+    """Args:
+        command_root：隔离文件目录。
+        monkeypatch：在第十项提交后设置确定性取消点。
+        stop_kind：撤权或取消，均保留已发生的文件副作用。
+    """
+    from app.workspaces.batch_mutation import mutate_many,BatchMutationReceipt,validate_items
+    from app.workspaces.files import WorkspaceFileService
+    from app.agent.write_capture import WriteReceipt
+    service=WorkspaceFileService(root=command_root,execution_id='partial-large')
+    calls=0
+    async def authorize():
+        """全批预检12次后，在第11个执行项撤权。"""
+        nonlocal calls
+        calls+=1
+        return None if stop_kind=='revoke' and calls==23 else service
+    original=WriteReceipt.finish
+    async def finish(receipt,output):
+        """Args:
+            receipt：当前文件凭据。
+            output：已确认提交的结果。
+        """
+        if stop_kind=='cancel' and receipt.path=='9.txt':
+            raise asyncio.CancelledError()
+        return await original(receipt,output)
+    monkeypatch.setattr(WriteReceipt,'finish',finish)
+    items=validate_items('write',[{'path':f'{i}.txt','content':'x'} for i in range(12)])
+    receipt=BatchMutationReceipt('write',items)
+    if stop_kind=='cancel':
+        with pytest.raises(asyncio.CancelledError):
+            await mutate_many('write',items,authorize=authorize,lock=asyncio.Lock(),receipt=receipt)
+        assert receipt.value['status']=='cancelled'
+        assert receipt.value['items'][10]['status']=='not_executed'
+    else:
+        result=json.loads(await mutate_many('write',items,authorize=authorize,lock=asyncio.Lock(),receipt=receipt))
+        assert result['status']=='partial'
+        assert result['items'][10]['status']=='failed'
+    assert len(receipt.value['items'])==12
+    assert all(node['applied'] is True for node in receipt.value['items'][:10])
+    assert receipt.value['items'][11]['status']=='not_executed'
+    assert all((command_root/f'{i}.txt').exists()==(i<10) for i in range(12))
+
+
+def test_batch_invalid_utf8_still_rejected():
+    """取消总字节限额不放行不可编码的参数，也不回显原始值。"""
+    from app.workspaces.batch_mutation import validate_items
+    from app.workspaces.files import WorkspaceFileError
+    with pytest.raises(WorkspaceFileError) as error:
+        validate_items('write',[{'path':'invalid.txt','content':chr(0xd800)}])
+    assert error.value.code=='WORKSPACE_BATCH_ARGUMENT_INVALID'

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { EditErrorNote } from './EditErrorNote'
 import { WriteWaitNote } from './WriteWaitNote'
 import type { BatchMutationDetails } from '../api/client'
@@ -45,9 +46,10 @@ function MutationNode({ item, single }: { item: BatchMutationDetails['items'][nu
 }
 
 /** 一个批次的多文件 diff，沿用原计算结果、权限和视觉样式。
- * @param value 经 Owner 详情接口授权的有界修改批次。
+ * @param value 经 Owner 详情接口授权的完整修改批次，分段渲染不丢节点。
  */
 export function BatchMutation({ value }: { value: BatchMutationDetails }) {
+  const [visibleCount, setVisibleCount] = useState(50)
   if (value.version !== 1) return <p>当前版本不支持此批量修改格式。</p>
   const notice: Record<string, string> = {
     partial: '部分修改完成，后续项已停止；已应用内容不会自动回滚。',
@@ -57,6 +59,8 @@ export function BatchMutation({ value }: { value: BatchMutationDetails }) {
   return <section aria-label="本次批量修改" className="mt-3 space-y-2">
     {value.wait_diagnostic && <WriteWaitNote value={value.wait_diagnostic} />}
     {notice[value.status] && <p className="text-amber-300">{notice[value.status]}</p>}
-    {value.items.map((item) => <MutationNode key={item.id} item={item} single={value.items.length === 1} />)}
+    {value.items.length > 50 && <p className="text-slate-500">共 {value.items.length} 项 · 已显示 {Math.min(visibleCount, value.items.length)} 项</p>}
+    {value.items.slice(0, visibleCount).map((item) => <MutationNode key={item.id} item={item} single={value.items.length === 1} />)}
+    {visibleCount < value.items.length && <button type="button" className="rounded-lg border border-slate-700 px-3 py-2 text-indigo-500" onClick={() => setVisibleCount(count => count + 50)}>显示后续文件</button>}
   </section>
 }

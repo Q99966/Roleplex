@@ -4,10 +4,10 @@
 |---|---|
 | 受众 | 公开 Owner 接口；采集与存储为内部约定 |
 | 状态 | D/E1/E2 与 S2 已人工验收；T3 失败序号已人工验收 |
-| 协议版本 | 6（兼容新增原生修改拒绝诊断） |
+| 协议版本 | 7（同路径升级，取消批量修改整体64 KiB/8项边界，单文件与读取不变） |
 | 维护者 | Roleplex |
 | 事实来源 | `app/services/tool_details.py`、`app/routers/messages.py`、`ToolExecutionDetail` |
-| 复核日期 | 2026-09-15 |
+| 复核日期 | 2026-09-16 |
 | 测试 | `backend/tests/test_tool_timeline.py`、`frontend/tests/commands/`、`frontend/tests/real-world/commands-provider.spec.ts` |
 
 ## 接口与资源归属
@@ -158,12 +158,14 @@ query/匹配路径/正文只保存到身份绑定的 Owner 密文中，不进入
 
 ### E2 批量修改详情（已人工验收）
 
+版本7放宽批量修改结果项数和整体体积；部署时同步更新前端，不能继续依赖旧64 KiB响应大小承诺。字段结构与version=1批次信封保持，旧小批次仍可读取。
 write/edit 的 items 形式兼容增加 write_batch（可空），不再返回 write/output 的重复副本；旧单文件 write-v1 不变。
 write_batch 是工具批次信封及逐项节点，每项另含 write（原 WriteDetailView 或 null），仍为一个父调用，无独立子 execution。
-节点 id 使用 item-0..item-7，嵌入的单文件差异仍为 file-0；身份组合为原 message/call/item，不伪造历史批次关系。
-具体执行状态及原结果字段见工作区工具契约。整批紧凑 JSON <=64 KiB、全部嵌入 diff 合计 <=1000 行，读取时再次校验。
+节点 id 使用 item-0..item-(n-1)，嵌入的单文件差异仍为 file-0；身份组合为原 message/call/item，不伪造历史批次关系。
+具体执行状态及原结果字段见工作区工具契约。2026-09-16修改：完整节点元数据不再限64 KiB，不限固定项数；只有非空write差异对象的紧凑JSON字节合计<=64 KiB、嵌入diff合计<=1000行。读取时对超额差异降级为null，保留节点状态/结果；不让展示预算令整个详情不可用。
+前端先显示50项，可继续展开后续项；这只是渲染分页，接口和模型结果均保留全体节点，不增加分页查询工具。
 
-修改批次输入只加密保存 items 的 path/expected_sha256 和 content_bytes 或 old_text_bytes/new_text_bytes，
+修改批次输入增加 item_count，仍是有界预览，可标truncated；完整结果以write_batch为准。输入只加密保存 items 的 path/expected_sha256 和 content_bytes 或 old_text_bytes/new_text_bytes，
 不重复保存整批源码；共享审计只提取 item_count。执行结果复用 output_encrypted 的 write-batch-v1，
 由原消息所有者在结束/正常取消事务保存，沿用身份绑定、7 天保留和 Owner/成员归属鉴权。
 差异保存失败先尝试保存无差异正文的已确认提交元数据，标 capture_failed；加密整体不可用则不保存明文。

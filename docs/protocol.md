@@ -38,7 +38,7 @@ docs/protocol/
 | 工作区搜索与范围读取 | 内部/已实现（T2，已人工验收） | [internal/workspace-search-read.md](protocol/internal/workspace-search-read.md) |
 | 工作区结构化命令 | 内部/已实现（W1b 已验收） | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
 | 消息发送、历史与停止生成 | 已实现（B 最近窗口与 M 多行输入均已人工验收） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
-| 工具执行顺序与 Owner 详情 | D/E1/E2/S2 已验收；父目录副作用详情已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
+| 工具执行顺序与 Owner 详情 | D/E1/E2/S2 已验收；父目录副作用详情已人工验收；v7批次限制调整已人工验收 | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
 | 旧系统执行摘要 | 废弃，仅旧记录兼容；停止原因见消息协议 | [public/messaging/execution-summary.md](protocol/public/messaging/execution-summary.md) |
 | Shell 逐次审批 | W1c 已验收；审批与写锁分离已人工验收 | [public/messaging/shell-approvals.md](protocol/public/messaging/shell-approvals.md) |
 | 会话运行实例、服务与回收 | W1d/G 与 S1 服务发现已人工验收 | [public/messaging/runtime-services.md](protocol/public/messaging/runtime-services.md) |

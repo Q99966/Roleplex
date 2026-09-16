@@ -36,7 +36,7 @@ from .diagnostics import AccessDecision, AccessRejected, denied, mutation_blocke
 
 SERVICE_TOOLS = ('workspace_start_service', 'workspace_service_status', 'workspace_service_logs', 'workspace_stop_service')
 WORKSPACE_TOOLS = (*WORKSPACE_FILE_TOOLS, 'workspace_run_command', 'workspace_run_shell', *SERVICE_TOOLS)
-WORKSPACE_TOOL_POLICY_VERSION = 18
+WORKSPACE_TOOL_POLICY_VERSION = 19
 WORKSPACE_TOOL_DESCRIPTIONS = {
     'workspace_list': '查看工作区目录下的文件和子目录。返回条目名与类型；结果未列完时使用 next_after_name 继续，不递归读取正文。例：{"path":"src","limit":50}。',
     'workspace_read': '读取已知路径的 UTF-8 文件，可按行、按字节或用 items 批量读取。成功结果包含全文件 sha256，供后续编辑或续读校验版本；版本变化时重新读取，不拼接不同版本。未读完按返回的next_line或next_offset续读。例：{"path":"src/game.js","start_line":120,"end_line":180}。',
@@ -64,7 +64,7 @@ def _tool_description(name: str, *, edit_available: bool = False) -> str:
     """
     description = WORKSPACE_TOOL_DESCRIPTIONS[name]
     if name in WORKSPACE_MUTATION_TOOLS:
-        description += (' 单文件 path 形式与 items 批次形式互斥。批次 JSON 最多256 KiB；先预检全批，执行失败即停，不回滚已提交文件。'
+        description += (' 单文件 path 形式与 items 批次形式互斥。批次不设固定项数或总JSON字节上限，单文件限制仍生效；先预检全批，执行失败即停，不回滚已提交文件。'
             '结果未知先核对，不能整批盲目重放。服务占用导致拒绝时先协调停服并确认回收，不擅停其他会话服务或换脚本绕过保护。'
             '工具会在内部排队；同一次等待保留参数，不必重复发送代码。')
     if name in {'workspace_read', 'workspace_search'}:
@@ -199,7 +199,7 @@ class WorkspaceWriteInput(BaseModel):
     path: str | None = Field(default=None, min_length=1, max_length=1024, description="单文件相对路径；缺失父目录会自动创建，与items互斥。")
     content: str | None = Field(default=None, description="完整UTF-8文件正文，最终文件最多1 MiB；单文件模式必填，可为空字符串。")
     expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", description="新建时省略；覆盖已有文件时必填最近读取返回的真实sha256。")
-    items: list[WriteItemInput] | None = Field(default=None, min_length=1, max_length=8, description="最多8个独立文件写入项；与全部顶层单文件字段互斥，包括null。")
+    items: list[WriteItemInput] | None = Field(default=None, min_length=1, description="非空独立文件写入数组，无固定项数或整批JSON字节上限；与全部顶层单文件字段互斥，包括null。")
 
     @model_validator(mode='before')
     @classmethod
@@ -219,7 +219,7 @@ class WorkspaceEditInput(BaseModel):
     new_text: str | None = Field(default=None, max_length=MAX_EDIT_BYTES, description="单处修改的新片段；空字符串表示删除旧片段，不删除文件。")
     expected_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$', description="单文件编辑必填：最近读取返回的全文件sha256，不能猜测。")
     replacements: list[ReplacementInput] | None = Field(default=None, min_length=1, max_length=MAX_REPLACEMENTS, description="同文件1..32处替换，针对原始版本匹配；与old_text/new_text互斥。例如[{\"old_text\":\"score = 0\",\"new_text\":\"score = 1\"}]。")
-    items: list[EditItemInput] | None = Field(default=None, min_length=1, max_length=8, description="最多8个独立文件编辑项，每项可用单片段或replacements；与全部顶层单文件字段互斥，包括null。")
+    items: list[EditItemInput] | None = Field(default=None, min_length=1, description="非空独立文件编辑数组，无固定项数或整批JSON字节上限，每项可用单片段或replacements；与全部顶层单文件字段互斥，包括null。")
 
     @model_validator(mode='before')
     @classmethod
