@@ -15,7 +15,7 @@ from .graph_schemas import DraftGraph, WriteGraph, EditGraph
 from .schemas import Graph, serial_execution_graph
 from .graph import compile_graph
 
-GRAPH_FIELDS = ('nodes','edges','entries','edge_rules','loops','concurrency','runtime_version')
+GRAPH_FIELDS = ('nodes','edges','entries','edge_rules','loops','concurrency','runtime_version','presentation')
 DISPLAY_FIELDS = {'position','color'}
 
 
@@ -73,6 +73,16 @@ def issues(graph):
 
 def structure(node):
     return {k:v for k,v in node.items() if k not in DISPLAY_FIELDS}
+
+
+def trim_presentation(graph):
+    """只清理展示引用；删除任务/连线时不要求额外修复无执行语义的标签。"""
+    presentation = graph.get('presentation')
+    if not presentation: return
+    ids = {node['id'] for node in graph['nodes']}
+    groups = [{**group, 'node_ids': [nid for nid in group['node_ids'] if nid in ids]} for group in presentation.get('groups', [])]
+    graph['presentation'] = {**presentation, 'groups': [group for group in groups if group['node_ids']],
+        'edge_labels': [label for label in presentation.get('edge_labels', []) if [label['source'], label['target']] in [list(edge) for edge in graph['edges']]]}
 
 
 def diff(before, after):
@@ -171,6 +181,8 @@ def apply_operations(before, operations):
         elif action=='remove_loop': graph['loops']=[l for l in graph['loops'] if l['id']!=op['loop_id']]
         elif action=='set_entries': graph['entries']=op['entries']
         elif action=='set_concurrency': graph['concurrency']=op['concurrency']
+        elif action=='set_presentation': graph['presentation']=op['presentation']
+        if action in ('remove_node', 'disconnect'): trim_presentation(graph)
     return graph
 
 
@@ -210,6 +222,7 @@ async def read(cid,uid,kind,target_id,*,execution_id=None,node_ids=None,graph_re
         if not complete:
             result_graph['nodes']=[n for n in graph['nodes'] if n['id'] in selected]
             result_graph['edges']=[e for e in graph['edges'] if set(e).issubset(selected)]
+            trim_presentation(result_graph)
         if execution_id:
             from ..models import ExecutionAllocation
             allocation=await session.get(ExecutionAllocation,execution_id)
@@ -256,6 +269,9 @@ async def mutate(cid,uid,kind,target_id,payload: WriteGraph|EditGraph,*,executio
                 allocation=await session.get(ExecutionAllocation,execution_id)
                 if allocation.authority_json.get('complete_graph_revision')!=number: service.reject('WORKFLOW_GRAPH_READ_REQUIRED')
             raw=payload.graph.model_dump(mode='json',exclude_unset=True)
+            if 'presentation' not in raw:
+                raw['presentation'] = copy.deepcopy(before.get('presentation'))
+                trim_presentation(raw)
             old={n['id']:n for n in before['nodes']}
             for n in raw.get('nodes',[]):
                 for field in DISPLAY_FIELDS:
@@ -278,7 +294,7 @@ async def mutate(cid,uid,kind,target_id,payload: WriteGraph|EditGraph,*,executio
         prepared=None
         if kind=='run':
             from .replanning import prepare
-            prepared=await prepare(session,row,before,graph)
+            prepared=await prepare(session,row,before,graph,target_is_effective=number==(row.graph_revision or 0))
         if payload.validate_only:
             return {'graph_revision':number,'graph':graph,'changes':changes,'validated':True,'committed':False,'executable':not compiled_issues,'compile_issues':compiled_issues}
         if row and not await session.scalar(select(WorkflowGraphRevision.id).where(WorkflowGraphRevision.target_key==kind+':'+target_id,

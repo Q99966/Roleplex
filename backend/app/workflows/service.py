@@ -141,7 +141,7 @@ async def run_json(session, run):
     graph_versions=(await session.scalars(select(WorkflowGraphRevision).where(WorkflowGraphRevision.run_id==run.id).order_by(WorkflowGraphRevision.number))).all()
     from .feedback import for_run
     return {'id': run.id, 'chain_id':run.chain_id, 'definition_id': run.definition_id, 'definition_revision': run.definition_revision,
-        'name': run.snapshot['name'], 'graph': {k: run.snapshot[k] for k in ('nodes', 'edges', 'runtime_version', 'entries', 'edge_rules', 'loops', 'concurrency') if k in run.snapshot},
+        'name': run.snapshot['name'], 'graph': {k: run.snapshot[k] for k in ('nodes', 'edges', 'runtime_version', 'entries', 'edge_rules', 'loops', 'concurrency', 'presentation') if k in run.snapshot},
         'constraints':run.snapshot.get('constraints',{}),'graph_revision':run.graph_revision,'latest_graph_revision':graph_versions[-1].number if graph_versions else None,
         'graph_versions':[{'graph_revision':v.number,'status':v.status,'legacy':v.legacy,'changes':v.changes_json} for v in graph_versions],
         'pending_graph_revision':run.state_json.get('pending_graph_revision'),

@@ -3,7 +3,7 @@ import { svgDrawSmoothStepLinePath, useSmartEdgePath } from '@tisoap/react-flow-
 
 const drawReturn = svgDrawSmoothStepLinePath({ borderRadius: 12 })
 
-export type WorkflowEdgeData = { waypoints?: XYPosition[]; returnEdge: boolean }
+export type WorkflowEdgeData = { waypoints?: XYPosition[]; returnEdge: boolean; relation?: 'control' | 'input' | 'feedback'; explanation?: string }
 export type RoutedWorkflowEdge = Edge<WorkflowEdgeData, 'workflow'>
 
 /** 删除共线的往返段；新线段仍在原路径上，不绕过库计算出的障碍边界。 */
@@ -40,13 +40,14 @@ export function WorkflowEdge(props: EdgeProps<RoutedWorkflowEdge>) {
     { x: props.sourceX, y: props.sourceY },
     { x: props.targetX, y: props.targetY }, compactPoints([[props.sourceX, props.sourceY], ...points, [props.targetX, props.targetY]]).slice(1, -1),
   ) : route.svgPathString : fallback
-  return <g data-routing={routed ? 'routed' : route ? 'fallback' : 'pending'} data-return-edge={props.data?.returnEdge || undefined}>
+  return <g data-routing={routed ? 'routed' : route ? 'fallback' : 'pending'} data-return-edge={props.data?.returnEdge || undefined} data-relation={props.data?.relation ?? 'control'}>
+    {props.data?.explanation && <title>{props.data.explanation}</title>}
     {!routed && <title>连线正在计算或当前间距不足；仍可选择和删除。</title>}
     <BaseEdge id={props.id} path={path}
       markerStart={props.markerStart} markerEnd={props.markerEnd} interactionWidth={24}
       label={props.label} labelX={first && last ? (first.x + last.x) / 2 : routed ? route.edgeCenterX : nativeX}
       labelY={first?.y ?? (routed ? route.edgeCenterY : nativeY)} labelStyle={props.labelStyle}
       labelBgStyle={{ fill: '#f3f9fc', fillOpacity: .96 }} labelBgPadding={[7, 4]} labelBgBorderRadius={5}
-      style={{ ...props.style, strokeDasharray: !routed ? '3 5' : props.data?.returnEdge ? '7 4' : undefined }} />
+      style={{ ...props.style, strokeDasharray: props.data?.relation === 'input' ? '2 6' : props.data?.relation === 'feedback' ? '5 5' : !routed ? '3 5' : props.data?.returnEdge ? '7 4' : undefined }} />
   </g>
 }

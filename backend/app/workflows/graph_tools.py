@@ -11,8 +11,8 @@ from .feedback_schemas import FeedbackToolUpdate, FeedbackUpdate
 
 DESCRIPTIONS={
     'workflow_read_graph':'读取本次授权目标的完整图、图版本、合法成员及工具说明、编译问题、保护约束和运行可编辑范围。省略 node_ids 得到完整图；部分读图不能作为整图覆盖依据。graph_revision 可读取历史，历史本身不可改写。',
-    'workflow_write_graph':'整体写入完整 graph：在授权新草稿槽位创建，或替换当前目标图。先 read_graph 获取完整图与版本，保留未改节点 ID；遗漏已有节点表示请求删除，不能绕过保护或活跃任务冻结。expected_graph_revision 为读到的图版本，新图为 0。mutation_key 标识一次修改；同内容重发保持原键，修改内容换新键。validate_only=true 只校验。全部校验成功才原子提交，保存不启动，错误按字段定位修正。',
-    'workflow_edit_graph':'按稳定节点 ID 局部编辑授权图；operations 是带 op 的原子批次。add_node/update_node/remove_node、connect/disconnect、set_inputs/set_condition、upsert_loop/remove_loop、set_entries/set_concurrency。引用要在批次结束时完整；删除节点时同批显式修复相关连线/输入/条件/循环。不能使用数组下标或直接写状态。版本、幂等和只校验语义与 write_graph 相同；冲突先重读再决定新修改。',
+    'workflow_write_graph':'整体写入完整 graph：在授权新草稿槽位创建，或替换当前目标图。先 read_graph 获取完整图与版本，保留未改节点 ID；遗漏已有节点表示请求删除，不能绕过保护或活跃任务冻结。新节点可省略坐标，由画布按拓扑布局；presentation 可设置阶段和分支文案，省略保留现有展示信息，null 清除。expected_graph_revision 为读到的图版本，新图为 0。mutation_key 标识一次修改；同内容重发保持原键，修改内容换新键。validate_only=true 只校验。全部校验成功才原子提交，保存不启动，错误按字段定位修正。',
+    'workflow_edit_graph':'按稳定节点 ID 局部编辑授权图；operations 是带 op 的原子批次。add_node/update_node/remove_node、connect/disconnect、set_inputs/set_condition、upsert_loop/remove_loop、set_entries/set_concurrency；set_presentation 仅替换展示阶段与分支文案，布局由前端计算，不用分组冒充执行循环。引用要在批次结束时完整；删除节点时同批显式修复相关连线/输入/条件/循环。不能使用数组下标或直接写状态。版本、幂等和只校验语义与 write_graph 相同；冲突先重读再决定新修改。',
     'workflow_inspect_run':'观察授权运行的真实节点、轮次、尝试、图版本、上游引用、错误和结构化结果。状态不代表副作用已回滚，不能依据正文猜测文件修改。用于本次运行重规划，不可任意查询其他运行。',
     'workflow_start':'在 Owner 已授予的启动范围内启动当前定义；先确保图可执行且指定所有任务角色，携带准确图版本。复用本次协调链和已消耗预算，重复调用不多建运行。仅设计请求没有此工具。',
     'workflow_control':'在本次明确授权运行内停止、继续或核对事实后重试准确尝试，使用 inspect_run 的最新进度 revision。不能代替人工确认、审批工具或隐式续额；图修改与运行控制分开。',

@@ -486,3 +486,11 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 浏览器（frontend/）：`npm run test:e2e:commands -- workflow-feedback.spec.ts graph-control.spec.ts`，实际前后端和 fake Provider 验证从节点反馈来源到人工委托、局部改图、验证关闭、补充反馈、版本竞争，以及启动时的明确自动授权。受控截图通过既有日志 reporter 保留。
 
 真实入口：`npm run test:e2e:real-world -- workflow-feedback-provider.spec.ts`，会联网计费。复用既有真实 World、后端凭据和保留规则；用例工作区位于本轮 `workflow-feedback` 子目录。只预置受控冲突文件、角色与来源流程，反馈、图修改、处理执行和复核都必须走真实模型工具。截图/trace/video 关闭，失败只记录安全阶段；实际记录和覆盖边界见[反馈验收](workflow-feedback.md)。
+
+### 工作流图可读性
+
+frontend 的 `npm run test:workflow-logic` 使用现有 Playwright runner 验证纯布局/投影，无须启动浏览器或后端。覆盖节点数组乱序、回边与未声明环路、手动位置、测量尺寸、循环区域、多个循环、展开/折叠还原、异常摘要与业务标签。
+
+backend 的 `python -m pytest tests/test_workflow_presentation.py tests/test_graph_control.py tests/test_orchestrator.py tests/test_workflow_feedback.py -q --tb=short --show-capture=no` 覆盖展示信息保存、旧客户端省略字段、历史版本、非法引用、运行循环即时展示，以及正在规划/汇总时纯展示修订不改变 phase、分工或已有尝试。持久化复用既有 JSON 字段，没有新增表或迁移。
+
+frontend 的 `npm run test:e2e:commands -- workflow-readability.spec.ts workflow-node-editing.spec.ts workflow-drafts.spec.ts workflow-reactflow.spec.ts workflow-routing.spec.ts workflow-feedback.spec.ts graph-control.spec.ts` 使用真实前后端和 fake Provider，验证总览、展开、整理/撤销/保存、业务标签、实际运行反馈、小屏定位及原交互回归。截图通过既有 reporter 存入标准日志目录。视觉检查和本轮结果见[可读性验收](workflow-readability.md)；本批不重复运行收费 Provider 验收。

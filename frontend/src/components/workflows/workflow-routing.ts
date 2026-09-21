@@ -5,7 +5,7 @@ import type { WorkflowEdgeData } from './WorkflowEdge'
 /** 外侧走廊只影响绘图；循环身份仍来自声明，不能用节点坐标推断执行条件。 */
 export function returnRoutes(graph: WorkflowGraph, nodes: Node[]): Map<string, WorkflowEdgeData> {
   const boxes = nodes.map(node => ({ id: node.id, x: node.position.x, y: node.position.y,
-    right: node.position.x + (node.measured?.width ?? 204), bottom: node.position.y + (node.measured?.height ?? 112) }))
+    right: node.position.x + (node.measured?.width ?? 224), bottom: node.position.y + (node.measured?.height ?? 144) }))
   const byId = new Map(boxes.map(box => [box.id, box]))
   const routes = new Map<string, WorkflowEdgeData>()
   const returns = graph.edges.filter(([s, t]) => {
@@ -17,7 +17,7 @@ export function returnRoutes(graph: WorkflowGraph, nodes: Node[]): Map<string, W
     const body = new Set(loop?.body ?? [source, target])
     body.add(source); body.add(target)
     const bounds = boxes.filter(box => body.has(box.id))
-    const margin = 48 + Math.floor(index / 2) * 28
+    const margin = (loop ? 96 : 48) + Math.floor(index / 2) * 28
     const left = Math.min(...bounds.map(box => box.x)) - margin
     const right = Math.max(...bounds.map(box => box.right)) + margin
     // 把走廊横跨范围内的其他节点也算作障碍，途经点不会落在它们内部。

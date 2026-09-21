@@ -10,6 +10,7 @@
     "test:e2e": "playwright test",
     "test:e2e:worlds": "playwright test --config playwright.worlds.config.ts",
     "test:e2e:commands": "playwright test --config playwright.commands.config.ts",
+    "test:workflow-logic": "playwright test --config playwright.logic.config.ts",
     "test:e2e:real": "playwright test --config playwright.real.config.ts",
     "test:e2e:real-world": "playwright test --config playwright.real-world.config.ts"
   },

@@ -33,6 +33,7 @@ export function GraphManagement() {
         {remote.nodes.filter(n => !local.has(n.id) || JSON.stringify(local.get(n.id)) !== JSON.stringify(n)).map(n => <li key={n.id}>{local.has(n.id) ? '内容有差异' : '服务端新增'}：{n.title}</li>)}
         {w.draft.definition.graph.nodes.filter(n => !remote.nodes.some(r => r.id === n.id)).map(n => <li key={n.id}>仅本地保留：{n.title}</li>)}
         {JSON.stringify(remote.edges) !== JSON.stringify(w.draft.definition.graph.edges) && <li>连线有差异</li>}
+        {JSON.stringify(remote.presentation ?? null) !== JSON.stringify(w.draft.definition.graph.presentation ?? null) && <li>展示阶段或分支名称有差异</li>}
       </ul>}
       <button type="button" className={button} onClick={w.forkDraft}>另存本地草稿</button>
       <button type="button" className={`${button} ml-2`} disabled={w.busy} onClick={() => { if (confirm('采用服务端版本并放弃本地未保存改动？')) void w.acceptRemote() }}>采用服务端版本</button>
@@ -43,6 +44,7 @@ export function GraphManagement() {
       <ul className="mt-2 space-y-2">{history.versions.map(v => <li key={v.graph_revision}>
         <span>图 v{v.graph_revision} · {v.legacy ? '旧记录基线' : v.source_execution_id ? '协调者提交' : 'Owner 提交'} · {({ applied: '已采用', pending: '等待循环边界', superseded: '已被后续修订替代', not_applied: '未采用' } as Record<string, string>)[v.status] ?? v.status}</span>
         <p className="text-slate-500">新增 {v.changes.added?.length ?? 0} · 修改 {v.changes.updated?.length ?? 0} · 移除 {v.changes.removed?.length ?? 0}</p>
+        {v.changes.configuration_changed?.includes('presentation') && <p className="text-slate-500">展示阶段或分支名称已更新</p>}
         {v.changes.reason && <p className="text-amber-600">{v.changes.reason}</p>}
       </li>)}</ul>
     </details>}

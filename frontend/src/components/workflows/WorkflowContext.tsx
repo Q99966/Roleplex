@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { getAuthEpoch, type Conversation } from '../../api/client'
 import { workflows, type WorkflowDefinition, type WorkflowList, type WorkflowRun, type WorkflowGraph, type Coordination, type CoordinateRequest } from '../../api/workflows'
-import { defaultPosition, serialOrder } from './workflow-layout'
+import { defaultPosition, displayPositions, serialOrder } from './workflow-layout'
+import { cleanPresentation } from './workflow-projection'
 import { useAppStore } from '../../store/app'
 
 import { DraftWriter, readLocalDrafts, deleteLocalDraft, type Draft, type LocalDraft, type DraftStatus } from './local-drafts'
@@ -65,6 +66,7 @@ function useController(conversation: Conversation) {
   const coordinationRequests = useRef(new Map<string, string>())
   const historyRequest = useRef(0)
   const [detailAttempt, setDetailAttempt] = useState<string | null>(null)
+  const [feedbackFocusId, setFeedbackFocusId] = useState<string | null>(null)
   const alive = useRef(true)
   const fetching = useRef(false)
   const pending = useRef(false)
@@ -83,8 +85,11 @@ function useController(conversation: Conversation) {
   const writer = useRef<DraftWriter | null>(null)
   const hydrated = useRef(false)
   const restoreSelection = useRef<string | null>(null)
-  function restoreLocal(record: LocalDraft) {
-    writer.current?.preserve()
+  async function restoreLocal(record: LocalDraft) {
+    if (localReady && writer.current && !await writer.current.preserve()) {
+      setLocalNotice('当前编辑尚未安全保留，请先下载草稿备份或重试本地保存。'); return
+    }
+    if (!current()) return
     setDraft(structuredClone(record.draft)); setMode('edit'); setRunId(record.draft.runTarget ?? null)
     setOpen(record.view.open); setProtectedNodesState(record.view.protectedNodes); setProtectionEdited(record.view.protectionEdited)
     restoreSelection.current = mode !== 'edit' || runId !== (record.draft.runTarget ?? null) || draft.definition.id !== record.draft.definition.id ? record.view.selected : null
@@ -101,7 +106,7 @@ function useController(conversation: Conversation) {
         const result = await readLocalDrafts(scope)
         if (cancelled || !current()) return
         setLocalCopies(result.items)
-        if (!hydrated.current && result.preferred) restoreLocal(result.preferred)
+        if (!hydrated.current && result.preferred) await restoreLocal(result.preferred)
         hydrated.current = true
         writer.current = new DraftWriter(scope, status => { if (!cancelled && current()) setLocalStatus(status) })
         setLocalGeneration(value => value + 1)
@@ -132,7 +137,7 @@ function useController(conversation: Conversation) {
     catch { setLocalNotice('副本删除失败或已被其他页面更新，请稍后重新打开会话核对。') }
   }
 
-  useEffect(() => { setSelected(restoreSelection.current); restoreSelection.current = null; setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null) }, [mode, runId, draft.definition.id])
+  useEffect(() => { setSelected(restoreSelection.current); restoreSelection.current = null; setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null); setFeedbackFocusId(null) }, [mode, runId, draft.definition.id])
 
   async function refresh() {
     if (fetching.current || !user?.is_owner) return
@@ -279,6 +284,7 @@ function useController(conversation: Conversation) {
   }
   async function selectHistory(revision: string) {
     const ticket = ++historyRequest.current
+    setFeedbackFocusId(null)
     if (!revision || !run) { setHistoryGraph(null); return }
     return perform(async () => {
       const value = await workflows.readGraph(conversation.id, 'run', run.id, Number(revision))
@@ -307,11 +313,13 @@ function useController(conversation: Conversation) {
     next = { ...graph, ...next }
     next.edge_rules = (next.edge_rules ?? []).filter(rule => next.edges.some(([a, b]) => a === rule.source && b === rule.target))
     next.entries = (next.entries ?? []).filter(id => next.nodes.some(node => node.id === id))
+    next.presentation = cleanPresentation(next)
     if (mode !== 'edit') return
     if (JSON.stringify(next.edges) === JSON.stringify(graph.edges)) {
       update({ ...draft.definition, graph: next }); return
     }
-    const positioned = { ...next, nodes: next.nodes.map((n, i) => ({ ...n, position: n.position ?? defaultPosition(i) })) }
+    const positions = displayPositions(next)
+    const positioned = { ...next, nodes: next.nodes.map(n => ({ ...n, position: n.position ?? positions[n.id] })) }
     const ordered = graph.runtime_version === 2 ? null : serialOrder(positioned)
     if (ordered) {
       const nodes = ordered.map((n, i) => ({ ...n, inputs: n.inputs.filter(id => ordered.slice(0, i).some(prior => prior.id === id)) }))
@@ -328,10 +336,11 @@ function useController(conversation: Conversation) {
     const id = crypto.randomUUID()
     const available = useAppStore.getState().roles.filter(role => conversation.role_ids.includes(role.id) && role.active)
     const role = available.find(role => role.id === source?.role_id) ?? available[0]
-    const position = source ? { x: (source.position ?? defaultPosition(index)).x + 280, y: (source.position ?? defaultPosition(index)).y } : defaultPosition(0)
+    const visiblePositions = displayPositions(graph)
+    const position = source ? { x: visiblePositions[source.id].x + 320, y: visiblePositions[source.id].y } : defaultPosition(0)
     const nodes = graph.nodes.map((node, i) => {
-      const current = node.position ?? defaultPosition(i)
-      return { ...node, position: current.x >= position.x ? { ...current, x: current.x + 280 } : current }
+      const current = visiblePositions[node.id] ?? defaultPosition(i)
+      return { ...node, position: current.x >= position.x ? { ...current, x: current.x + 320 } : current }
     })
     nodes.splice(index + 1, 0, { id, kind, title: ({ role: '角色任务', approval: '人工确认', join: '结果汇合', condition: '条件选择', judge: '模型判断' })[kind], role_id: kind === 'role' ? role?.id ?? null : null,
       task: '', expected_output: '', inputs: source ? [source.id] : [], position,
@@ -348,8 +357,14 @@ function useController(conversation: Conversation) {
     return definition ? choose(definition) : false
   }
   return { localReady, localStatus, localNotice, localCopies, retryLocal, exportLocal, restoreLocal, removeLocal, protectedNodes, setProtectedNodes: (values: string[]) => { setProtectedNodesState(values); setProtectionEdited(true) }, conflict, remoteDefinition, remoteRun, acceptRemote, forkDraft, coordinate, cancelCoordination, editRun, historyGraph, selectHistory, coordinationId, detailAttempt, selectAttempt: setDetailAttempt, conversation, draft, data, run, graph, selected, selectedEdge, graphNotice, addNode, changeGraph, editDefinition,
-    selectNode: (id: string | null) => { setSelected(id); if (id) setSelectedEdge('') },
-    selectEdge: (id: string) => { setSelectedEdge(id); if (id) setSelected(null) }, mode, setMode, open, setOpen, busy, error, setError, refresh,
+    feedbackFocusId, focusFeedback: (id: string) => {
+      const item = run?.feedback?.find(item => item.id === id)
+      if (!item) return
+      setFeedbackFocusId(id); setSelected(item.node_id); setSelectedEdge(''); setHistoryGraph(null); setOpen(true)
+      window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
+    },
+    selectNode: (id: string | null) => { setSelected(id); setFeedbackFocusId(null); if (id) setSelectedEdge('') },
+    selectEdge: (id: string) => { setSelectedEdge(id); if (id) { setSelected(null); setFeedbackFocusId(null) } }, mode, setMode, open, setOpen, busy, error, setError, refresh,
     update, choose, save, start, control, automaticFeedback, setAutomaticFeedback, reportFeedback, updateFeedback,
     selectRun: (id: string) => { historyRequest.current++; setHistoryGraph(null); setCoordinationId(null); setRunId(id || null); setMode(id ? 'run' : 'edit'); setProtectedNodesState(Object.keys(data.runs.find(r => r.id === id)?.constraints?.nodes ?? {})); setProtectionEdited(false) },
     input: (input: string) => setDraft(value => ({ ...value, input, requestKey: crypto.randomUUID() })),

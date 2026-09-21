@@ -33,7 +33,7 @@ async def edit_scope(session,run):
         'rules':'已派发/等待确认/已处理节点的内容和入边保持冻结；可新增后继。活动循环修改在未来轮次边界采用。'}
 
 
-async def prepare(session,run,before,after):
+async def prepare(session,run,before,after,*,target_is_effective=True):
     from .engine import current_activations
     if run.status in ('stopping','stopped'): service.reject('WORKFLOW_STATE_CONFLICT')
     effective=normalize({k:run.snapshot[k] for k in GRAPH_FIELDS if k in run.snapshot})
@@ -41,6 +41,13 @@ async def prepare(session,run,before,after):
     from ..config import settings
     compiled['concurrency']=after.get('concurrency') or settings.workflow_parallelism
     if after['runtime_version']!=2: service.reject('WORKFLOW_VERSION_REQUIRED',422)
+    execution_shape = lambda graph: {key: [structure(node) for node in graph['nodes']] if key == 'nodes' else graph.get(key)
+        for key in GRAPH_FIELDS if key != 'presentation'}
+    if target_is_effective and execution_shape(before) == execution_shape(after):
+        # 同一执行设计只改变展示：保留启动时容量、已接受分工、当前 phase 和所有激活。
+        # 最新目标若为尚未采用/已取消的业务修订，仍须走正常重规划，不能借标签提交采用它。
+        compiled['concurrency'] = run.snapshot['concurrency']
+        return {'compiled': compiled, 'assignments': run.state_json.get('assignments', {}), 'deferred_loops': [], 'display_only': True}
     rows=list((await session.scalars(select(WorkflowActivation).where(WorkflowActivation.run_id==run.id))).all())
     current=current_activations(run,rows)
     changed_loops=loop_changes(effective,after)
@@ -157,6 +164,15 @@ async def commit(session,run,version,prepared):
     if prior:
         old=await session.scalar(select(WorkflowGraphRevision).where(WorkflowGraphRevision.run_id==run.id,WorkflowGraphRevision.number==prior))
         if old: old.status='superseded'
+    if prepared.get('display_only'):
+        from .engine import current_activations
+        rows = list((await session.scalars(select(WorkflowActivation).where(WorkflowActivation.run_id == run.id))).all())
+        current = current_activations(run, rows)
+        run.state_json = {**run.state_json, 'activation_selection': {**run.state_json.get('activation_selection', {}), **{nid: row.id for nid, row in current.items()}}}
+        run.snapshot = {**run.snapshot, **prepared['compiled']}
+        run.graph_revision = version.number
+        version.status = 'applied'
+        return
     if prepared['deferred_loops']:
         version.status='pending'
         run.state_json={**run.state_json,'pending_graph_revision':version.number,'pending_graph_loops':prepared['deferred_loops'],'pending_boundaries':{}}

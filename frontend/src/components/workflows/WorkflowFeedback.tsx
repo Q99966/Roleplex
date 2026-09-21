@@ -62,6 +62,7 @@ function FeedbackCard({ item }: { item: WorkflowFeedback }) {
     <p className="text-slate-500">{source?.node_snapshot?.title ?? nodeTitle(item.node_id)} · {roleName(item.source_role_id)} · 图 {item.graph_revision == null ? '旧记录' : `v${item.graph_revision}`} · 第 {item.iteration + 1} 轮 · 尝试 {source?.number ?? '未知'}</p>
     {!item.source_current && <p className="text-amber-600">来自历史尝试，不阻塞当前结果。</p>}
     <button className="text-indigo-500" onClick={() => { w.selectAttempt(item.attempt_id); w.setOpen(true) }}>查看反馈来源</button>
+    <button className="ml-3 text-indigo-500" onClick={() => w.focusFeedback(item.id)}>定位处理路径</button>
     {item.details && <p className="whitespace-pre-wrap break-words">{item.details}</p>}
     {item.category === 'capability' && <div className="space-y-1 text-slate-500">
       <p>当时分配：{item.capability_check.assigned_tools?.join('、') || '无工具'}</p>

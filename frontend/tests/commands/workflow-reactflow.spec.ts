@@ -29,9 +29,15 @@ test('React Flow 拖动布局、保存分支环路、恢复及串行启动边界
     const data = await r.json()
     return { graph: data.definitions.find((d: { id: string }) => d.id === did).graph, runs: data.runs }
   }, ids)
-  async function open() {
-    await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
+  async function open(restored = false) {
+    if (restored) await expect(page.getByRole('region', { name: '本地草稿', exact: true })).toBeVisible()
+    else {
+      await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
+      await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
+    }
+    const list = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^已保存流程/ }) }).first()
+    await expect(list.locator('summary')).toContainText('1')
+    if (!await list.evaluate(element => (element as HTMLDetailsElement).open)) await list.locator('summary').click()
     await page.getByRole('button', { name: /可保存的图 v/ }).click()
   }
   async function connect(source: Locator, target: Locator) {
@@ -51,7 +57,7 @@ test('React Flow 拖动布局、保存分支环路、恢复及串行启动边界
   await page.mouse.up()
   await nodeA.focus()
   await page.keyboard.press('ArrowRight')
-  await expect(page.getByText(/有未保存编辑/)).toBeVisible()
+  await expect(page.getByText('有尚未提交到服务端的编辑', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '保存流程', exact: true }).click()
   await expect(page.getByText('已保存版本 2', { exact: true })).toBeVisible()
   const moved = await snapshot()
@@ -60,7 +66,7 @@ test('React Flow 拖动布局、保存分支环路、恢复及串行启动边界
   expect(moved.graph.nodes.map((n: { id: string }) => n.id)).toEqual(['a', 'b', 'c'])
   expect(moved.graph.edges).toEqual([['a', 'b'], ['b', 'c']])
   await page.reload()
-  await open()
+  await open(true)
   await expect(nodeA).toBeVisible()
   expect(await nodeA.evaluate(el => new DOMMatrixReadOnly((el as HTMLElement).style.transform).m42)).toBeCloseTo(moved.graph.nodes[0].position.y, 2)
   await canvas.getByRole('button', { name: '适配视图', exact: true }).click()
@@ -82,7 +88,7 @@ test('React Flow 拖动布局、保存分支环路、恢复及串行启动边界
   await page.getByRole('button', { name: '保存流程', exact: true }).click()
   await expect(page.getByText('已保存版本 4', { exact: true })).toBeVisible()
   await page.reload()
-  await open()
+  await open(true)
   await expect(canvas.locator('.react-flow__edge')).toHaveCount(4)
   await page.getByRole('button', { name: '启动流程', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('当前仅支持完整串行路径运行')

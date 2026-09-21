@@ -23,10 +23,17 @@ test('连线避开节点、循环外侧返回、自环、拖动与保存恢复',
   })
   await page.reload()
   await page.getByRole('button',{name:'打开会话：连线避障验收',exact:true}).click()
-  async function open() {
-    await page.getByRole('button',{name:'切换详情模块',exact:true}).click()
-    await page.getByRole('menuitemradio',{name:'工作流',exact:true}).locator('span').last().click()
+  async function open(restored = false) {
+    if (restored) await expect(page.getByRole('region', { name: '本地草稿', exact: true })).toBeVisible()
+    else {
+      await page.getByRole('button',{name:'切换详情模块',exact:true}).click()
+      await page.getByRole('menuitemradio',{name:'工作流',exact:true}).locator('span').last().click()
+    }
+    const list = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^已保存流程/ }) }).first()
+    await expect(list.locator('summary')).toContainText('1')
+    if (!await list.evaluate(element => (element as HTMLDetailsElement).open)) await list.locator('summary').click()
     await page.getByRole('button',{name:/连线避障 v/}).click()
+    await page.getByRole('region', { name: '工作流画布', exact: true }).getByRole('button', { name: '节点细节', exact: true }).click()
   }
   await open()
   const canvas=page.getByRole('region',{name:'工作流画布',exact:true})
@@ -48,7 +55,7 @@ test('连线避开节点、循环外侧返回、自环、拖动与保存恢复',
   }
   await routed()
   await expect.poll(collisions).toEqual([])
-  await expect(canvas.getByText('循环 · false',{exact:true})).toBeVisible()
+  await expect(canvas.getByText('返回下一轮 · 条件不成立',{exact:true})).toBeVisible()
   await expect(canvas.getByText('自环',{exact:true})).toBeVisible()
   const oldPath=await edge.locator('.react-flow__edge-path').getAttribute('d')
   const node=canvas.getByRole('button',{name:'节点 2：审查',exact:true})
@@ -62,7 +69,7 @@ test('连线避开节点、循环外侧返回、自环、拖动与保存恢复',
   await expect.poll(collisions).toEqual([])
   await page.getByRole('button',{name:'保存流程',exact:true}).click()
   await expect(page.getByText('已保存版本 2',{exact:true})).toBeVisible()
-  await page.reload(); await open(); await routed()
+  await page.reload(); await open(true); await routed()
   await expect.poll(collisions).toEqual([])
   const shot=info.outputPath('workflow-routing.png')
   await canvas.screenshot({path:shot})

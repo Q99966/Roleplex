@@ -36,6 +36,10 @@ function valid(value: unknown, scope: string): value is LocalDraft {
       && strings(loop.body) && strings(loop.carry_inputs))))
     && (graph.edge_rules === undefined || (Array.isArray(graph.edge_rules) && graph.edge_rules.every((rule: unknown) => object(rule)
       && typeof rule.source === 'string' && typeof rule.target === 'string' && ['always', 'true', 'false'].includes(rule.when))))
+    && (graph.presentation == null || (object(graph.presentation) && Array.isArray(graph.presentation.groups)
+      && graph.presentation.groups.every((group: unknown) => object(group) && typeof group.id === 'string' && typeof group.title === 'string' && strings(group.node_ids))
+      && Array.isArray(graph.presentation.edge_labels) && graph.presentation.edge_labels.every((label: unknown) => object(label)
+        && typeof label.source === 'string' && typeof label.target === 'string' && typeof label.label === 'string')))
     && typeof view.open === 'boolean' && (view.selected === null || typeof view.selected === 'string')
     && Array.isArray(view.protectedNodes) && view.protectedNodes.every((x: unknown) => typeof x === 'string') && typeof view.protectionEdited === 'boolean'
 }
@@ -143,8 +147,19 @@ export class DraftWriter {
     // 固定合并窗口，连续输入不能无限推迟持久化。
     if (this.timer === undefined) this.timer = window.setTimeout(() => void this.flush(), 200)
   }
-  /** 手动恢复另一个副本时保留当前编辑，不覆盖原来的恢复点。 */
-  preserve() { this.emergency(); void this.flush(); this.editorId = crypto.randomUUID() }
+  /** 手动恢复前确认旧编辑已写入独立副本，防止随后的刷新覆盖唯一备用日志。 */
+  async preserve(): Promise<boolean> {
+    this.emergency()
+    try {
+      while (this.current && this.current.sequence > this.persisted) {
+        const record = this.current
+        await put(record)
+        this.persisted = Math.max(this.persisted, record.sequence)
+      }
+      this.editorId = crypto.randomUUID()
+      return true
+    } catch { if (!this.disposed) this.notify('error'); return false }
+  }
   async flush() {
     clearTimeout(this.timer); this.timer = undefined
     if (this.busy || !this.current || this.current.sequence <= this.persisted) return
@@ -152,7 +167,7 @@ export class DraftWriter {
     const record = this.current
     try {
       await put(record)
-      this.persisted = record.sequence
+      this.persisted = Math.max(this.persisted, record.sequence)
       try {
         sessionStorage.setItem(HINT + this.scope, record.id)
         const text = sessionStorage.getItem(JOURNAL + this.scope)

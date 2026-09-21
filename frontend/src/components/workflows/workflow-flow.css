@@ -9,7 +9,53 @@
   --xy-controls-button-border-color: #dce9ef;
   --xy-minimap-background-color: #f4fafc;
 }
-.workflow-flow .workflow-task { width: 204px; min-height: 112px; }
+.workflow-flow { --wf-ink: #294e63; --wf-muted: #627f8e; --wf-line: #c4dce6; --wf-accent: #357999; color: var(--wf-ink); }
+.workflow-flow .workflow-task { width: 224px; min-height: 144px; border: 1px solid var(--wf-line); border-top: 3px solid var(--wf-accent); border-radius: 14px; padding: 14px; box-shadow: 0 2px 5px #294e6308; transition: opacity 150ms, box-shadow 150ms; }
+.workflow-flow .workflow-task.is-selected { outline: 2px solid #357999; outline-offset: 3px; box-shadow: 0 0 0 6px #dceef580; }
+.workflow-flow .workflow-task[data-dimmed] { opacity: .4; }
+.workflow-flow .workflow-task[data-dimmed]:hover { opacity: 1; }
+.workflow-flow .workflow-stage { width: 256px; min-height: 184px; background-color: #edf7f8 !important; }
+.workflow-card-heading { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--wf-muted); }
+.workflow-card-heading > span:nth-child(2) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.workflow-kind-icon { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid #a9cbd9; border-radius: 7px; color: #357999; background: #f7fcff; }
+.workflow-kind-condition .workflow-kind-icon, .workflow-kind-judge .workflow-kind-icon { border-radius: 4px; transform: rotate(45deg) scale(.85); }
+.workflow-kind-condition .workflow-kind-icon svg, .workflow-kind-judge .workflow-kind-icon svg { transform: rotate(-45deg); }
+.workflow-kind-join .workflow-kind-icon { border-radius: 50%; border-style: double; border-width: 3px; }
+.workflow-kind-approval .workflow-kind-icon { border-color: #cfb889; color: #927132; }
+.workflow-card-number { margin-left: auto; font-size: 10px; color: #7895a2; }
+.workflow-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 10px; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.workflow-card-caption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 6px; color: var(--wf-muted); font-size: 11px; }
+.workflow-node-state { margin-top: 10px; font-size: 12px; line-height: 1.6; }
+.workflow-loop-caption { margin-top: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #426e6b; font-size: 11px; }
+.workflow-group-states { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.workflow-group-states span, .workflow-feedback-badge { border-radius: 5px; padding: 3px 6px; font-size: 11px; line-height: 1.4; background: #e2eef4; }
+.workflow-feedback-badge { display: inline-block; margin-top: 5px; color: #87611d; background: #fff3d7; }
+.workflow-flow [data-tone="active"] { color: #246f97; }
+.workflow-flow [data-tone="waiting"] { color: #8a631d; }
+.workflow-flow [data-tone="failed"] { color: #af4851; }
+.workflow-flow [data-tone="completed"] { color: #417972; }
+.workflow-group-states [data-tone="waiting"] { background: #fff3d7; }
+.workflow-group-states [data-tone="failed"] { background: #ffedf0; }
+.workflow-expand { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 12px; padding-top: 9px; border-top: 1px solid #c9e0e2; color: #347694; font-size: 12px; }
+.workflow-viewbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #d9e8ef; background: #f8fcfe; font-size: 12px; }
+.workflow-viewbar button { display: inline-flex; align-items: center; gap: 5px; padding: 7px 9px; border-radius: 7px; white-space: nowrap; }
+.workflow-viewbar button:hover:not(:disabled) { background: #e7f1f6; }
+.workflow-viewbar button:disabled { opacity: .4; cursor: default; }
+.workflow-viewbar button:focus-visible, .workflow-viewbar select:focus-visible, .workflow-expand:focus-visible, .workflow-loop-label button:focus-visible { outline: 2px solid #357999; outline-offset: 2px; }
+.workflow-view-switch { display: inline-flex; padding: 3px; border: 1px solid #d2e4ec; border-radius: 10px; background: #edf5f9; }
+.workflow-view-switch button[aria-pressed="true"] { background: #fff; color: #256986; box-shadow: 0 1px 3px #294e6315; }
+.workflow-viewbar label { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--wf-muted); }
+.workflow-viewbar select { min-width: 86px; border: 1px solid #ccdee7; border-radius: 7px; padding: 5px; background: #fff; color: var(--wf-ink); }
+.workflow-viewbar .workflow-node-jump { width: 128px; max-width: 100%; }
+.workflow-view-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; color: var(--wf-muted); background: #f3f9fc; font-size: 11px; }
+.workflow-view-caption button { color: #347694; flex-shrink: 0; }
+.workflow-view-notice { padding: 6px 12px; font-size: 12px; color: #586e76; background: #f4f8f5; border-bottom: 1px solid #dce9e7; overflow-wrap: anywhere; }
+.workflow-loop-region { position: absolute; pointer-events: none; border: 1px dashed #98c5bf; border-radius: 20px; background: #83c7b80a; z-index: -1; }
+.workflow-loop-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: absolute; left: 14px; top: 10px; right: 14px; font-size: 12px; color: #4c7b76; }
+.workflow-loop-label span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.workflow-loop-label button { pointer-events: auto; flex-shrink: 0; background: #eff8f5; border-radius: 5px; padding: 3px 7px; font-size: 11px; }
+@media (max-width: 640px) { .workflow-viewbar { padding: 7px 8px; gap: 3px; } .workflow-viewbar button { padding: 6px 7px; } .workflow-viewbar label { margin-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .workflow-flow .workflow-task { transition: none; } }
 .workflow-flow .react-flow__handle { width: 11px; height: 11px; background: #739bb0; border: 2px solid white; }
 .workflow-flow .react-flow__node:focus-visible { outline: 2px solid #357999; outline-offset: 4px; border-radius: 16px; }
 .workflow-flow .react-flow__controls-button { width: 30px; height: 30px; }

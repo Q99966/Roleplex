@@ -1,7 +1,7 @@
 """可保存通用有向图；运行能力在启动边界单独校验。"""
 from typing import Literal
 from pydantic_core import PydanticCustomError
-from pydantic import BaseModel, ConfigDict, Field, model_validator, StrictBool, StrictInt, StrictFloat, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, model_validator, StrictBool, StrictInt, StrictFloat, StrictStr, ValidationError
 
 
 class Strict(BaseModel):
@@ -60,6 +60,26 @@ class Node(Strict):
     color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
 
 
+class DisplayGroup(Strict):
+    """展示阶段只引用真实节点；分组不创建执行、依赖或权限。"""
+    id: str = Field(min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    title: str = Field(min_length=1, max_length=80, pattern=r'.*\S.*')
+    node_ids: list[str] = Field(min_length=1)
+
+
+class EdgeLabel(Strict):
+    """业务文案独立于 when/condition，不能用文案改变分支选择。"""
+    source: str
+    target: str
+    label: str = Field(min_length=1, max_length=80, pattern=r'.*\S.*')
+
+
+class Presentation(Strict):
+    """兼容的图展示元数据；坐标继续使用已有 node.position。"""
+    groups: list[DisplayGroup] = Field(default_factory=list)
+    edge_labels: list[EdgeLabel] = Field(default_factory=list)
+
+
 class Graph(Strict):
     nodes: list[Node] = Field(min_length=1)
     edges: list[tuple[str, str]]
@@ -68,10 +88,29 @@ class Graph(Strict):
     edge_rules: list[EdgeRule] = Field(default_factory=list)
     loops: list[Loop] = Field(default_factory=list)
     concurrency: int | None = Field(default=None, ge=1)
+    presentation: Presentation | None = Field(default=None, description='仅展示阶段和连线文案，不改变执行关系；节点坐标由前端布局，阶段不能替代业务循环声明。')
+
+    def validate_presentation(self):
+        """展示引用同样局限于本图，返回安全字段定位而不回显正文。"""
+        if not self.presentation: return
+        ids = {node.id for node in self.nodes}
+        seen_groups, seen_labels = set(), set()
+        def invalid(loc):
+            raise ValidationError.from_exception_data('Graph', [{'type': PydanticCustomError('workflow_graph_invalid', 'WORKFLOW_GRAPH_INVALID'),
+                'loc': ('presentation', *loc), 'input': None}])
+        for index, group in enumerate(self.presentation.groups):
+            if group.id in seen_groups: invalid(('groups', index, 'id'))
+            seen_groups.add(group.id)
+            if len(set(group.node_ids)) != len(group.node_ids) or not set(group.node_ids).issubset(ids): invalid(('groups', index, 'node_ids'))
+        for index, label in enumerate(self.presentation.edge_labels):
+            pair = (label.source, label.target)
+            if pair not in self.edges or pair in seen_labels: invalid(('edge_labels', index))
+            seen_labels.add(pair)
 
     @model_validator(mode='after')
     def valid_graph(self):
         """保存允许分支/环路，但拒绝未知端点、重复 ID/连线及失效输入引用。"""
+        self.validate_presentation()
         ids = [node.id for node in self.nodes]
         if len(set(ids)) != len(ids) or len(set(self.edges)) != len(self.edges) or any(
             source not in ids or target not in ids for source, target in self.edges

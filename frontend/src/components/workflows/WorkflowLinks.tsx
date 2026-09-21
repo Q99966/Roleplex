@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useWorkflow } from './WorkflowContext'
+import { edgeDescription } from './workflow-projection'
 
 /** 侧栏连线表单与画布共享选择和草稿，不依赖画布是否展开。 */
 export function WorkflowLinks() {
@@ -27,6 +28,16 @@ export function WorkflowLinks() {
       <label className="block">连线<select aria-label="选择连线" value={edges.some(e => e.id === w.selectedEdge) ? w.selectedEdge : ''} onChange={e => w.selectEdge(e.target.value)} className={field}>
         <option value="">选择连线</option>{edges.map(edge => <option key={edge.id} value={edge.id}>{edge.label}</option>)}
       </select></label>
+      {edges.some(e => e.id === w.selectedEdge) && (() => {
+        const [a, b] = JSON.parse(w.selectedEdge) as [string, string]
+        const display = w.graph.presentation ?? { groups: [], edge_labels: [] }
+        return <><label className="block">分支显示名称<input aria-label="分支显示名称" className={field} maxLength={80}
+          placeholder="例如：通过、需要修订" value={display.edge_labels.find(label => label.source === a && label.target === b)?.label ?? ''}
+          onChange={e => w.changeGraph({ ...w.graph, presentation: { ...display, edge_labels: [
+            ...display.edge_labels.filter(label => label.source !== a || label.target !== b),
+            ...(e.target.value.trim() ? [{ source: a, target: b, label: e.target.value }] : []),
+          ] } })} /></label><p className="text-slate-500">实际规则：{edgeDescription(w.graph, a, b).condition}。名称不改变规则。</p></>
+      })()}
       {w.graph.runtime_version === 2 && edges.some(e => e.id === w.selectedEdge) && <label className="block">此连线何时激活<select aria-label="连线条件" className={field}
         value={w.graph.edge_rules?.find(rule => JSON.stringify([rule.source, rule.target]) === w.selectedEdge)?.when ?? 'always'} onChange={e => {
           const [source, target] = JSON.parse(w.selectedEdge) as [string, string]

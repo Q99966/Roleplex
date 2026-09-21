@@ -555,3 +555,7 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 - `workflow_attempts.result_json` 可含 feedback_ids 和 feedback_digest；原始意见在反馈表，原消息/文件效果与 Trace 不复制。图变更从原协调 execution 或 assign 的图版本关联读取，显示实际 applied/pending 等状态。
 
 0023 使用通用 JSON、Boolean 和日期类型，提供升级/降级。权限、状态、自动派发及重启语义见[工作流协议](../public/rest/workflows.md#节点反馈与处置)；SQLite 迁移重放与 PostgreSQL 离线 SQL 验证不等于 PostgreSQL 实例运行验收。
+
+### 图的展示信息（兼容 JSON 扩展）
+
+定义 graph、图版本 graph 和运行 snapshot 可保存可空 `presentation`，包含展示阶段及边文案；坐标、颜色继续使用既有节点字段。旧 JSON 缺省空展示，不改表、列、索引或迁移版本，字段与引用校验见[工作流协议](../public/rest/workflows.md)。纯展示修订保存版本而不重建激活、改分工或转换执行阶段；activation_selection 保留有效的旧汇总引用。已有激活继续引用原 graph_revision，尝试从该设计版本取节点快照，不能把新显示位置倒填成过去的执行事实。折叠、关系图层及运行视图临时整理不落库。

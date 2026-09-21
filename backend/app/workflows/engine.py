@@ -147,7 +147,7 @@ async def start(cid, uid, payload, *, manager_execution_id=None):
             if manager: manager.started_run_id=run.id
             session.add(run); await session.flush()
             from .graph_service import record
-            await record(session,cid=cid,uid=uid,kind='run',target_id=run.id,number=1,graph={k:graph[k] for k in ('nodes','edges','entries','edge_rules','loops','concurrency','runtime_version')},execution_id=manager_execution_id)
+            await record(session,cid=cid,uid=uid,kind='run',target_id=run.id,number=1,graph={k:graph[k] for k in ('nodes','edges','entries','edge_rules','loops','concurrency','runtime_version','presentation')},execution_id=manager_execution_id)
             for node in graph['nodes']:
                 await create_activation(session, run, node['id'], loop_id=graph['loop_membership'].get(node['id']))
             if coord and not manager: await create_activation(session, run, '__plan')
@@ -163,6 +163,13 @@ async def attempt(session, run, activation, upstream=(), instruction='', source=
     number = (await session.scalar(select(func.max(WorkflowAttempt.number)).where(WorkflowAttempt.run_id == run.id,
         WorkflowAttempt.node_id == activation.node_id))) or 0
     node = copy.deepcopy(node_for(run, activation.node_id))
+    if activation.graph_revision is not None and activation.graph_revision != run.graph_revision and not activation.node_id.startswith('__'):
+        # 纯展示修订不重新建立待执行意图；新尝试仍引用该激活实际依据的原节点设计。
+        from ..models import WorkflowGraphRevision
+        original = await session.scalar(select(WorkflowGraphRevision).where(WorkflowGraphRevision.run_id == run.id,
+            WorkflowGraphRevision.number == activation.graph_revision))
+        if original:
+            node = copy.deepcopy(next((item for item in original.graph['nodes'] if item['id'] == activation.node_id), node))
     phase = node['kind'] if node['kind'] in ('plan', 'summary') else 'judge' if node['kind'] == 'judge' and run.snapshot['mode'] == 'coordinated' else 'work'
     row = WorkflowAttempt(id=uuid4().hex, run_id=run.id, node_id=activation.node_id, activation_id=activation.id,
         graph_revision=activation.graph_revision, node_snapshot_json=node, phase=phase, number=number + 1, status='pending', upstream_ids=list(dict.fromkeys(upstream)),
@@ -261,7 +268,7 @@ def current_activations(run, rows):
     ordered=sorted(rows,key=lambda a:(a.graph_revision or 0,a.iteration,a.id))
     def eligible(a):
         if a.node_id not in ids: return False
-        if a.node_id=='__summary' and a.graph_revision!=run.graph_revision: return False
+        if a.node_id=='__summary' and a.graph_revision!=run.graph_revision and run.state_json.get('activation_selection',{}).get('__summary')!=a.id: return False
         lid=run.snapshot.get('loop_membership',{}).get(a.node_id)
         return not lid or (a.loop_id==lid and a.iteration==run.state_json.get('loops',{}).get(lid,{}).get('iteration'))
     result={a.node_id:a for a in ordered if eligible(a)}

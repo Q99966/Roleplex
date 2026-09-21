@@ -2,7 +2,7 @@
 from typing import Annotated, Literal
 from pydantic import Field, model_validator, ValidationError
 from pydantic_core import PydanticCustomError
-from .schemas import Strict, Graph, Node, Position, Condition, Loop
+from .schemas import Strict, Graph, Node, Position, Condition, Loop, Presentation
 
 
 class DraftCondition(Condition):
@@ -30,6 +30,7 @@ class DraftGraph(Graph):
 
     @model_validator(mode='after')
     def valid_graph(self):
+        self.validate_presentation()
         def invalid(code,loc):
             raise ValidationError.from_exception_data('DraftGraph',[{'type':PydanticCustomError('workflow_graph_invalid',code),'loc':tuple(loc),'input':None}])
         ids=[node.id for node in self.nodes]
@@ -143,7 +144,12 @@ class SetConcurrency(Strict):
     concurrency: int | None = Field(ge=1)
 
 
-Operation = Annotated[AddNode | UpdateNode | RemoveNode | Connect | Disconnect | SetInputs | SetCondition | UpsertLoop | RemoveLoop | SetEntries | SetConcurrency, Field(discriminator='op')]
+class SetPresentation(Strict):
+    op: Literal['set_presentation']
+    presentation: Presentation | None = Field(description='替换展示阶段和边文案；不修改 nodes、edges、when、condition 或 loops。null 清除自定义展示。')
+
+
+Operation = Annotated[AddNode | UpdateNode | RemoveNode | Connect | Disconnect | SetInputs | SetCondition | UpsertLoop | RemoveLoop | SetEntries | SetConcurrency | SetPresentation, Field(discriminator='op')]
 
 
 class Mutation(Strict):

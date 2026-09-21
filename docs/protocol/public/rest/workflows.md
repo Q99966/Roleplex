@@ -2,8 +2,8 @@
 
 | 元数据 | 值 |
 |---|---|
-| 状态 | 已实现图管理、版本化重规划、节点反馈与局部处置；保留并行循环与 v1 兼容 |
-| 协议版本 | 4（兼容新增反馈、处置与显式自动处理授权）；图执行内核仍用 runtime_version=1/2 |
+| 状态 | 已实现图管理、反馈处置与画布阶段总览/拓扑布局；保留并行循环与 v1 兼容 |
+| 协议版本 | 5（兼容新增展示元数据与纯展示修订）；图执行内核仍用 runtime_version=1/2 |
 | 复核日期 | 2026-09-21 |
 | 事实来源 | `workflows/{schemas,graph_schemas,graph_service,planning,graph_tools,replanning,results,feedback_schemas,feedback,engine,coordination,allocations,service}.py`、`routers/workflows.py` |
 | 验证入口 | [测试指南](../../../testing/README.md) |
@@ -30,6 +30,7 @@
 | `concurrency` | 可空正整数；不超过主机 `WORKFLOW_PARALLELISM`，为空使用主机容量 |
 | `edge_rules` | `{source,target,when}`；when 为 always/true/false |
 | `loops` | 显式循环声明，见下节 |
+| `presentation` | 可空展示元数据；`groups:[{id,title,node_ids}]` 和 `edge_labels:[{source,target,label}]`，不参与执行求值 |
 
 | 节点字段 | 语义 |
 |---|---|
@@ -41,7 +42,7 @@
 | `tools` | 可空工具名称列表；空列表表示不授予原生工具，null 在手动启动时按现有授权初始化，在协调模式由模型申请 |
 | `result_keys` / `result_schema` | 必需结果字段及类型映射；类型为 boolean/integer/number/string/null，未显式指定时可由下游条件推导，冲突拒绝 |
 | `condition` | condition/judge 必填的结构化规则 |
-| `position` / `color` | 可空有限坐标 `{x,y}` / `#RRGGBB`；缺省按类型布局与配色 |
+| `position` / `color` | 可空有限坐标 `{x,y}` / `#RRGGBB`；缺省按拓扑布局、按类型配色；已有坐标默认保留 |
 
 ## 条件、并行与循环
 
@@ -106,9 +107,11 @@
 
 write/edit 均携带 expected_graph_revision、mutation_key、可选 validate_only（默认 false）。新目标图版本为 0；同目标修改键持久去重，摘要包含工具名和规范化请求。同键同内容返回原结果，换工具或不同内容冲突。只校验不创建定义/修订，正式提交仍复核当前版本与授权。模型整体覆盖前须取得完整当前图；部分读取会清除完整读护栏，完整编辑结果可作为后续完整图依据。
 
-write 的 graph 遗漏业务节点表示请求删除，不隐式合并；已有节点未提供 position/color 时保留展示值。按 ID 比较完整差异，不删除重建全部身份；派生索引、执行状态、Owner、目标归属不能由模型参数覆盖。后台在副本完成全部变更，最终结构/引用/权限通过后才原子提交，失败不留下半批修改。
+write 的 graph 遗漏业务节点表示请求删除，不隐式合并；已有节点未提供 position/color 时保留展示值。省略 presentation 保留既有展示信息并清理已不存在的引用，显式 null 清除。按 ID 比较完整差异，不删除重建全部身份；派生索引、执行状态、Owner、目标归属不能由模型参数覆盖。后台在副本完成全部变更，最终结构/引用/权限通过后才原子提交，失败不留下半批修改。
 
-edit 支持 add_node、update_node（changes 只含设计字段）、remove_node、connect/disconnect（同时处理 edge_rules）、set_inputs、set_condition、upsert_loop/remove_loop、set_entries、set_concurrency。删除节点需在同批显式修复相关连线/输入/条件/循环；中间态不必可执行，最终引用必须有效。字段/节点与操作下标用于错误定位，不返回失败输入原文。
+edit 支持 add_node、update_node（changes 只含设计字段）、remove_node、connect/disconnect（同时处理 edge_rules）、set_inputs、set_condition、upsert_loop/remove_loop、set_entries、set_concurrency、set_presentation。最后一项替换展示元数据或用 null 清除，不改写节点、连线或循环；既有模型工具授权范围不扩大。删除节点需在同批显式修复相关业务连线/输入/条件/循环；附属展示引用自动清理。中间态不必可执行，最终引用必须有效。字段/节点与操作下标用于错误定位，不返回失败输入原文。
+
+展示 group.id 为本图唯一的 1–64 位 ASCII 字母/数字/下划线/连字符；title 和 label 为 1–80 字符且不能全为空白。node_ids 非空、无重复且须属于本图；edge_labels 必须引用真实边且每条边最多一个标签。非法引用或携带运行状态等未知字段均被 422 拒绝：REST 请求 schema 验证使用 VALIDATION_ERROR，提交服务的图引用检查使用 WORKFLOW_GRAPH_INVALID，不提交部分修改。分组可以包含子阶段，但相互交错或会在投影中制造假环的阶段保持展开并说明原因；它们不因此改变原业务图的可运行性。部分读图仍标注 coverage，并裁剪展示引用到已返回对象。
 
 Owner REST 共用同一服务：
 
@@ -130,6 +133,8 @@ Owner REST 共用同一服务：
 阻塞反馈已暂停本轮交接时，可以保持循环入口、判断、出口、重复规则和上限，在本轮未派发区域局部补充处理节点。仍逐项检查已执行内容、入边和作用域冻结。改变上述循环边界返回 WORKFLOW_FEEDBACK_LOOP_BOUNDARY，避免“等下一轮采用处置节点、又等处置结束才能进入下一轮”的互等。
 
 activation/attempt 新增 graph_revision；attempt.node_snapshot 保存派发所依据节点。旧记录保持 null，不倒推不存在的历史版本；首次纳入版本服务时仅保存标有 legacy 的当时基线。历史图通过精确版本读取，界面不把新图节点叠到旧版本。旧尝试与当前图的节点内容/循环作用域已经不兼容时，retry 返回 WORKFLOW_GRAPH_RETRY_VERSION；不能假借重试重写历史。循环达到上限后，Owner 可提交新的未来修订并显式继续，预算不重置。
+
+当修改目标就是当前有效图，且变化仅为 presentation、节点坐标或颜色时，只提交新的展示版本；保留 phase、已接受分工、启动时并发容量、激活选择、尝试与预算，不提前越过规划、不重跑汇总。既有激活继续引用原执行设计版本，其后创建的尝试从该版本取得准确节点快照；新激活使用最新图版本。最新目标若是尚未采用或已取消的业务修订，展示改动仍随正常重规划检查，不能顺便采用其业务变化。
 
 workflow_result 的导出 schema 由节点结果类型与条件来源推导，非法值不保存，可以在原预算中修正。同一尝试相同结果重复提交返回原结果；执行仍活跃且结果尚未交接时，可携带上次返回的 expected_result_revision 修正报告，成功返回 result_revision；并发不同结果不能无版本覆盖。执行结束/已消费后旧工具对象无权改写。规划/汇总旧工具保留兼容，但不能更改真实运行终态。
 
@@ -194,5 +199,11 @@ execution_allocations 冻结每个尝试的工具、资源与授权来源；上�
 缺省 runtime_version=1：保存仍允许通用图，启动仅支持唯一完整串行路径。新增工具分配、节点类型或循环声明需要显式选择 v2；不猜测旧环路语义。v1 控制仍按串行游标及 selected 工作，历史运行不迁移成并行。
 
 React Flow 负责选择、连线和位置；配置与操作在右侧工作流模块。Tab 在选中聚焦的编辑态节点后插入任务；Delete 仅删除选中连线或无连接节点。非编辑态和文本输入不触发删除。节点类型与颜色可修改；定义编辑不影响当前运行，运行图须通过明确修订入口更新。
+
+画布总览按展示阶段、显式循环和可确定的并行汇合区域生成临时投影；虚拟卡片不进入保存或执行，聚合边保留原连线来源。折叠不隐藏当前失败、等待和未关闭反馈；展开可查看循环范围、轮次与出口。结果交接和反馈关联使用独立虚线图层，只是引用关系，不新增控制边。
+
+初次显示无坐标节点时按拓扑计算位置，声明回边不参与本轮分层；未声明环路通过强连通分量降级显示，不擅自补执行声明。合法循环按整体区域排布后展开内部节点，新增节点局部安置并保留已有手动坐标。编辑态“整理布局”只更新坐标，可撤销，再显式保存；运行/历史态“整理视图”、展开折叠和聚焦不修改图版本。默认保持可读缩放，可通过“适配视图”缩小看全图，窄屏可用“定位节点”展开并聚焦。
+
+分支优先显示已配置业务名称，未配置使用“条件成立/不成立”，不把任意布尔字段猜成通过/失败；悬停和选中可核对原条件。创建编号用于定位，执行顺序由依赖决定。折叠视图和关系图层不支持删除或连接虚拟对象；编辑操作仍使用真实节点和执行边。
 
 数据迁移见[数据模型](../../internal/data-model.md) 0021–0023；错误码见[注册表](../../error-codes.md)。字段校验仅返回安全的 type/loc/msg 定位，不回显 Prompt 或无效输入。

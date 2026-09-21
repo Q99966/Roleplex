@@ -6,6 +6,7 @@ import { lazy, Suspense } from 'react'
 const GraphManagement = lazy(() => import('./GraphManagement').then(module => ({ default: module.GraphManagement })))
 import { WorkflowLinks } from './WorkflowLinks'
 import { WorkflowFeedbackPanel } from './WorkflowFeedback'
+import { WorkflowPresentationEditor } from './WorkflowPresentationEditor'
 
 const button = 'rounded-lg border border-slate-700 bg-panel px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-40'
 const field = 'mt-1 w-full min-w-0 rounded-lg border border-slate-700 bg-panel p-2 text-sm text-slate-200'
@@ -19,6 +20,8 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
   const coordinator = user?.is_owner ? useAppStore.getState().roles.find(role => role.id === w.conversation.orchestrator_role_id) : null
   const appointed = w.conversation.type === 'group' && w.conversation.orchestrator_enabled && (w.conversation.orchestrator_revision ?? 0) > 0
   const terminal = w.run && !['queued', 'running', 'waiting', 'stopping'].includes(w.run.status)
+  const waitingFeedback = w.run?.runtime_version === 2 && !w.run.activations?.some(a => a.status === 'waiting')
+    && (w.run.activations?.some(a => a.status === 'waiting_feedback') || w.run.feedback?.some(item => item.source_current && item.blocking && ['open', 'in_progress', 'waiting', 'review'].includes(item.status)))
   const workspaceId = w.mode === 'run' && w.run ? w.run.workspace_binding_id : w.conversation.workspace_binding_id
   const workspaceName = workspaceId === null ? '未绑定工作区' : workspaceBindings.find(b => b.id === workspaceId)?.display_name ?? '工作区信息不可用'
   return <div className="space-y-4 text-xs">
@@ -29,7 +32,7 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
       <div className="flex gap-3"><button onClick={w.exportLocal} className="text-indigo-500">下载草稿备份</button>{w.localStatus === 'error' && <button onClick={w.retryLocal} className="text-indigo-500">重试本地保存</button>}</div>
       {w.localCopies.length > 0 && <details><summary className="cursor-pointer">恢复副本（{w.localCopies.length}）</summary>{w.localCopies.map(record => <div key={record.id} className="mt-2 space-x-2">
         <span>{record.draft.definition.name} · {new Date(record.updatedAt).toLocaleString()}</span>
-        <button className="text-indigo-500" onClick={() => { if (!w.draft.dirty || confirm('当前编辑已保留为本地副本，切换到所选恢复副本？')) w.restoreLocal(record) }}>恢复</button>
+        <button className="text-indigo-500" onClick={() => { if (!w.draft.dirty || confirm('切换前会保留当前编辑为本地副本，恢复所选副本？')) void w.restoreLocal(record) }}>恢复</button>
         <button className="text-slate-500" onClick={() => { if (confirm('删除这个恢复副本？当前编辑不受影响。')) void w.removeLocal(record) }}>删除副本</button>
       </div>)}</details>}
     </section>
@@ -74,7 +77,7 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
       </div>}
       {w.run && <button type="button" onClick={() => w.setMode('run')} className="text-indigo-500">查看运行</button>}
     </section> : w.run && <section aria-label="工作流运行操作" className="space-y-3 rounded-2xl border border-slate-800 bg-panel p-4">
-      <p role="status">{w.run.status === 'waiting' && !w.run.activations?.some(a => a.status === 'waiting') ? '等待反馈处置' : statusLabel(w.run.status)} · 定义快照 v{w.run.definition_revision}</p>
+      <p role="status">{w.run.status === 'waiting' && waitingFeedback ? '等待反馈处置' : statusLabel(w.run.status)} · 定义快照 v{w.run.definition_revision}</p>
       <p className="text-slate-500">{w.run.runtime_version === 2 ? `活跃节点 ${w.run.activations?.filter(a => a.status === 'active').length ?? 0}` : `步骤 ${Math.min((w.run.cursor ?? 0) + 1, w.run.graph.nodes.length)} / ${w.run.graph.nodes.length}`} · 决策 {w.run.used_decisions ?? '未知'} / {w.run.decision_limit ?? '不限'}</p>
       <p className="text-slate-500">工作区：{workspaceName}</p>
       {w.run.runtime_version === 2 && <div className="space-y-2">
@@ -107,6 +110,7 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
     <Suspense fallback={<p className="text-slate-500">读取图管理记录…</p>}><GraphManagement /></Suspense>
     <WorkflowSettings />
     <WorkflowLinks />
+    <WorkflowPresentationEditor key={w.draft.definition.id + ':' + (w.draft.runTarget ?? '')} />
     <details className="rounded-xl border border-slate-800 p-3 text-slate-500">
       <summary className="cursor-pointer">操作帮助</summary>
       <p className="mt-2">拖动仅改变节点位置。v2 支持并行依赖、结构化条件与显式循环。旧图需补齐条件及回边语义后运行。</p>
