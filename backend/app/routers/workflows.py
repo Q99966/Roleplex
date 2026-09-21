@@ -116,3 +116,24 @@ async def coordination_message(conversation_id:int,coordination_id:Id,owner:Owne
         generation=await session.get(Generation,execution.generation_id) if execution else None
         message=await session.get(Message,generation.assistant_message_id) if generation and generation.assistant_message_id else None
         return message_payload(message) if message and message.conversation_id==conversation_id else None
+
+
+@router.get('/draft-scope')
+async def local_draft_scope(conversation_id:int,owner:Owner,response:Response):
+    """为已鉴权的 Owner 返回稳定本地草稿命名空间，不暴露凭据或宿主路径。
+
+    World 密钥与账号/会话创建身份共同隔离重建后的同名 World 和复用的整数 ID；
+    它仅用于客户端存储分区，不能用作登录或资源访问凭据。
+    """
+    import hashlib
+    import hmac
+    import json
+    from ..config import settings
+    from ..db import SessionLocal
+    response.headers['Cache-Control']='no-store'
+    async with SessionLocal() as session:
+        conversation=await service.owned(session,conversation_id,owner.id)
+        identity=json.dumps(['workflow-local-draft-v1',settings.world_name,owner.id,owner.created_at.isoformat(),
+            conversation.id,conversation.created_at.isoformat()],separators=(',',':')).encode()
+        scope=hmac.new(settings.resolved_jwt_secret().encode(),identity,hashlib.sha256).hexdigest()
+    return {'scope':scope}

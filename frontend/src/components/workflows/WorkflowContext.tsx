@@ -1,19 +1,10 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { getAuthEpoch, type Conversation } from '../../api/client'
 import { workflows, type WorkflowDefinition, type WorkflowList, type WorkflowRun, type WorkflowGraph, type Coordination, type CoordinateRequest } from '../../api/workflows'
 import { defaultPosition, serialOrder } from './workflow-layout'
 import { useAppStore } from '../../store/app'
 
-type Draft = { runTarget?: string; definition: WorkflowDefinition; dirty: boolean; input: string; requestKey: string }
-const drafts = new Map<string, Draft>()
-/** 关闭页面时检查整个认证会话的草稿；切到其他会话或主页也不能漏掉旧编辑。 */
-function warnUnsavedDrafts(event: BeforeUnloadEvent) {
-  if ([...drafts].some(([key, draft]) => key.startsWith(`${getAuthEpoch()}:`) && draft.dirty)) {
-    event.preventDefault(); event.returnValue = ''
-  }
-}
-window.addEventListener('beforeunload', warnUnsavedDrafts)
-if (import.meta.hot) import.meta.hot.dispose(() => window.removeEventListener('beforeunload', warnUnsavedDrafts))
+import { DraftWriter, readLocalDrafts, deleteLocalDraft, type Draft, type LocalDraft, type DraftStatus } from './local-drafts'
 const errorText: Record<string, string> = {
   WORKFLOW_GRAPH_REVISION_CONFLICT: '图已被其他编辑更新。本地草稿已保留，请核对版本差异。',
   WORKFLOW_GRAPH_FROZEN: '修改涉及已派发的节点或已生效依赖，请保留这些内容，或先停止并核对结果。',
@@ -49,7 +40,7 @@ function useController(conversation: Conversation) {
   const epoch = getAuthEpoch()
   const key = `${epoch}:${worldName}:${user?.id}:${conversation.id}`
   const blank = (): Draft => ({ definition: { id: crypto.randomUUID(), name: '新工作流', revision: 0, graph: { nodes: [], edges: [], runtime_version: 2, loops: [], edge_rules: [], entries: [] } }, dirty: false, input: '', requestKey: crypto.randomUUID() })
-  const [draft, setDraft] = useState<Draft>(() => drafts.get(key) ?? blank())
+  const [draft, setDraft] = useState<Draft>(blank)
   const [data, setData] = useState<WorkflowList>({ definitions: [], runs: [] })
   const [runId, setRunId] = useState<string | null>(null)
   const [mode, setMode] = useState<'edit' | 'run'>('edit')
@@ -75,7 +66,65 @@ function useController(conversation: Conversation) {
   const remoteDefinition = data.definitions.find(d => d.id === draft.definition.id && d.revision > draft.definition.revision)
   const remoteRun = draft.runTarget ? data.runs.find(r => r.id === draft.runTarget && (r.latest_graph_revision ?? 0) > draft.definition.revision) : undefined
   const conflict = draft.dirty && Boolean(draft.runTarget ? remoteRun : remoteDefinition)
-  useEffect(() => { setSelected(null); setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null) }, [mode, runId, draft.definition.id])
+  const [localReady, setLocalReady] = useState(false)
+  const [localStatus, setLocalStatus] = useState<DraftStatus>('saving')
+  const [localNotice, setLocalNotice] = useState('')
+  const [localCopies, setLocalCopies] = useState<LocalDraft[]>([])
+  const [localRetry, setLocalRetry] = useState(0)
+  const [localGeneration, setLocalGeneration] = useState(0)
+  const writer = useRef<DraftWriter | null>(null)
+  const hydrated = useRef(false)
+  const restoreSelection = useRef<string | null>(null)
+  function restoreLocal(record: LocalDraft) {
+    writer.current?.preserve()
+    setDraft(structuredClone(record.draft)); setMode('edit'); setRunId(record.draft.runTarget ?? null)
+    setOpen(record.view.open); setProtectedNodesState(record.view.protectedNodes); setProtectionEdited(record.view.protectionEdited)
+    restoreSelection.current = mode !== 'edit' || runId !== (record.draft.runTarget ?? null) || draft.definition.id !== record.draft.definition.id ? record.view.selected : null
+    setSelected(record.view.selected); setHistoryGraph(null); setCoordinationId(null)
+    setLocalNotice('已恢复本地草稿；尚未提交的编辑仍需点击“保存流程”。')
+    if (record.view.open && current()) window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
+  }
+  useEffect(() => {
+    let cancelled = false
+    if (!user?.is_owner) { setLocalReady(true); return }
+    void (async () => {
+      try {
+        const { scope } = await workflows.draftScope(conversation.id)
+        const result = await readLocalDrafts(scope)
+        if (cancelled || !current()) return
+        setLocalCopies(result.items)
+        if (!hydrated.current && result.preferred) restoreLocal(result.preferred)
+        hydrated.current = true
+        writer.current = new DraftWriter(scope, status => { if (!cancelled && current()) setLocalStatus(status) })
+        setLocalGeneration(value => value + 1)
+        setLocalStatus(result.storageError ? 'error' : 'saving')
+        if (result.corrupt) setLocalNotice('部分本地副本损坏，已跳过；原始副本仍保留。')
+        setLocalReady(true)
+      } catch {
+        if (!cancelled && current()) { setLocalStatus('error'); setLocalNotice('无法读取草稿存储身份，请重试。恢复完成前暂不开放编辑。') }
+      }
+    })()
+    return () => { cancelled = true; writer.current?.dispose(); writer.current = null }
+  }, [key, localRetry])
+  // 在浏览器处理离开事件前交接最新已提交的 React 状态，避免防抖窗口丢失末次输入。
+  useLayoutEffect(() => {
+    if (localReady) writer.current?.schedule(draft, { open, selected, protectedNodes, protectionEdited })
+  }, [localReady, localGeneration, draft, open, selected, protectedNodes, protectionEdited])
+  function retryLocal() {
+    if (writer.current) void writer.current.flush()
+    else { setLocalNotice(''); setLocalRetry(value => value + 1) }
+  }
+  function exportLocal() {
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ format: 1, draft, view: { open, selected, protectedNodes, protectionEdited } }, null, 2)], { type: 'application/json' }))
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'workflow-draft.json'; anchor.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  async function removeLocal(record: LocalDraft) {
+    try { await deleteLocalDraft(record); setLocalCopies(values => values.filter(value => value.id !== record.id)) }
+    catch { setLocalNotice('副本删除失败或已被其他页面更新，请稍后重新打开会话核对。') }
+  }
+
+  useEffect(() => { setSelected(restoreSelection.current); restoreSelection.current = null; setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null) }, [mode, runId, draft.definition.id])
 
   async function refresh() {
     if (fetching.current || !user?.is_owner) return
@@ -102,13 +151,6 @@ function useController(conversation: Conversation) {
     window.addEventListener('roleplex:workflow', notify)
     return () => { alive.current = false; clearInterval(interval); window.removeEventListener('roleplex:workflow', notify) }
   }, [key])
-  useEffect(() => {
-    drafts.set(key, draft)
-    // 登出后的旧身份草稿不留在下一身份会话中。
-    for (const stored of drafts.keys()) if (!stored.startsWith(`${epoch}:`)) drafts.delete(stored)
-  }, [key, draft])
-
-
   // 服务端图更新可自动接纳，人工脏草稿则保留原版本，交给冲突面板显式处理。
   useEffect(() => {
     if (draft.dirty || draft.runTarget || !remoteDefinition) return
@@ -123,7 +165,7 @@ function useController(conversation: Conversation) {
   }, [data.coordinations, data.runs, coordinationId, draft.dirty])
 
   async function perform(action: () => Promise<void>) {
-    if (pending.current) return false
+    if (pending.current || !localReady) return false
     pending.current = true; setBusy(true); setError('')
     let succeeded = false
     try { await action(); succeeded = true }
@@ -133,6 +175,7 @@ function useController(conversation: Conversation) {
   }
   function update(definition: WorkflowDefinition) { setDraft(value => ({ ...value, definition, dirty: true, requestKey: crypto.randomUUID() })) }
   function choose(definition?: WorkflowDefinition) {
+    if (!localReady) return false
     if (draft.dirty && !confirm('当前流程有未保存的编辑，放弃这些编辑并切换吗？')) return false
     setDraft(definition ? { definition: structuredClone(definition), dirty: false, input: '', requestKey: crypto.randomUUID() } : blank())
     setMode('edit'); setError(''); setOpen(true); setHistoryGraph(null); setCoordinationId(null); setProtectionEdited(false); setProtectedNodesState(Object.keys(data.coordinations?.find(c => c.definition_id === definition?.id)?.constraints?.nodes ?? {}))
@@ -149,7 +192,7 @@ function useController(conversation: Conversation) {
         return
       }
       if (current()) setData(value => ({ ...value, definitions: [...value.definitions.filter(d => d.id !== result.id), result] }))
-      if (current()) setDraft(value => ({ ...value,
+      if (current()) setDraft(value => value.definition.id !== draft.definition.id || value.runTarget ? value : ({ ...value,
         definition: value.definition === draft.definition ? result : { ...value.definition, revision: result.revision },
         dirty: value.definition !== draft.definition, requestKey: crypto.randomUUID() }))
     })
@@ -287,7 +330,7 @@ function useController(conversation: Conversation) {
     const definition = data.definitions.find(d => d.id === run?.definition_id)
     return definition ? choose(definition) : false
   }
-  return { protectedNodes, setProtectedNodes: (values: string[]) => { setProtectedNodesState(values); setProtectionEdited(true) }, conflict, remoteDefinition, remoteRun, acceptRemote, forkDraft, coordinate, cancelCoordination, editRun, historyGraph, selectHistory, coordinationId, detailAttempt, selectAttempt: setDetailAttempt, conversation, draft, data, run, graph, selected, selectedEdge, graphNotice, addNode, changeGraph, editDefinition,
+  return { localReady, localStatus, localNotice, localCopies, retryLocal, exportLocal, restoreLocal, removeLocal, protectedNodes, setProtectedNodes: (values: string[]) => { setProtectedNodesState(values); setProtectionEdited(true) }, conflict, remoteDefinition, remoteRun, acceptRemote, forkDraft, coordinate, cancelCoordination, editRun, historyGraph, selectHistory, coordinationId, detailAttempt, selectAttempt: setDetailAttempt, conversation, draft, data, run, graph, selected, selectedEdge, graphNotice, addNode, changeGraph, editDefinition,
     selectNode: (id: string | null) => { setSelected(id); if (id) setSelectedEdge('') },
     selectEdge: (id: string) => { setSelectedEdge(id); if (id) setSelected(null) }, mode, setMode, open, setOpen, busy, error, setError, refresh,
     update, choose, save, start, control,

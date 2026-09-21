@@ -14,6 +14,8 @@
 
 `GET /`（实际无末尾斜杠）返回 `{definitions,runs,coordinations,parallel_capacity,member_capabilities}`，禁止缓存。成员能力仅包含 role_id、name 和当前可分配的工具名称，不包含凭据或宿主根。列表是刷新、重连和事件缺口后的完整控制快照。
 
+`GET /draft-scope` 返回 `{scope: string}`（64 位十六进制），要求同样的 Owner/会话访问权限且 `Cache-Control: no-store`。scope 是基于 World 密钥、World 名称、账号和会话创建身份的不可逆浏览器存储分区，不是访问凭据；不返回 Key 或 Token。密钥轮换后分区改变，旧草稿不会自动匹配。客户端在取得该分区后恢复本地草稿，始终保留原基准版本，显式提交仍走下述版本检查。浏览器存储细节见[前端设计](../../../design/frontend-navigation-theme.md)。
+
 ## 定义与保存
 
 `PUT /definitions/{definition_id}` 接受 `{name,expected_revision,graph}`，返回 `{id,name,revision,graph}`。新定义 expected_revision=0，保存版本递增；ID 使用 1–64 位 ASCII 字母、数字、下划线或连字符。

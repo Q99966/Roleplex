@@ -14,12 +14,24 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
   const w = useWorkflow()
   const { user, workspaceBindings } = useAppStore()
   if (!user?.is_owner) return <p className="text-xs text-slate-500">流程由 Owner 管理，可在对话中查看允许公开的执行摘要。</p>
+  if (!w.localReady) return <div className="space-y-2 text-xs"><p role="status">{w.localNotice || '正在恢复本地草稿…'}</p>{w.localStatus === 'error' && <button className={button} onClick={w.retryLocal}>重试草稿恢复</button>}</div>
   const coordinator = user?.is_owner ? useAppStore.getState().roles.find(role => role.id === w.conversation.orchestrator_role_id) : null
   const appointed = w.conversation.type === 'group' && w.conversation.orchestrator_enabled && (w.conversation.orchestrator_revision ?? 0) > 0
   const terminal = w.run && !['queued', 'running', 'waiting', 'stopping'].includes(w.run.status)
   const workspaceId = w.mode === 'run' && w.run ? w.run.workspace_binding_id : w.conversation.workspace_binding_id
   const workspaceName = workspaceId === null ? '未绑定工作区' : workspaceBindings.find(b => b.id === workspaceId)?.display_name ?? '工作区信息不可用'
   return <div className="space-y-4 text-xs">
+    <section aria-label="本地草稿" className="space-y-2 rounded-xl border border-slate-800 p-3">
+      <p role="status">{w.localStatus === 'saved' ? '草稿已保存到此浏览器' : w.localStatus === 'saving' ? '正在保存本地草稿…' : '本地草稿保存失败，请下载备份或重试'}</p>
+      <p className="text-slate-500">本地保存不提交服务端；清除浏览器站点数据会删除草稿。</p>
+      {w.localNotice && <p>{w.localNotice}</p>}
+      <div className="flex gap-3"><button onClick={w.exportLocal} className="text-indigo-500">下载草稿备份</button>{w.localStatus === 'error' && <button onClick={w.retryLocal} className="text-indigo-500">重试本地保存</button>}</div>
+      {w.localCopies.length > 0 && <details><summary className="cursor-pointer">恢复副本（{w.localCopies.length}）</summary>{w.localCopies.map(record => <div key={record.id} className="mt-2 space-x-2">
+        <span>{record.draft.definition.name} · {new Date(record.updatedAt).toLocaleString()}</span>
+        <button className="text-indigo-500" onClick={() => { if (!w.draft.dirty || confirm('当前编辑已保留为本地副本，切换到所选恢复副本？')) w.restoreLocal(record) }}>恢复</button>
+        <button className="text-slate-500" onClick={() => { if (confirm('删除这个恢复副本？当前编辑不受影响。')) void w.removeLocal(record) }}>删除副本</button>
+      </div>)}</details>}
+    </section>
     <div className="space-y-3 rounded-2xl border border-slate-800 bg-panel p-4">
       <div className="flex flex-wrap gap-3">
         <button type="button" onClick={() => { if (w.choose()) onExpand() }} className={button}>新建工作流</button>
@@ -34,9 +46,9 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
 
     {w.mode === 'edit' ? <section aria-label="工作流编辑操作" className="space-y-3 rounded-2xl border border-slate-800 bg-panel p-4">
       {w.draft.runTarget && <p className="font-medium text-indigo-600">正在编辑本次运行图 · 不修改流程模板</p>}
-      <p className="text-slate-500">{w.draft.dirty ? '有未保存编辑 · 关闭页面前请保存' : `已保存版本 ${w.draft.definition.revision || '尚无'}`}</p>
+      <p className="text-slate-500">{w.draft.dirty ? '有尚未提交到服务端的编辑' : `已保存版本 ${w.draft.definition.revision || '尚无'}`}</p>
       <label className="block text-slate-500">流程名称<input aria-label="流程名称" disabled={Boolean(w.draft.runTarget)} value={w.draft.definition.name} maxLength={128} onChange={e => w.update({ ...w.draft.definition, name: e.target.value })} className={field} /></label>
-      <label className="block text-slate-500">本次运行补充要求<textarea rows={2} value={w.draft.input} onChange={e => w.input(e.target.value)} className={field} /></label>
+      <label className="block text-slate-500">本次运行补充要求<textarea aria-label="本次运行补充要求" rows={2} value={w.draft.input} onChange={e => w.input(e.target.value)} className={field} /></label>
       <p className="text-slate-500">工作区：{workspaceName}</p>
       <div className="grid grid-cols-1 gap-2">
         <button type="button" onClick={() => { w.addNode('role'); onExpand() }} className={button}><Plus size={12} className="mr-1 inline" />添加角色任务</button>

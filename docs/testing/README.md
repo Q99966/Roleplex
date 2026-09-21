@@ -472,3 +472,9 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 浏览器入口（frontend/）：`npm run test:e2e:commands -- graph-control.spec.ts`。从聊天 `/plan@协调者` 开始，实际模型工具写图，验证冲突保留、共享预算启动、运行追加审查与历史版本。工作区使用本轮 commands 根下的独立用例子目录。
 
 真实入口：`npm run test:e2e:real-world -- graph-control-provider.spec.ts`，会联网计费，复用既有真实 World/凭据准备入口，工作区位于本轮 default/graph-control。测试只预置角色、工作区和空群，最终图必须由真实协调者通过工具创建/调整，并执行文件验证。截图/trace/video 关闭；失败仅记录安全阶段。实测、保留 World 和覆盖边界见[本次图管理验收](orchestrator-graph-control.md)。
+
+
+### 工作流本地草稿
+
+后端：在 `backend/` 运行 `python -m pytest tests/test_workflow_draft_scope.py -q`，检查分区稳定性、会话隔离、无缓存及 Owner/Guest 权限。
+浏览器：在 `frontend/` 运行 `npm run test:e2e:commands -- workflow-drafts.spec.ts workflow-node-editing.spec.ts`，使用隔离 World 与 fake Provider，覆盖输入后立即刷新、节点/颜色/补充要求恢复、远端版本冲突、显式保存后的干净状态、多标签页独立副本、存储不可用与下载备份、运行图目标恢复、损坏副本降级、手动恢复时保留当前编辑、同一 Owner 重新登录恢复及原节点编辑操作。此命令不验证操作系统强杀浏览器时的写入完成保证，也不验证真实 Windows 浏览器的崩溃恢复。

@@ -18,6 +18,7 @@ export type Coordination = { constraints?: { nodes?: Record<string, unknown> }; 
 export type CoordinateRequest = { role_id: number; mode: Coordination['mode']; goal: string; request_key: string; definition_id?: string; run_id?: string; expected_graph_revision?: number; continue_session_id?: string; protected_nodes?: string[] }
 const base = (cid: number) => `/api/conversations/${cid}/workflows`
 export const workflows = {
+  draftScope: (cid: number) => request<{ scope: string }>(`${base(cid)}/draft-scope`),
   coordinationMessage: (cid: number, id: string) => request<Message | null>(`${base(cid)}/coordination/${id}/message`),
   coordinate: (cid: number, body: CoordinateRequest) => request<Coordination>(`${base(cid)}/coordination`, { method: 'POST', body: JSON.stringify(body) }),
   cancelCoordination: (cid: number, value: Coordination) => request<Coordination>(`${base(cid)}/coordination/${value.id}/cancel`, { method: 'POST', body: JSON.stringify({ expected_revision: value.revision }) }),

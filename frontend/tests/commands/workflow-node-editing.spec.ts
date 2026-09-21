@@ -74,7 +74,7 @@ test('侧栏操作、Tab 插入、类型颜色保存与窄屏抽屉', async ({ p
   expect(graph.edges).toEqual([['a', graph.nodes[1].id], [graph.nodes[1].id, 'b']])
   expect(graph.nodes[1]).toMatchObject({ kind: 'approval', role_id: null, color: '#537f4f', task: '保留这段任务文字' })
   await page.reload()
-  await openWorkflow()
+  await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('节点外观与编辑')
   inserted = canvas.getByRole('button', { name: '节点 2：人工确认', exact: true })
   await inserted.click()
   await expect(canvas.getByLabel('节点颜色', { exact: true })).toHaveValue('#537f4f')
