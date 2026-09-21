@@ -3,7 +3,7 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊与 M4a mentions 串行群聊；Orchestrator 未实现） |
+| 状态 | 已实现（单聊与 M4a mentions 串行群聊；群协调入口独立于普通发送） |
 | 协议版本 | 6（兼容新增 stop_reason，停止生成统计摘要） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/messages.py`、`backend/app/schemas.py`、`backend/app/services/chat.py` |
@@ -166,7 +166,7 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 ## 降级与未实现
 
-Orchestrator 分派、附件、Artifact part 和重新生成尚未实现。`reply_to_id` 会持久化但当前不影响回复对象；
+固定图上的群协调分配与并行循环已通过[工作流入口](../rest/workflows.md)实现，普通发送与 @ 不自动进入该模式；模型图管理通过独立协调接口实现；附件、Artifact part 和重新生成尚未实现。`reply_to_id` 会持久化但当前不影响回复对象；
 客户端遇到未知 part 类型必须降级为占位展示，不得白屏。
 
 
@@ -184,3 +184,7 @@ Context schema 4 恢复原正常正文与工具占位投影；stopped 仅加简�
 T4.2 兼容新增 decision_budget，表示已接纳工具结果保存后，无额度开始下一次模型决策；status=stopped，不代表任务失败或已验收，也不承诺自动恢复。graph_budget 保留底层保护含义。未知停止原因按通用停止显示。
 
 Context schema 5不改变上述消息wire：最近本角色回复中断时可在后续请求中交接已鉴权、核对后的执行事实，不把error/interrupted原文整体重放，不生成可见摘要或新恢复按钮。内部语义见[中断上下文](../../internal/interruption-context.md)。
+
+群协调执行见[工作流](../rest/workflows.md)。普通 stop 命中工作流 chain 时要求 Owner，先封闭该运行派发与回边，再停止全部相关 generation；不会只停止最后一个分支。普通聊天和其他 chain 保持原有控制范围。
+
+`/plan@协调者` 是输入框的明确规划命令，使用稳定角色 ID 和选定目标调用独立工作流 coordination 接口。普通 `POST messages` 不因正文中出现命令文本自动授予管理工具；群聊普通 mentions 顺序保持不变。协调请求产生既有 user/role 消息与 generation/execution，具体作用域见[工作流协议](../rest/workflows.md)。

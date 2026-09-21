@@ -521,7 +521,27 @@ agent_executions.decision_count、workflow_budgets.used_decisions、model_call_u
 控制状态不复制消息、工具密文或文件内容；沿用 WorkflowBudget、AgentExecution、FileEffect。流程正文属于业务数据库私有内容，不进入日志。SQLite 迁移实际重放、降级和模型一致性已验证；PostgreSQL 仅离线 SQL，不代表运行部署验收。公开对象与控制语义见[会话工作流](../public/rest/workflows.md)。
 
 工作流 graph JSON 兼容保存 `nodes[].position`（可空有限 x/y 坐标）及分支、环路的连线；不新增表列。
-启动时只接受唯一完整串行路径，按拓扑冻结节点顺序和位置快照；坐标变化不改变权限或执行顺序。
+v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻结节点和位置快照；坐标变化不改变权限或执行顺序。
 
 工作流节点 JSON 兼容新增可空 color（严格六位十六进制颜色）。节点类型与颜色随定义进入运行快照，
 属于现有 JSON 的编辑元数据，不增加 SQL 表列；旧节点未设置颜色时前端按类型显示默认色。
+
+### 群协调与并行激活（0020）
+
+- conversations.orchestrator_revision：非空 Integer，默认 0；显式任命和移除协调者递增。与会话 revision 分开，普通配置变更不冒充换任命。
+- workflow_runs.runtime_version：非空 Integer 默认 1；state_json：非空 JSON 默认 {}。v2 保存 phase、assignments、plan_execution_id、loops 的 iteration/exited/handled/limited、可选 pause_after/outcome；snapshot 冻结图、mode、coordinator_role_id、appointment_revision 与并发容量。旧 cursor/selected 列保留给 v1，v2 API cursor=null。
+- workflow_activations：id 主键、run_id（级联删除）、node_id、可空 loop_id、iteration、status、dependencies_json、可空 selected_attempt_id/error_code、created_at；唯一(run_id,node_id,iteration)，索引(run_id,status)。selected_attempt_id 是应用层精确归属引用，避免与 attempts 外键成循环；状态机在同事务维护。
+- workflow_attempts 新增 activation_id（可空外键，级联删除）、phase（非空，默认 work）、result_json（可空 JSON）。原(run_id,node_id,number) 唯一约束保留，number 跨轮递增，不能代替 iteration。
+- execution_allocations：execution_id 主键外键（级联删除）、attempt_id 唯一外键（级联删除）、tools_json、workspace_binding_id/resource_root 历史快照、authority_json、revision、waiting_mode、created_at。authority 包含 Owner、角色、phase、任命版本和 activation_id；waiting_mode 是当前进程资源等待状态，重启清除。真实路径不进入公开分配视图。
+
+使用 SQLAlchemy 通用类型与 Alembic；0020 提供升级/降级。原消息、文件证据、工具密文、共享预算和父 execution 关联继续复用，结构化结果留在业务数据库，不进入正式日志。
+
+### 图管理与不可变版本（0021、0022）
+
+- `coordination_sessions`：id；conversation_id/owner_id/role_id 外键；appointment_revision；definition_id（预留新草稿槽位，不要求先建假定义）；可空 run_id（目标运行）、started_run_id（本请求启动的运行）、唯一 execution_id；chain_id、trigger_message_id；mode、goal、status/revision；request_key/digest；constraints_json；workspace_binding_id 快照；error_code 和时间。唯一(conversation_id,request_key)，索引(conversation_id,status)。继续规划和启动复用 WorkflowBudget，不通过新会话重置计数。
+- `workflow_graph_revisions`：id、conversation_id、可空 definition_id/run_id、target_key、number、graph JSON、mutation_key/request_digest、source_execution_id、actor_id、changes_json、legacy、status、created_at。唯一(target_key,number)与(target_key,mutation_key)。目标图内容与修改身份不可变；status 表示 applied/pending/superseded/not_applied，未采用原因可补记。旧存量首次纳入只保存当时 legacy 基线，不倒推过去不存在的版本。
+- `workflow_runs.graph_revision`：可空 Integer；新 v2 运行从 1 开始，snapshot 为当前有效编译图。完整修订存独立表，pending_graph_revision/pending_graph_loops/pending_boundaries、activation_selection 及任务分配存 state_json，均与控制锁内的状态转移一起提交。
+- `workflow_activations.graph_revision`、`workflow_attempts.graph_revision`：可空 Integer，旧记录保持 null；attempt.node_snapshot_json 保存准确节点设计快照。0022 把激活唯一约束改为(run_id,node_id,iteration,graph_revision)，移除/重加或跨图重试产生新版本激活，旧记录保留。降级若已有跨版本同节点同轮记录会拒绝，不通过删除历史强行满足旧约束。
+- `execution_allocations.attempt_id` 改为可空，新增 coordination_session_id 与 control_tools_json。真实归属为工作尝试或独立协调会话；执行层拒绝缺失/未知归属。authority_json 保存明确 Owner、角色、phase 或目标作用域、结果契约/任命版本、完整读版本与必要观察记录。0021 只为已知旧 phase 迁移控制能力，未知职责保持空集合。
+
+图正文、任务、修改差异和结果属于 Owner 业务数据；日志只记录允许的修改身份、版本与计数。前端状态恢复读取这些持久记录，模型不能直接写执行状态或修改来源身份。迁移均使用通用 ORM 类型，SQLite 重放/一致性/降级与 PostgreSQL 离线 SQL 入口见测试指南。

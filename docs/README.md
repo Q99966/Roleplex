@@ -1,6 +1,6 @@
 # Roleplex 文档导航
 
-复核日期：2026-09-16。本入口帮助区分当前说明、接口契约、设计和历史记录。
+复核日期：2026-09-21。本入口帮助区分当前说明、接口契约、设计和历史记录。
 
 | 要了解的内容 | 权威入口 |
 |---|---|
@@ -11,6 +11,8 @@
 | 当前日志结构与持久化设计 | [日志 v2](design/logging-v2.md) |
 | 当前工作台侧栏、配色与详情交互设计 | [工作台设计](design/frontend-navigation-theme.md) |
 | 会话工作流的范围与验收记录 | [可操作工作流图](plan/conversation-workflows-v1.md)、[接口契约](protocol/public/rest/workflows.md) |
+| 群协调基础实现与当前缺口 | [基础范围与记录](plan/orchestrator-parallel-loops-v1.md) |
+| 图管理、工具授权与运行重规划的实施范围及验收 | [实施范围](plan/orchestrator-graph-control-v1.md)、[本次验收](testing/orchestrator-graph-control.md) |
 | 旧里程碑的结果、未实施方向与历史原文 | [计划索引](plan/README.md)、[归档说明](archive/README.md) |
 
 ## 阅读与维护

@@ -117,6 +117,7 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(16), nullable=False, default="single")
     title: Mapped[str] = mapped_column(String(256), nullable=False)
+    orchestrator_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     orchestrator_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     orchestrator_role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
     workspace_binding_id: Mapped[int | None] = mapped_column(
@@ -529,4 +530,6 @@ class FileEffect(Base):
         Index('ix_file_effect_execution_id','execution_id','id'))
 
 # 统一 Alembic metadata 入口；工作流只关联原执行记录。
-from .workflows.models import WorkflowDefinition, WorkflowRun, WorkflowAttempt  # noqa: E402,F401
+from .workflows.models import WorkflowDefinition, WorkflowRun, WorkflowAttempt, WorkflowActivation, ExecutionAllocation  # noqa: E402,F401
+
+from .workflows.models import CoordinationSession, WorkflowGraphRevision

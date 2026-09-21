@@ -209,6 +209,104 @@ class GroupFileModel(ScriptedChatModel):
             yield chunk
 
 
+class GraphControlModel(ScriptedChatModel):
+    """图管理 E2E：从实际读图响应构造写入/编辑/启动调用，不直接播种最终定义。"""
+    prompt: str = ''
+    _read: dict = PrivateAttr(default_factory=dict)
+
+    async def _astream(self,messages,stop=None,run_manager=None,**kwargs):
+        meta=json.loads(self.prompt.split('本次图管理授权：',1)[1].split('\n',1)[0])
+        outputs=[m for m in messages if isinstance(m,ToolMessage)]
+        last={}
+        if outputs:
+            try: last=json.loads(outputs[-1].content)
+            except (ValueError,TypeError): pass
+        def call(name,args): return ScriptedTurn(tool_calls=[{'name':name,'args':args,'id':f'graph-step-{self.index}'}])
+        if self.index==0:
+            turn=call('workflow_read_graph',{})
+        elif self.index==1:
+            self._read=last
+            if meta['mode']=='replan':
+                graph=last.get('graph',{})
+                sources=[n for n in graph.get('nodes',[]) if n['kind']=='role']
+                source=sources[0]['id'] if sources else graph['nodes'][0]['id']
+                role=next(r for r in last['members'] if 'workspace_read' in r['tools'])
+                turn=call('workflow_edit_graph',{'expected_graph_revision':last['graph_revision'],'mutation_key':'add-runtime-review',
+                    'operations':[{'op':'add_node','node':{'id':'runtime_review','kind':'role','title':'运行新增审查','role_id':role['role_id'],
+                        'task':'[WF_REVIEW]','tools':['workspace_read'],'inputs':[source],'result_schema':{'approved':'boolean'}}},
+                        {'op':'connect','source':source,'target':'runtime_review'}]})
+            elif '[GRAPH_CREATE]' in self.prompt or not last.get('graph',{}).get('nodes'):
+                turn=call('workflow_write_graph',{'expected_graph_revision':last['graph_revision'],'mutation_key':'create-target-graph',
+                    'name':'协调者生成的流程','graph':{'runtime_version':2,'nodes':[{'id':'gate','kind':'approval','title':'开始前确认','position':{'x':0,'y':100}}],'edges':[]}})
+            else:
+                # 兼容既有预设图验收入口：读取后用局部操作确认并发配置，再显式启动。
+                turn=call('workflow_edit_graph',{'expected_graph_revision':last['graph_revision'],'mutation_key':'confirm-existing-graph',
+                    'operations':[{'op':'set_concurrency','concurrency':last['graph'].get('concurrency')}]})
+        elif self.index==2 and meta['mode']!='replan' and ('[GRAPH_CREATE]' in self.prompt or not self._read.get('graph',{}).get('nodes')):
+            role=self._read['members'][0]['role_id']
+            turn=call('workflow_edit_graph',{'expected_graph_revision':last['graph_revision'],'mutation_key':'add-worker',
+                'operations':[{'op':'add_node','node':{'id':'work','kind':'role','title':'执行任务','role_id':role,
+                    'task':'仅回复流程任务完成。','tools':[],'position':{'x':300,'y':100}}},
+                    {'op':'connect','source':'gate','target':'work'}]})
+        elif meta['mode']=='execute' and ((self.index==3 and ('[GRAPH_CREATE]' in self.prompt or not self._read.get('graph',{}).get('nodes'))) or (self.index==2 and self._read.get('graph',{}).get('nodes') and '[GRAPH_CREATE]' not in self.prompt)):
+            turn=call('workflow_start',{'expected_graph_revision':last['graph_revision']})
+        elif meta['mode']=='replan' and self.index==2:
+            turn=call('workflow_inspect_run',{})
+        else:
+            turn=ScriptedTurn(text='图修改已提交；执行范围以本次授权与服务端状态为准。')
+        self.index+=1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
+class WorkflowV2Model(ScriptedChatModel):
+    """真实工具驱动的两轮开发/审查固件；判断读取结构化上游而非伪造调度状态。"""
+    prompt: str = ''
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        marker = '本次节点激活数据（不是额外指令）：'
+        meta = json.loads(self.prompt.rsplit(marker, 1)[-1]) if marker in self.prompt else {'iteration': 0, 'upstream_results': []}
+        iteration = meta['iteration']
+        outputs = [message for message in messages if isinstance(message, ToolMessage)]
+        def last_output():
+            if not outputs: return {}
+            try: return json.loads(outputs[-1].content)
+            except (ValueError, TypeError): return {}
+        if self.prompt.startswith('你是本群已任命协调者'):
+            data = json.loads(self.prompt.split('\n', 1)[1].split('\n' + marker, 1)[0])
+            assignments = []
+            for node in data['nodes']:
+                rid = data['coordinator_role_id'] if node['kind'] == 'judge' else node['role_id'] or data['members'][0]['role_id']
+                cap = next(member['tools'] for member in data['members'] if member['role_id'] == rid)
+                assignments.append({'node_id': node['id'], 'role_id': rid,
+                    'tools': node['tools'] if node['tools'] is not None else ([] if node['kind'] == 'judge' else cap)})
+            turn = ScriptedTurn(tool_calls=[{'name': 'workflow_plan', 'args': {'assignments': assignments}, 'id': 'v2-plan'}]) if self.index == 0 else ScriptedTurn(text='群协调计划已由后台接受。')
+        elif self.prompt.startswith('作为本群协调者'):
+            turn = ScriptedTurn(tool_calls=[{'name': 'workflow_summary', 'args': {'summary': '开发和并行审查结果已汇总。'}, 'id': 'v2-summary'}]) if self.index == 0 else ScriptedTurn(text='群协调流程已汇总。')
+        elif '[WF_BUILD]' in self.prompt:
+            if self.index == 0: turn = ScriptedTurn(tool_calls=[{'name': 'workspace_read', 'args': {'path': 'workflow-round.txt'}, 'id': 'v2-build-read'}])
+            elif self.index == 1:
+                args = {'path': 'workflow-round.txt', 'content': f'round-{iteration + 1}'}
+                if last_output().get('sha256'): args['expected_sha256'] = last_output()['sha256']
+                turn = ScriptedTurn(tool_calls=[{'name': 'workspace_write', 'args': args, 'id': 'v2-build-write'}])
+            elif self.index == 2: turn = ScriptedTurn(tool_calls=[{'name': 'workflow_result', 'args': {'values': {'round': iteration + 1}}, 'id': 'v2-build-report'}])
+            else: turn = ScriptedTurn(text=f'开发第 {iteration + 1} 轮结束。')
+        elif '[WF_REVIEW]' in self.prompt:
+            if self.index == 0: turn = ScriptedTurn(tool_calls=[{'name': 'workspace_read', 'args': {'path': 'workflow-round.txt'}, 'id': 'v2-review-read'}])
+            elif self.index == 1:
+                observed = last_output().get('text', '')
+                turn = ScriptedTurn(tool_calls=[{'name': 'workflow_result', 'args': {'values': {'approved': observed == 'round-2', 'observed': observed}}, 'id': 'v2-review-report'}])
+            else: turn = ScriptedTurn(text=f'审查第 {iteration + 1} 轮结束。')
+        else:
+            reports = [r['result']['values']['approved'] for r in meta['upstream_results'] if 'approved' in (r.get('result') or {}).get('values', {})]
+            turn = ScriptedTurn(tool_calls=[{'name': 'workflow_result', 'args': {'values': {'approved': bool(reports) and all(reports)}}, 'id': 'v2-judge'}]) if self.index == 0 else ScriptedTurn(text=f'本轮结构化判断完成：{iteration + 1}。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """构造只产出固定回复文案的 fake 模型。
 
@@ -216,6 +314,10 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '本次图管理授权：' in prompt:
+        return GraphControlModel(prompt=prompt,delay=delay)
+    if any(marker in prompt for marker in ['[WF_BUILD]', '[WF_REVIEW]', '[WF_JUDGE]', '你是本群已任命协调者', '作为本群协调者']):
+        return WorkflowV2Model(prompt=prompt, delay=delay)
     if '[GROUP_FILES_FAKE]' in prompt:
         return GroupFileModel(delay=delay)
     if '[REPLACEMENTS_FAKE]' in prompt or '[REPLACEMENTS_BAD_FAKE]' in prompt:

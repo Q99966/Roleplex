@@ -24,4 +24,18 @@ export function serialOrder(graph: WorkflowGraph): WorkflowNode[] | null {
 }
 
 /** 颜色仅用于节点辨识；未设置时按类型配色，任务状态仍使用文字表达。 */
-export const nodeColor = (node: WorkflowNode) => node.color ?? (node.kind === 'approval' ? '#b58b45' : '#4385a0')
+export const nodeColor = (node: WorkflowNode) => node.color ?? (({ role: '#4385a0', approval: '#b58b45', join: '#558f87', condition: '#b17b4a', judge: '#8b70b2' })[node.kind])
+
+
+/** 条件与节点输入仅列出图上的前驱；已声明回边不作为本轮上游。 */
+export function upstreamNodes(graph: WorkflowGraph, nodeId: string): WorkflowNode[] {
+  const back = new Set((graph.loops ?? []).map(loop => JSON.stringify([loop.decision, loop.entry])))
+  const found = new Set<string>(), pending = [nodeId]
+  while (pending.length) {
+    const target = pending.pop()!
+    for (const [a, b] of graph.edges) {
+      if (b === target && a !== nodeId && !found.has(a) && !back.has(JSON.stringify([a, b]))) { found.add(a); pending.push(a) }
+    }
+  }
+  return graph.nodes.filter(node => found.has(node.id))
+}

@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # 正常运行默认调用角色配置的真实模型；pytest 与 Playwright 会在各自入口显式开启 fake，
     # 保证自动化回归稳定、离线且不产生模型费用。
     agent_use_fake_provider: bool = False
+    # 同时发往 Provider 的工作流执行容量；文件扫描/修改另由既有资源池限制。
+    workflow_parallelism: int = Field(default=4, ge=1)
+    workspace_resource_wait_seconds: float = Field(default=30, gt=0, le=300)
     pin_budget_ratio: float = 0.30
     # 部署安全 ceiling；每个角色默认 200K，并可在此绝对上限内单独配置。
     max_context_tokens: int = Field(default=2_000_000, ge=4_096, le=2_000_000)

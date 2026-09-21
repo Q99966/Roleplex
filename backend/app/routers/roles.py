@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from ..db import get_session
 from ..config import settings
@@ -63,6 +64,15 @@ async def owned_model_config(session: AsyncSession, owner_id: int, config_id: in
     return config
 
 
+async def flush_role(session: AsyncSession):
+    """约束竞争返回安全业务码，避免 SQL 异常连同角色 Prompt 进入日志。"""
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(409, 'ROLE_WRITE_CONFLICT') from None
+
+
 @router.get("", response_model=list[RoleResponse])
 async def list_roles(user: Annotated[User, Depends(get_current_user)], session: Annotated[AsyncSession, Depends(get_session)]):
     """仅列出当前认证用户拥有的角色。"""
@@ -81,9 +91,10 @@ async def create_role(payload: RoleCreate, user: Annotated[User, Depends(require
         model_name=payload.model_name, context_window_tokens=payload.context_window_tokens,
         params_json=payload.params, skills_json=payload.skills,
         builtin_tools_json=payload.builtin_tools, mcp_servers_json=payload.mcp_servers,
-        mcp_tools_cache_json=[], active=True, created_at=now, updated_at=now,
+        mcp_tools_cache_json=[], active=payload.active if payload.active is not None else True, created_at=now, updated_at=now,
     )
     session.add(role)
+    await flush_role(session)
     await session.commit()
     await session.refresh(role)
     return to_response(role)
@@ -101,22 +112,33 @@ async def get_role(role_id: int, user: Annotated[User, Depends(get_current_user)
 @router.put("/{role_id}", response_model=RoleResponse)
 async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
     """替换 Owner 拥有的角色，同时保持模型配置隔离。"""
-    role = await editable_role(session, role_id, user.id)
-    await owned_model_config(session, user.id, payload.model_config_id)
-    role.name = payload.name
-    role.avatar = payload.avatar
-    role.description = payload.description
-    role.tags_json = payload.tags
-    role.system_prompt = payload.system_prompt
-    role.model_config_id = payload.model_config_id
-    role.model_name = payload.model_name
-    role.context_window_tokens = payload.context_window_tokens
-    role.params_json = payload.params
-    role.skills_json = payload.skills
-    role.builtin_tools_json = payload.builtin_tools
-    role.mcp_servers_json = payload.mcp_servers
-    role.updated_at = datetime.now(timezone.utc)
-    await session.commit()
+    from ..workflows import service
+    # 撤权与派发共用短控制边界，防止旧状态覆盖撤销标记。
+    async with service.control_lock:
+        role = await editable_role(session, role_id, user.id)
+        await owned_model_config(session, user.id, payload.model_config_id)
+        if payload.active is not None: role.active = payload.active
+        role.name = payload.name
+        role.avatar = payload.avatar
+        role.description = payload.description
+        role.tags_json = payload.tags
+        role.system_prompt = payload.system_prompt
+        role.model_config_id = payload.model_config_id
+        role.model_name = payload.model_name
+        role.context_window_tokens = payload.context_window_tokens
+        role.params_json = payload.params
+        role.skills_json = payload.skills
+        role.builtin_tools_json = payload.builtin_tools
+        role.mcp_servers_json = payload.mcp_servers
+        role.updated_at = datetime.now(timezone.utc)
+        await flush_role(session)
+        pending = []
+        if payload.active is False:
+            from ..workflows.coordination import revoke_role_runs
+            pending = await revoke_role_runs(session, role_id)
+        await session.commit()
+    from ..realtime.store import publish_events
+    if pending: await publish_events(*pending)
     await session.refresh(role)
     return to_response(role)
 
@@ -132,20 +154,27 @@ async def delete_role(role_id: int, user: Annotated[User, Depends(require_owner)
     角色重名约束是"只约束未删除角色"的部分唯一索引，所以墓碑保留原名的同时
     不会挡住立刻新建同名角色。
     """
-    role = await editable_role(session, role_id, user.id)
-    role.deleted_at = datetime.now(timezone.utc)
-    role.updated_at = role.deleted_at
-    role.active = False
-    # 清除全部可用配置：墓碑只保留身份，不保留任何能驱动模型或工具的内容。
-    role.system_prompt = ""
-    role.model_config_id = None
-    role.model_name = ""
-    role.context_window_tokens = 200_000
-    role.description = None
-    role.tags_json = []
-    role.params_json = {}
-    role.skills_json = []
-    role.builtin_tools_json = []
-    role.mcp_servers_json = []
-    role.mcp_tools_cache_json = []
-    await session.commit()
+    from ..workflows import service
+    # 撤权与派发共用短控制边界，防止旧状态覆盖撤销标记。
+    async with service.control_lock:
+        role = await editable_role(session, role_id, user.id)
+        role.deleted_at = datetime.now(timezone.utc)
+        role.updated_at = role.deleted_at
+        role.active = False
+        # 清除全部可用配置：墓碑只保留身份，不保留任何能驱动模型或工具的内容。
+        role.system_prompt = ""
+        role.model_config_id = None
+        role.model_name = ""
+        role.context_window_tokens = 200_000
+        role.description = None
+        role.tags_json = []
+        role.params_json = {}
+        role.skills_json = []
+        role.builtin_tools_json = []
+        role.mcp_servers_json = []
+        role.mcp_tools_cache_json = []
+        from ..workflows.coordination import revoke_role_runs
+        pending = await revoke_role_runs(session, role_id)
+        await session.commit()
+    from ..realtime.store import publish_events
+    if pending: await publish_events(*pending)

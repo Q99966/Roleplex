@@ -122,3 +122,11 @@ T2 扫描沿用既有工具/执行身份，新增 tool.scan_completed 的字段�
 不建立并存 Trace。人工节点无 Provider usage。`workflow.coordination_failed` / `workflow.state_unavailable` 只记录固定
 WORKFLOW_STATE_UNAVAILABLE 与失败状态，不输出输入、定义、文件路径、模型正文或异常对象。
 公开 `workflow_updated` 是业务事件，事实源仍为控制表与既有执行表，不从日志恢复或重放节点。
+
+### 工作流资源等待
+
+`tool.resource_wait_started/completed` 复用当前 request/chain/execution/tool 上下文；仅记录 execution_id、reason（resource_read/resource_write）、status（waiting/success/failed/cancelled）和等待 duration_ms。duration 不包含获取资源后的文件操作。waiting_resource 的业务展示来自 execution_allocations，不以日志作为锁状态事实。根目录、任务分配 instruction、结构化结果和协调正文不进正式日志；规划/判断/汇总的 Provider usage 沿用原 model_call_usage。
+
+### 图管理提交
+
+`workflow.graph_committed` 只在事务成功后记录 conversation_id、可空 source execution（沿用 execution_id）、服务端 mutation_id、graph_revision、target_kind/target_id、added_count/updated_count/removed_count 和采用状态。mutation_key、目标要求、节点任务、完整 graph 与工具参数不进入日志。修改来源和内容以 workflow_graph_revisions 为业务事实，模型调用耗时/usage 沿用原工具与 Provider 事件，不能从图提交计数推算 Token。

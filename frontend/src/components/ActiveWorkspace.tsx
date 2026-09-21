@@ -67,6 +67,11 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const [wideDetails, setWideDetails] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
   const [detailsOpen, setDetailsOpen] = useState(wideDetails)
   useEffect(() => {
+    const show = (event: Event) => { if ((event as CustomEvent).detail === activeConversationId && wideDetails) setDetailsOpen(true) }
+    window.addEventListener('roleplex:workflow-show', show)
+    return () => window.removeEventListener('roleplex:workflow-show', show)
+  }, [activeConversationId, wideDetails])
+  useEffect(() => {
     const media = window.matchMedia('(min-width: 1280px)')
     const resize = () => { setWideDetails(media.matches); if (!media.matches) setDetailsOpen(false) }
     media.addEventListener('change', resize)

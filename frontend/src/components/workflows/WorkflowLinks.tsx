@@ -27,6 +27,12 @@ export function WorkflowLinks() {
       <label className="block">连线<select aria-label="选择连线" value={edges.some(e => e.id === w.selectedEdge) ? w.selectedEdge : ''} onChange={e => w.selectEdge(e.target.value)} className={field}>
         <option value="">选择连线</option>{edges.map(edge => <option key={edge.id} value={edge.id}>{edge.label}</option>)}
       </select></label>
+      {w.graph.runtime_version === 2 && edges.some(e => e.id === w.selectedEdge) && <label className="block">此连线何时激活<select aria-label="连线条件" className={field}
+        value={w.graph.edge_rules?.find(rule => JSON.stringify([rule.source, rule.target]) === w.selectedEdge)?.when ?? 'always'} onChange={e => {
+          const [source, target] = JSON.parse(w.selectedEdge) as [string, string]
+          w.changeGraph({ ...w.graph, edge_rules: [...(w.graph.edge_rules ?? []).filter(rule => JSON.stringify([rule.source, rule.target]) !== w.selectedEdge),
+            { source, target, when: e.target.value as 'always' | 'true' | 'false' }] })
+        }}><option value="always">并行依赖 / 始终</option><option value="true">判断为 true</option><option value="false">判断为 false</option></select></label>}
       <button type="button" disabled={!edges.some(e => e.id === w.selectedEdge)} onClick={() => {
         w.changeGraph({ ...w.graph, edges: w.graph.edges.filter(([a, b]) => JSON.stringify([a, b]) !== w.selectedEdge) }); w.selectEdge('')
       }} className="rounded-lg border border-slate-700 px-3 py-2 disabled:opacity-40">删除连线</button>

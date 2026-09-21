@@ -26,13 +26,11 @@ async def binding_availability(session: AsyncSession, binding: WorkspaceBinding)
         return "unavailable"
     if not root.is_dir():
         return "unavailable"
-    busy = await session.scalar(
-        select(func.count()).select_from(ExecutionWorkspace).where(
-            ExecutionWorkspace.workspace_binding_id == binding.id,
-            ExecutionWorkspace.status == "ready",
-        )
-    )
-    return "busy" if busy else "available"
+    from .resource_admission import current, Claim, overlaps
+    stat = root.stat()
+    identity = Claim(root, (stat.st_dev, stat.st_ino), 'read', None)
+    return 'busy' if any(item.mode == 'write' and overlaps(item, identity) for item in current().active) else 'available'
+
 
 
 async def owned_workspace(

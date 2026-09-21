@@ -151,7 +151,7 @@ S1 的 workspace_service_status 状态查询不依赖可写工作区 lease；无
 写入 UTF-8 编码后最大 1 MiB。新建使用 exclusive create；更新在工作区写锁内最终复核 hash，通过同目录
 临时文件、flush/fsync 与 atomic replace 完成。`expected_sha256` 为空不表示允许覆盖。
 
-E1 edit 不隐含 read/write 开关：角色必须显式启用 workspace_edit，工作区沿用 file_tools_enabled，限 Owner 触发的单聊或串行群聊。
+E1 edit 不隐含 read/write 开关：角色必须显式启用 workspace_edit，工作区沿用 file_tools_enabled，限 Owner 触发的单聊或群聊。
 old_text 非空（纯空白片段可以编辑），new_text 可为空但不删除文件；两片段 UTF-8 合计最多 65536 字节，
 schema 每片段最多 65536 字符、path 最多 1024 字符，超字符护栏/未知参数/缺少或非法 hash 为 WORKSPACE_EDIT_ARGUMENT_INVALID。
 先复核全文件 hash，再字面搜索 old_text：零匹配或多处匹配（含重叠）分别拒绝，不做正则/模糊匹配、全局替换、缩进或换行归一化。
@@ -217,7 +217,7 @@ applied=false 仅表示明确无提交；未知或部分 OS 写入为 null，不
 ### S2 原生修改可用性诊断（已人工验收）
 
 write/edit 的 path/items 形式复用类型化可用性判断，不放开现行服务占用或生命周期门槛。
-先校验 Owner 单聊或串行群聊、角色存活、双方成员、有效 execution/generation 及绑定所有权；身份/归属失效仍返回
+先校验 Owner 单聊或群聊、角色存活、双方成员、有效 execution/generation 及绑定所有权；身份/归属失效仍返回
 WORKSPACE_TOOL_NOT_AVAILABLE，不附 diagnostic，也不泄漏服务数量/ID。其后分别报告角色权限/工作区开关变化、
 绑定/根变化、租用失效、目录不可用；角色已删除/停用属于身份失效，不借诊断绕过鉴权。
 
@@ -274,3 +274,11 @@ workspace_edit 在旧 old_text/new_text 之外兼容增加 replacements=[{old_te
 匹配失败的 details（批次节点为 edit_error）包含一基 replacement_index；重叠另含 conflicting_replacement_index。
 recovery 固定为 reread_and_adjust 或 split_non_overlapping，不回显正文。原错误码沿用，新增 WORKSPACE_EDIT_OVERLAP。
 成功返回结构沿用 created/bytes/sha256；内容相同沿用 unchanged diff。新输入的 Owner 采集只保留替换数量/各项字节数，未知字段和原始片段不进入日志。
+
+## 工作流资源准入
+
+普通 @ 群聊仍按角色顺序，v2 工作流可以同时建立多个 execution lease；lease 是授权上下文，不是整个 Agent 回合的独占锁。原生文件列表/搜索/读取在操作期间共享读，write/edit 及批次实际提交阶段排他修改；单聊固定只读命令共享读，批准后的 Shell 使用排他准入，审批等待不占资源。后台服务的既有运行门槛与回收契约保持不变。
+
+准入按 canonical 根、目录身份及祖先关系识别别名/重叠根；一个写者阻塞冲突读写，不冲突根继续。冲突请求 FIFO，写者不被后来读者饿死。任务取消或超时清除等待与持有记录；重复取消不能泄漏占用。只允许同一 asyncio Task 的相容重入，读锁升级写锁拒绝；子任务不能继承父占用。模型、人工等待和结果 diff 不持准入。
+
+等待上限为 `WORKSPACE_RESOURCE_WAIT_SECONDS`；准入后再次复核实际授权与文件版本。等待不会移除工具 schema、重放模型请求或要求参数重传。v2 execution 的 waiting_resource 在运行快照中展示；Owner 任命、角色或工作区权限变化仍在实际调用层拒绝。资源管理是当前进程的受控操作协调，不是宿主文件系统沙箱，不能阻挡外部进程改文件。

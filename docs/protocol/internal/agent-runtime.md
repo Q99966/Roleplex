@@ -3,11 +3,11 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 内部（不承诺客户端兼容性） |
-| 状态 | 聊天执行、工具与上下文已实现；MCP 为内部验证，Orchestrator 未接入产品 |
+| 状态 | 聊天执行、工具、上下文、群图管理及 v2 重规划已接入；MCP 为内部验证，世界级未接入 |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/agent/`、`backend/app/context/`、`backend/app/scheduling/`、`backend/app/mcp/manager.py` |
 | 关联测试 | `backend/tests/test_agent_loop.py`、`test_agent_pipeline.py`、`test_context_builder.py`、`test_group_chat.py`、`test_mcp_manager.py`、`tests/contract/` |
-| 复核日期 | 2026-09-16 |
+| 复核日期 | 2026-09-21 |
 
 本文记录 Agent 运行时的内部约定和 M0 风险验证的实测结论。这些是内部契约：客户端不得
 依赖，公开行为只出现在 [消息协议](../public/messaging/messages.md) 与
@@ -64,7 +64,7 @@ ToolCallFinished.private_output 交给消息所有者。原文不进入模型工
 取消时消息所有者保存已观察到的写入事实并清除作用域；进程崩溃不补造差异，不另造 Trace 或业务调度器。
 详情与兼容字段以[工具详情](../public/messaging/tool-details.md)为准。
 
-单聊和串行群聊角色通过 `app/context/` 构造模型输入；Orchestrator 尚未接入。当前实现以已落库用户消息 ID
+单聊、普通群聊及工作流角色通过 `app/context/` 构造模型输入；协调阶段复用同一构造器。当前实现以已落库用户消息 ID
 作为严格截止边界，只读取更早的终态消息，并按目标角色投影为 LangChain history。相同 message ID、
 revision 和 context schema 必须产生相同投影；请求/执行随机标识不进入自然语言 Prompt。
 
@@ -105,7 +105,7 @@ read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后�
   流程立即对齐 execution/job。runner 未收口则 execution 记 interrupted，不能遗留假 running。
 - 服务启动独立扫描所有 queued/running execution，即使旧 generation 已先成为 stopped 也会改为 interrupted，
   写入 `EXECUTION_INTERRUPTED` 和 ended_at；active generation/job 沿用 stopped/cancelled，Provider 不重放。
-- E0 不为迁移前已经结束的 generation 解析 JSON 回填 execution；M4b 父子、dispatch 和 attempt>1 尚未实现。
+- E0 不为迁移前已经结束的 generation 解析 JSON 回填 execution；v2 工作流已复用 parent_execution_id、dispatch_order 与多次尝试，见后文。
 
 角色上下文窗口默认 200K，并受部署 ceiling 约束。未知 tokenizer 使用明确标记的保守 UTF-8 估算，不能
 冒充 Provider usage。预算不足时产生 `CONTEXT_BUDGET_EXCEEDED`，在调用模型前失败。
@@ -261,3 +261,31 @@ ProviderError 兼容可选 error_type/error_phase，仅传输固定安全诊断�
 工具说明整理阶段使用策略版本 18；后续版本以 `workspaces/tools.py` 的实际 `workspace_tool_policy` 为准。现行结构：用途/关键规则/典型示例置于工具 description，参数用途和互斥关系置于 Field.description，实际数值约束仍由原 schema/执行层强制。workspace_tool_policy 的 exposed_tools 增加 parameters，预算估算与指纹覆盖完整原生参数 schema；该对象只用于内部估算与指纹，不重复注入 system_prompt。没有新增动态发现或“先标题再加载详情”的行为。
 
 Context schema 5兼容增加中断事实交接，原文投影规则保持；具体边界以[中断上下文](interruption-context.md)为准，不恢复旧图状态或新增关键词入口。
+
+## 群协调与 v2 工作流
+
+`planning.py` 管理可先于定义/运行存在的明确协调请求，`graph_tools.py` 暴露读图、整体写入、局部编辑、运行观察与受控启动/控制；`graph_service.py` 与前端/兼容 PUT 共用原子版本服务。`replanning.py` 在短事务中应用未派发子图或等待循环边界。原 engine、QueueJob、唯一消息 reducer、文件证据和预算继续复用，不创建另一套 Trace。
+
+### 当前协调工具授予
+
+能力显式存入 allocation.control_tools_json；上下文策略、原生工具工厂和控制工具工厂使用共同 allowed 校验。任命只是承接资格，不按角色名、模型自述或未知 phase 默认授予权限。
+
+| 执行 | 管理/报告工具 |
+|---|---|
+| 普通聊天/普通 @，无任务分配 | 无图管理工具 |
+| 明确 design 协调会话 | workflow_read_graph、workflow_write_graph、workflow_edit_graph |
+| 明确 execute 协调会话 | design 工具及 workflow_start |
+| 明确 replan 协调会话 | design 工具及 workflow_inspect_run、workflow_control |
+| 普通工作/判断节点 | 仅确有结果契约时获得 workflow_result，不继承管理权 |
+| 旧固定图 plan / summary | 显式保留 workflow_plan / workflow_summary 兼容，不代表读图/改图 |
+| 未知职责、无归属或已失效分配 | 无工具权限 |
+
+所有控制工具默认 dangerous，在 Owner 的具体请求内授予；工具参数没有 Owner、conversation 或任意目标覆盖字段。每次调用与提交复核当前任命、成员、角色、资源、执行及精确目标；执行结束后的旧对象不能继续修改。独立规划 allocation 没有伪造 attempt，原生工具集合为空，图管理不会顺带授予工作区访问。
+
+`workflow_result` schema 由 result_keys/result_schema 与条件来源推导，ContextBuilder 与实际工厂相同。非法结果不持久化，允许模型在剩余额度内修正；同结果重复报告幂等，合法报告的修正使用 expected_result_revision/result_revision 防止并发覆盖。已结束/已消费的结果不接受旧执行覆盖。工作节点恰好采用协调者角色时仍按自身分配处理。
+
+协调上下文提供明确会话、模式、目标及能力，实际成员工具说明由 read_graph 返回；不从普通历史混入协调者其他任务的私有中断事实。inspect_run 仅提供原执行最小文件证据与准确引用，不解密展示文件正文，也不声称当前文件版本已核对。模型委托重试须先 inspect_run；写入证据缺失、过期或 prepared 时交回 Owner 核对，不能自称已确认未知副作用。
+
+同一未启动草稿继续协调、由协调启动的 run 以及运行重规划沿用原链和预算，创建版本/进入循环不续额。新协调 execution 可关联前次 execution，但不复用其模型状态。重新任命不能继承旧授权；请求取消、停止和服务重启关闭旧执行，已提交修订继续可读，不自动重放。
+
+v2 QueueJob 使用同进程全局 FIFO 执行槽，普通聊天仍按会话串行；原子认领/结束事务可有限重试 SQLite 临时锁，不重试 Provider 或工具副作用。停止先封闭运行再收口其相关 execution；重规划请求取消不停止原来的独立运行，但会关闭尚未采用的本请求修订。具体字段、版本与循环规则见[工作流协议](../public/rest/workflows.md)。

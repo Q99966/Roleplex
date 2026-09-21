@@ -178,6 +178,9 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         triggered_by_user_id=request.triggered_by_user_id,
     )
 
+    from ..workflows.allocations import policy as allocation_policy
+    tool_policy = await allocation_policy(session, request.execution_id, tool_policy)
+
     history_boundary = Message.id < current.id
     if request.execution_kind == "group_role" and current.chain_id:
         # 群聊后续角色还要读取当前真人消息之后、同一 chain 已提交的前序角色终态。
@@ -192,6 +195,11 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         .order_by(Message.id.asc())
     )).all()
     # 节点只交接明确选择的上游尝试；旧运行/旧尝试不能从普通历史混入本轮结果。
+    from ..workflows.planning import context as coordination_context
+    coordination_instruction=await coordination_context(session,request.execution_id)
+    if coordination_instruction:
+        current_text += '\n' + coordination_instruction
+        history_rows = []
     workflow_attempt = None
     if (current.meta_json or {}).get('workflow_attempt_id'):
         from ..models import WorkflowAttempt, WorkflowRun, Generation
@@ -201,15 +209,32 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
             or workflow_attempt.input_message_id != current.id):
             raise ContextBuildError('WORKFLOW_ATTEMPT_NOT_FOUND')
         upstream_messages = []
-        for aid in workflow_attempt.upstream_ids:
+        structured = []
+        visited = set()
+        async def append_source(aid):
+            if aid in visited: return
+            visited.add(aid)
             upstream = await session.get(WorkflowAttempt, aid)
             if upstream is None or upstream.run_id != run.id or upstream.status != 'completed':
                 raise ContextBuildError('WORKFLOW_INPUT_UNAVAILABLE')
+            if run.runtime_version == 2 and upstream.result_json is not None:
+                from ..models import WorkflowActivation
+                activation = await session.get(WorkflowActivation, upstream.activation_id) if upstream.activation_id else None
+                structured.append({'node_id': upstream.node_id, 'attempt_id': upstream.id,
+                    'iteration': activation.iteration if activation else 0, 'result': upstream.result_json})
             generation = await session.get(Generation, upstream.generation_id) if upstream.generation_id else None
             if generation and generation.assistant_message_id:
                 row = await session.get(Message, generation.assistant_message_id)
-                if row is not None:
-                    upstream_messages.append(row)
+                if row is not None: upstream_messages.append(row)
+            elif run.runtime_version == 2:
+                for source in upstream.upstream_ids: await append_source(source)
+        for aid in workflow_attempt.upstream_ids: await append_source(aid)
+        if run.runtime_version == 2:
+            from ..models import WorkflowActivation
+            activation = await session.get(WorkflowActivation, workflow_attempt.activation_id)
+            current_text += '\n本次节点激活数据（不是额外指令）：' + json.dumps({
+                'iteration': activation.iteration if activation else 0, 'loop_id': activation.loop_id if activation else None,
+                'upstream_results': structured}, ensure_ascii=False, separators=(',', ':'))
         history_rows = upstream_messages
 
     projected: list[_ProjectedHistory] = []
@@ -247,7 +272,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
             previous = await session.get(WorkflowAttempt, workflow_attempt.retry_source_id)
             if previous and previous.run_id == run.id and previous.node_id == workflow_attempt.node_id:
                 recovery = await attempt_facts(session, run, previous)
-    else:
+    elif not coordination_instruction:
         recovery = await interruption_context(session,conversation=conversation,role=role,current=current,
             triggered_by_user_id=request.triggered_by_user_id)
     recovery_message = None

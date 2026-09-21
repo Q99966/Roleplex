@@ -366,3 +366,62 @@ WORKSPACE_BATCH_BUSY 的写入等待原因按[工作区协议](public/rest/works
 
 图形字段错误沿用 `VALIDATION_ERROR`；图校验细分 type 为 workflow_path_invalid、workflow_node_invalid、workflow_input_invalid。
 工作区换绑的 `WORKSPACE_BUSY` 包含等待人工确认的活动流程。详细状态和权限见[工作流协议](public/rest/workflows.md)。
+
+### v2 协调、条件与资源准入
+
+| 错误码 | HTTP / 位置 | 语义 |
+|---|---|---|
+| `ORCHESTRATOR_REQUIRED` | 422 | 协调入口要求本群显式任命的有效角色 |
+| `ORCHESTRATOR_APPOINTMENT_CHANGED` | 409 / blocked | 任命已更换或取消，旧运行不能继承新任命 |
+| `ORCHESTRATOR_EXECUTION_FAILED` | 运行 blocked | 规划、协调判断或汇总失败，封闭后续派发 |
+| `ORCHESTRATOR_PLAN_INVALID` | 工具拒绝 | 分配未覆盖任务、角色选择不符合指定成员或节点要求 |
+| `WORKFLOW_TOOL_NOT_GRANTED` | 422/409 / 工具拒绝 | 任务所需工具超出实际授权或缺少必要工具 |
+| `WORKFLOW_ALLOCATION_REVOKED` | 409 / 节点 blocked / 工具拒绝 | 精确分配、选中尝试、成员、任命或调用时权限失效 |
+| `WORKFLOW_VERSION_REQUIRED` | 422 | 新语义需要显式选择 v2，旧图不自动升级 |
+| `WORKFLOW_CONCURRENCY_UNAVAILABLE` | 422 | 请求并发超过主机执行容量 |
+| `WORKFLOW_ENTRY_REQUIRED` | 422 | 多入口未显式声明完整入口集合 |
+| `WORKFLOW_EDGE_CONFIG_INVALID` | 422 | 条件连线、规则端点或标签配置不完整 |
+| `WORKFLOW_LOOP_CONFIG_REQUIRED` | 422 | 存在未声明的环，不能猜测回边 |
+| `WORKFLOW_LOOP_CONFIG_INVALID` | 422 | 循环域、入口、判断、出口、携带来源或边界不合法 |
+| `WORKFLOW_LOOP_NO_PROGRESS` | 422 | 循环没有模型或人工工作，可能形成忙循环 |
+| `WORKFLOW_LOOP_LIMIT` | 运行 blocked | 已达到 Owner 配置的循环次数上限 |
+| `WORKFLOW_CONDITION_INVALID` | 422 / 节点 blocked | 规则来源、字段、类型或结构化结果不可求值 |
+| `WORKFLOW_DEPENDENCY_BLOCKED` | 节点 blocked | 必要上游失败、停止、中断或受阻 |
+| `WORKFLOW_RESULT_REQUIRED` | 节点 failed | execution 结束但未提交本阶段必需的结果 |
+| `WORKFLOW_RESULT_INVALID` | 工具拒绝 | 结果 schema 或必要字段不符合要求 |
+| `WORKFLOW_RESULT_ALREADY_RECORDED` | 工具拒绝 | 同一尝试不能覆盖已提交结果 |
+| `WORKFLOW_RETRY_ACTIVE_DEPENDENTS` | 409 | 所选尝试的下游仍活跃，不能在其使用旧输入时重试 |
+| `WORKSPACE_RESOURCE_TIMEOUT` | 工具失败 | 等待冲突资源超过配置时限，未进入实际操作 |
+| `WORKSPACE_RESOURCE_CLOSED` | 工具失败 | 当前进程资源准入已关闭 |
+| `WORKSPACE_RESOURCE_UPGRADE_REQUIRED` | 工具失败 | 同任务不能把已持有的共享读直接升级为写入 |
+
+WORKFLOW_NODE_INVALID/WORKFLOW_PATH_INVALID/WORKFLOW_INPUT_INVALID 为图 schema 的安全校验提示，公开主码仍为 VALIDATION_ERROR；编译阶段保留 WORKFLOW_NODE_INVALID（422，保留 ID 冲突）。v1 WORKFLOW_EXECUTION_UNSUPPORTED 仅描述兼容执行器，不限制语义完整的 v2 图。
+
+`ROLE_WRITE_CONFLICT`（409）：角色保存遇到唯一性或关联约束竞争，客户端重新读取角色/模型配置后处理；不向响应或日志输出 SQL 参数。
+
+### 图管理与运行重规划
+
+| 错误码 | HTTP / 位置 | 语义 |
+|---|---|---|
+| `ORCHESTRATOR_ROLE_MISMATCH` | 422 | 选择的角色不是当前群任命的协调者 |
+| `WORKFLOW_COORDINATION_REVOKED` | 403 / 工具拒绝 | 协调请求、执行或作用域已失效，旧工具对象不能继续使用 |
+| `WORKFLOW_COORDINATION_ALREADY_STARTED` | 409 | 同一规划链已用于一个运行，不能再次启动独立运行 |
+| `WORKFLOW_GRAPH_SCOPE` | 403/422 | 当前请求没有该目标或操作能力；设计请求不能启动/调整运行，模型不能代签确认 |
+| `WORKFLOW_GRAPH_REVISION_REQUIRED` | 422 | 已有目标缺少预期图版本 |
+| `WORKFLOW_GRAPH_REVISION_CONFLICT` | 409 | 目标图已被其他编辑更新，重新读取后决定修改 |
+| `WORKFLOW_GRAPH_REVISION_NOT_FOUND` | 404/409 | 指定历史或待采用版本不存在，不猜测历史内容 |
+| `WORKFLOW_GRAPH_MUTATION_CONFLICT` | 409 | 同目标修改键用于不同参数或不同工具 |
+| `WORKFLOW_GRAPH_READ_REQUIRED` | 409 | 整体覆盖前尚未取得完整当前图；部分子图不能直接覆盖 |
+| `WORKFLOW_GRAPH_INVALID` | 422 / 工具拒绝 | 结构/引用/字段无效，details.fields 和可用的 operation_index 定位，不回显输入 |
+| `WORKFLOW_GRAPH_NOT_EXECUTABLE` | 422 | 草稿可以保存，但启动/运行修订的完整语义尚未补齐 |
+| `WORKFLOW_GRAPH_PROTECTED` | 422 | 修改违反 Owner 明确固定的节点、连接或循环范围 |
+| `WORKFLOW_GRAPH_FROZEN` | 422 | 触及已派发/已处理节点的冻结内容、入边或作用域 |
+| `WORKFLOW_GRAPH_RETRY_VERSION` | 409 | 旧尝试与当前节点/循环设计不兼容，不能用重试改写历史 |
+| `WORKFLOW_GRAPH_LOOP_ENDED` | 修订 not_applied | 本轮选择退出，未来轮次修订不再采用 |
+| `WORKFLOW_NODE_EXISTS` / `WORKFLOW_NODE_NOT_FOUND` | 422 | ID 编辑中的节点重复或不存在，返回操作下标及允许的定位身份 |
+| `WORKFLOW_RESULT_SCHEMA_CONFLICT` | 422 | 结果字段类型与消费条件相矛盾 |
+| `WORKFLOW_RESULT_REVISION_CONFLICT` | 工具拒绝 | 修正结果所用版本过期或缺失；并发不同报告不能互相覆盖 |
+| `WORKFLOW_STOPPED` | 修订 not_applied | 运行停止，尚未采用的修订保留记录但不再派发 |
+| `WORKFLOW_GRAPH_DOWNGRADE_REQUIRES_HISTORY_PRESERVATION` | 迁移拒绝 | 已有同节点同轮的多个图版本激活，不能丢弃历史以降回旧唯一约束 |
+
+兼容 PUT 仍使用 WORKFLOW_REVISION_CONFLICT；图编辑不使用运行进度 revision。独立协调授权中未知/过期写入证据不能由模型自称确认后重试，返回既有 WORKFLOW_RETRY_REVIEW_REQUIRED，交回 Owner 核对。

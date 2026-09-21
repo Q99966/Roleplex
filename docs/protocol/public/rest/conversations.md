@@ -3,8 +3,8 @@
 | 元数据 | 值 |
 |---|---|
 | 受众 | 公开 |
-| 状态 | 已实现（单聊与 M4a 群聊；工作区绑定支持单聊与群聊；Orchestrator 未实现） |
-| 协议版本 | 3（兼容新增可空工作区绑定） |
+| 状态 | 已实现（单聊与 M4a 群聊；工作区绑定支持单聊与群聊；群协调者任命已实现） |
+| 协议版本 | 4（兼容新增群协调任命版本） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/conversations.py`、`backend/app/schemas.py`、`backend/app/services/retention.py` |
 | 关联测试 | `backend/tests/test_delete_semantics.py`、`backend/tests/test_group_chat.py`、`frontend/tests/recycle-and-tombstone.spec.ts`、`frontend/tests/m4-group-chat.spec.ts` |
@@ -31,6 +31,7 @@
   "title": "占位会话",
   "orchestrator_enabled": false,
   "orchestrator_role_id": null,
+  "orchestrator_revision": 0,
   "workspace_binding_id": null,
   "role_ids": [1],
   "revision": 0,
@@ -78,8 +79,7 @@ POST /api/conversations
 | `ROLE_NOT_AVAILABLE` | 422 | 角色不存在、不属于本 Owner，或已停用/已删除 |
 | `ORCHESTRATOR_MUST_BE_MEMBER` | 422 | 编排角色不在成员列表中 |
 
-`orchestrator_enabled` 与 `orchestrator_role_id` 在 M4a 仍是预留配置，不改变 mentions 调度；前端在 M4b 前
-不提供开启入口。
+创建时的 `orchestrator_enabled` 与 `orchestrator_role_id` 保留旧字段兼容，`orchestrator_revision=0` 不激活协调权。当前已提供下文的显式任命入口；普通 mentions 调度保持不变，任命本身不直接授予模型图管理工具。
 
 ## 群聊角色成员管理
 
@@ -158,3 +158,9 @@ POST /api/conversations/{conversation_id}/restore
 `deleted_at` 是会话表示的新增字段，默认 `null`，属于兼容新增。旧客户端忽略它仍可工作，
 但会失去回收站能力。`GET /api/conversations` 的语义有变化：此前返回全部会话，
 现在排除回收站中的会话。
+
+## 群协调者任命
+
+`PUT /api/conversations/{id}/orchestrator`，仅当前 World Owner 且为本人创建的存活群成员可调用。请求 `{role_id,expected_revision}`；role_id 为有效现有群角色，null 表示取消。expected_revision 对应会话 revision；成功同时递增 revision 和 orchestrator_revision，广播 conversation_updated，返回完整会话。旧版本返回 409 CONVERSATION_REVISION_CONFLICT；非群返回 422 GROUP_CHAT_REQUIRED；角色不可用返回 422 WORKFLOW_ROLE_UNAVAILABLE。
+
+旧创建字段保留兼容，但 orchestrator_revision=0 不激活协调权，须通过此入口显式任命。更换/取消、移除协调角色或停用/删除它封闭旧协调运行，旧任务不继承新任命。普通发送/@ 顺序、手动工作流和单聊不依赖任命。协调执行及任务权限见[工作流](workflows.md)。

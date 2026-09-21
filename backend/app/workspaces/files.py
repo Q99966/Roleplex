@@ -22,6 +22,8 @@ MAX_EDIT_BYTES = MAX_FRAGMENT_BYTES
 _WRITE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
+from .resource_admission import resource_operation
+
 class WorkspaceFileError(ValueError):
     """携带稳定错误码的原生文件工具失败。"""
 
@@ -93,9 +95,10 @@ def _capture_applied(callback: Callable | None, before: bytes | None, after: byt
 class WorkspaceFileService:
     """绑定一个已授权 execution 与规范工作区根的原生文件服务。"""
 
-    def __init__(self, *, root: Path, execution_id: str):
+    def __init__(self, *, root: Path, execution_id: str, authorize=None):
         self.root = root.resolve(strict=True)
         self.execution_id = execution_id
+        self._authorize = authorize
         self._lock = _WRITE_LOCKS.setdefault(str(self.root), asyncio.Lock())
 
     def _resolve(self, path: str, *, allow_root: bool = False, require_exists: bool = True) -> Path:
@@ -109,6 +112,7 @@ class WorkspaceFileService:
         except (OSError, RuntimeError):
             raise WorkspaceFileError('WORKSPACE_PATH_INVALID') from None
 
+    @resource_operation('read')
     async def list(self, path: str = ".", *, after_name: str | None = None, limit: int = 200) -> WorkspaceListResult:
         """列出目录一页；symlink 只报告身份，不读取目标。"""
         if isinstance(limit, bool) or limit < 1 or limit > MAX_LIST_ITEMS:
@@ -147,6 +151,7 @@ class WorkspaceFileService:
             next_after_name=selected[-1] if truncated and selected else None,
         )
 
+    @resource_operation('read')
     async def read(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 65536,
                    expected_sha256: str | None = None, budget=None, strict_budget: bool = False,
                    json_budget: int = 65536) -> WorkspaceReadResult:
@@ -167,6 +172,7 @@ class WorkspaceFileService:
             return WorkspaceReadResult(**await read_bytes(self, path, offset_bytes=offset_bytes, max_bytes=max_bytes,
                 expected_sha256=expected_sha256, budget=budget, strict_budget=strict_budget, json_budget=json_budget))
 
+    @resource_operation('read')
     async def read_lines(self, path: str, *, start_line: int, end_line: int | None = None,
                          expected_sha256: str | None = None, budget=None, content_budget=None,
                          json_budget: int = 65536) -> dict:
@@ -187,6 +193,7 @@ class WorkspaceFileService:
             return await read_lines(self, path, start_line=start_line, end_line=end_line, expected_sha256=expected_sha256,
                 budget=budget, content_budget=content_budget, json_budget=json_budget)
 
+    @resource_operation('read')
     async def search(self, *, query: str | None = None, mode: str = 'text', path: str = '.', limit: int = 100,
                      context_lines: int = 1, queries: list[str] | None = None, match: str = 'any', authorize=None) -> dict:
         """在绑定根内搜索，路径和查询不解释为 Shell。
@@ -207,6 +214,7 @@ class WorkspaceFileService:
             return await search(self, query=query, mode=mode, path=path, limit=limit,
                                 context_lines=context_lines, queries=queries, match=match, authorize=authorize)
 
+    @resource_operation('write')
     async def write(self, path: str, content: str, *, expected_sha256: str | None = None,
                     capture_applied: Callable[[bytes | None, bytes], None] | None = None,
                     capture_parent_created: Callable[[], None] | None = None, _effect_index: int = 0, _recheck: Callable | None = None) -> WorkspaceWriteResult:
@@ -378,6 +386,7 @@ class WorkspaceFileService:
         _capture_applied(capture_applied, current, encoded)
         return WorkspaceWriteResult(created=False, bytes=len(encoded), sha256=_sha256(encoded))
 
+    @resource_operation('write')
     async def edit(self, path: str, old_text: str | None = None, new_text: str | None = None, *, expected_sha256: str,
                    replacements: list[dict] | None = None,
                    capture_applied: Callable[[bytes | None, bytes], None] | None = None, _effect_index: int = 0, _recheck: Callable | None = None) -> WorkspaceWriteResult:
@@ -423,6 +432,7 @@ class WorkspaceFileService:
         current = self._read_update(path, expected_sha256)
         return current, apply_replacements(current, pairs, indexed=replacements is not None)
 
+    @resource_operation('write')
     async def preflight(self, operation: str, path: str, arguments: dict) -> tuple[str, tuple[int, int] | None]:
         """无写入地验证一项并返回别名检测身份，提交时仍必须重做校验。
 

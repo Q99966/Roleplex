@@ -618,6 +618,7 @@ async def run_scheduled_generation(
                     current_message_id=current_message_id,
                     triggered_by_user_id=triggered_by_user_id,
                     execution_kind=execution_kind,
+                    execution_id=execution_id,
                 ),
             )
             context_fields = _context_log_fields(context)
@@ -641,6 +642,8 @@ async def run_scheduled_generation(
                 triggered_by_user_id=triggered_by_user_id,
                 allow_dangerous=allow_dangerous,
             ))
+            from ..workflows.coordination import create_control_tools
+            tools.extend(await create_control_tools(session, execution_id=execution_id))
         if settings.agent_use_fake_provider:
             logger.info(
                 "provider.built",

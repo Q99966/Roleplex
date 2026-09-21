@@ -19,6 +19,7 @@ class ContextBuildRequest:
     current_message_id: int
     triggered_by_user_id: int | None
     execution_kind: str = "single"
+    execution_id: str | None = None
 
 
 @dataclass(frozen=True)

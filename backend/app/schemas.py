@@ -84,6 +84,7 @@ class ModelConfigResponse(BaseModel):
 class RoleCreate(BaseModel):
     """包含提示词、技能、工具和 MCP 元数据的 Agent 定义请求。"""
 
+    active: bool | None = None
     name: str = Field(min_length=1, max_length=128)
     avatar: str | None = None
     description: str | None = Field(default=None, max_length=2000)
@@ -158,6 +159,7 @@ class ConversationResponse(BaseModel):
     title: str
     orchestrator_enabled: bool
     orchestrator_role_id: int | None
+    orchestrator_revision: int = 0
     workspace_binding_id: int | None
     role_ids: list[int] = Field(default_factory=list)
     revision: int
@@ -518,3 +520,9 @@ class ArgumentErrorView(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     error_code: Literal['TOOL_ARGUMENT_INVALID','TOOL_ARGUMENT_JSON_INVALID','TOOL_NOT_AVAILABLE']
     issues: list[ArgumentIssueView] = Field(max_length=8)
+
+
+class OrchestratorUpdate(BaseModel):
+    """Owner 对本群任命的版本更新，null 表示取消。"""
+    role_id: int | None = None
+    expected_revision: int = Field(ge=0)

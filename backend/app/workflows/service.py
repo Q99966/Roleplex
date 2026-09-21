@@ -61,6 +61,9 @@ async def validate_roles(session, conv, nodes, owner_id):
 
 async def resource_check(session, run):
     """运行与等待期间复核资源；群聊只复用文件工具，不扩大任何角色能力。"""
+    if run.runtime_version == 2:
+        from .engine import check_run
+        return await check_run(session, run)
     conv = await owned(session, run.conversation_id, run.owner_id)
     gate = await session.get(RuntimeGate, 1)
     if gate and gate.closing:
@@ -107,6 +110,11 @@ async def run_json(session, run):
     """返回控制快照和原执行引用；文件详情继续由已有 Owner 接口读取。"""
     attempts = list((await session.scalars(select(WorkflowAttempt).where(WorkflowAttempt.run_id == run.id)
         .order_by(WorkflowAttempt.created_at, WorkflowAttempt.id))).all())
+    from ..models import WorkflowActivation, ExecutionAllocation
+    activations = {row.id: row for row in (await session.scalars(select(WorkflowActivation).where(WorkflowActivation.run_id == run.id))).all()} if run.runtime_version == 2 else {}
+    allocations = {row.attempt_id: row for row in (await session.scalars(select(ExecutionAllocation).where(ExecutionAllocation.attempt_id.in_([a.id for a in attempts])))).all()} if activations else {}
+    from .engine import current_activations
+    current_activation_map=current_activations(run,list(activations.values())) if run.runtime_version==2 else {}
     result = []
     for a in attempts:
         generation = await session.get(Generation, a.generation_id) if a.generation_id else None
@@ -114,58 +122,77 @@ async def run_json(session, run):
         calls = list((await session.scalars(select(ModelCallUsage).where(ModelCallUsage.execution_id == a.execution_id))).all()) if a.execution_id else []
         usage = {field: sum(getattr(c, field) for c in calls) if calls and all(getattr(c, field) is not None for c in calls) else None
                  for field in ['input_tokens', 'output_tokens']}
+        activation = activations.get(a.activation_id)
+        allocation = allocations.get(a.id)
+        selected = bool(activation and activation.selected_attempt_id == a.id)
+        current = selected and current_activation_map.get(a.node_id) is activation if activation else run.selected.get(a.node_id) == a.id
         result.append({'id': a.id, 'node_id': a.node_id, 'number': a.number, 'status': a.status,
-            'usage': usage, 'current': run.selected.get(a.node_id) == a.id, 'upstream_ids': a.upstream_ids,
+            'usage': usage, 'current': current, 'selected_in_activation': selected,
+            'graph_revision':a.graph_revision,'node_snapshot':a.node_snapshot_json,
+            'activation_id': a.activation_id, 'phase': a.phase, 'iteration': activation.iteration if activation else 0,
+            'loop_id': activation.loop_id if activation else None, 'result': a.result_json,
+            'assigned_role_id': allocation.authority_json.get('role_id') if allocation else None, 'assigned_tools': allocation.tools_json if allocation else [], 'waiting_resource': allocation.waiting_mode if allocation else None, 'upstream_ids': a.upstream_ids,
             'retry_source_id': a.retry_source_id, 'instruction': a.instruction,
             'message_id': generation.assistant_message_id if generation else None,
             'generation_id': a.generation_id, 'execution_id': a.execution_id,
             'error_code': a.error_code, 'created_at': a.created_at, 'ended_at': a.ended_at})
     budget = await session.get(WorkflowBudget, run.chain_id)
-    return {'id': run.id, 'definition_id': run.definition_id, 'definition_revision': run.definition_revision,
-        'name': run.snapshot['name'], 'graph': {'nodes': run.snapshot['nodes'], 'edges': run.snapshot['edges']},
-        'status': run.status, 'revision': run.revision, 'cursor': run.cursor, 'error_code': run.error_code,
+    from ..models import WorkflowGraphRevision
+    graph_versions=(await session.scalars(select(WorkflowGraphRevision).where(WorkflowGraphRevision.run_id==run.id).order_by(WorkflowGraphRevision.number))).all()
+    return {'id': run.id, 'chain_id':run.chain_id, 'definition_id': run.definition_id, 'definition_revision': run.definition_revision,
+        'name': run.snapshot['name'], 'graph': {k: run.snapshot[k] for k in ('nodes', 'edges', 'runtime_version', 'entries', 'edge_rules', 'loops', 'concurrency') if k in run.snapshot},
+        'constraints':run.snapshot.get('constraints',{}),'graph_revision':run.graph_revision,'latest_graph_revision':graph_versions[-1].number if graph_versions else None,
+        'graph_versions':[{'graph_revision':v.number,'status':v.status,'legacy':v.legacy,'changes':v.changes_json} for v in graph_versions],
+        'pending_graph_revision':run.state_json.get('pending_graph_revision'),
+        'runtime_version': run.runtime_version, 'mode': run.snapshot.get('mode', 'manual'),
+        'coordinator_role_id': run.snapshot.get('coordinator_role_id'), 'appointment_revision': run.snapshot.get('appointment_revision'),
+        'loop_states': run.state_json.get('loops', {}), 'phase': run.state_json.get('phase', 'work'),
+        'activations': [{'id': row.id, 'node_id': row.node_id, 'iteration': row.iteration, 'loop_id': row.loop_id, 'status': row.status,
+            'attempt_id': row.selected_attempt_id, 'graph_revision':row.graph_revision,'error_code': row.error_code} for row in activations.values()],
+        'status': run.status, 'revision': run.revision, 'cursor': run.cursor if run.runtime_version == 1 else None, 'error_code': run.error_code,
         'workspace_binding_id': run.workspace_binding_id, 'input_text': run.input_text, 'attempts': result,
         'decision_limit': budget.decision_limit if budget else None,
         'used_decisions': budget.used_decisions if budget else None, 'created_at': run.created_at}
 
 
 async def listing(cid, uid):
-    """恢复当前 Owner 会话的控制快照，私有定义不进入公开事件。"""
-    async with SessionLocal() as session:
-        await owned(session, cid, uid)
+    """读取完整控制版本，避免多次 SELECT 拼出旧 revision 与新节点状态。
+
+    SQLite 的普通只读 SELECT 不保证跨语句快照；与控制转移共用短锁，
+    不持有模型/文件执行资源，私有定义不进入公开事件。
+    """
+    async with control_lock, SessionLocal() as session:
+        conv = await owned(session, cid, uid)
         definitions = (await session.scalars(select(WorkflowDefinition).where(WorkflowDefinition.conversation_id == cid)
             .order_by(WorkflowDefinition.created_at))).all()
         runs = (await session.scalars(select(WorkflowRun).where(WorkflowRun.conversation_id == cid)
             .order_by(WorkflowRun.created_at.desc()))).all()
-        return {'definitions': [definition_json(row) for row in definitions],
+        from ..config import settings
+        from .coordination import capabilities
+        from ..models import CoordinationSession
+        from .planning import view as coordination_view
+        coordination_rows=(await session.scalars(select(CoordinationSession).where(CoordinationSession.conversation_id==cid).order_by(CoordinationSession.created_at.desc()))).all()
+        return {'coordinations':[await coordination_view(session,g) for g in coordination_rows], 'member_capabilities': await capabilities(session, conv, uid), 'parallel_capacity': settings.workflow_parallelism, 'definitions': [definition_json(row) for row in definitions],
                 'runs': [await run_json(session, row) for row in runs]}
 
 
 async def save(cid, uid, did, payload: Save):
     """显式版本保存；新定义使用客户端生成的稳定 ID，重发不会产生重复定义。"""
-    async with control_lock:
-        async with SessionLocal() as session:
-            conv = await owned(session, cid, uid)
-            graph = payload.graph.model_dump(mode='json')
-            await validate_roles(session, conv, graph['nodes'], uid)
-            row = await session.get(WorkflowDefinition, did)
-            if row and row.conversation_id != cid:
-                reject('WORKFLOW_NOT_FOUND', 404)
-            if (row.revision if row else 0) != payload.expected_revision:
-                reject('WORKFLOW_REVISION_CONFLICT')
-            if not payload.name.strip():
-                reject('WORKFLOW_NODE_INVALID', 422)
-            if row is None:
-                row = WorkflowDefinition(id=did, conversation_id=cid, created_at=now(), revision=0)
-                session.add(row)
-            row.name, row.graph, row.updated_at = payload.name.strip(), graph, now()
-            row.revision += 1
-            await session.commit()
-            return definition_json(row)
+    from .graph_schemas import WriteGraph
+    from .graph_service import mutate
+    result=await mutate(cid,uid,'definition',did,WriteGraph(graph={**payload.graph.model_dump(mode='json',exclude_unset=True),'runtime_version':payload.graph.runtime_version},
+        name=payload.name,expected_graph_revision=payload.expected_revision,mutation_key=uuid4().hex),compatibility=True)
+    return {'id':did,'name':result['name'],'revision':result['graph_revision'],'graph':result['graph']}
 
 
 async def start(cid, uid, payload: Start):
     """启动键按会话唯一，运行与预算、触发消息同事务保存。"""
+    async with SessionLocal() as inspect:
+        definition = await inspect.get(WorkflowDefinition, payload.definition_id)
+        v2 = payload.mode == 'coordinated' or (definition is not None and definition.graph.get('runtime_version') == 2)
+    if v2:
+        from .engine import start as start_v2
+        return await start_v2(cid, uid, payload)
     async with control_lock:
         async with SessionLocal() as session:
             conv = await owned(session, cid, uid)
@@ -237,7 +264,11 @@ async def facts(cid, uid, rid, aid):
         attempt = await session.get(WorkflowAttempt, aid)
         if attempt is None or attempt.run_id != rid:
             reject('WORKFLOW_ATTEMPT_NOT_FOUND', 404)
-        await resource_check(session, run)
+        if run.runtime_version == 2:
+            from .engine import check_run
+            await check_run(session, run, check_appointment=False)
+        else:
+            await resource_check(session, run)
         return {'attempt_id': aid, 'text': await attempt_facts(session, run, attempt)}
 
 
@@ -256,8 +287,14 @@ async def attempt_facts(session, run, attempt):
         triggered_by_user_id=run.owner_id, source_message_id=generation.assistant_message_id, workflow_source=True) or '没有可用证据，结果保持未知。'
 
 
-async def control(cid, uid, rid, payload: Control):
+async def control(cid, uid, rid, payload: Control, *, manager_execution_id=None):
     """版本约束精确运行/尝试；停止先封闭派发，再异步收口当前执行。"""
+    async with SessionLocal() as inspect:
+        row = await get_run(inspect, cid, uid, rid)
+        v2 = row.runtime_version == 2
+    if v2:
+        from .engine import control as control_v2
+        return await control_v2(cid, uid, rid, payload,manager_execution_id=manager_execution_id)
     stop_chain = None
     async with control_lock:
         async with SessionLocal() as session:
@@ -438,7 +475,15 @@ async def permit_generation(gid):
         async with SessionLocal() as session:
             a = await session.scalar(select(WorkflowAttempt).where(WorkflowAttempt.generation_id == gid))
             if a is None:
+                from ..models import ExecutionAllocation
+                allocation=await session.scalar(select(ExecutionAllocation).join(AgentExecution,AgentExecution.execution_id==ExecutionAllocation.execution_id).where(AgentExecution.generation_id==gid))
+                if allocation and allocation.coordination_session_id:
+                    from .allocations import allowed
+                    return await allowed(session,allocation.execution_id)
                 return True
+            if a.activation_id:
+                from .allocations import allowed
+                return await allowed(session, a.execution_id)
             run = await session.get(WorkflowRun, a.run_id)
             if run is None or run.status != 'running' or run.selected.get(a.node_id) != a.id:
                 return False
@@ -454,7 +499,11 @@ async def initialize():
     global _task, _accepting, control_lock
     control_lock = asyncio.Lock()
     async with SessionLocal() as session:
-        runs = (await session.scalars(select(WorkflowRun).where(WorkflowRun.status.in_(('queued', 'running', 'stopping'))))).all()
+        from .engine import recover
+        await recover(session)
+        from .planning import recover as recover_coordination
+        await recover_coordination(session)
+        runs = (await session.scalars(select(WorkflowRun).where(WorkflowRun.runtime_version == 1, WorkflowRun.status.in_(('queued', 'running', 'stopping'))))).all()
         for run in runs:
             run.status, run.error_code = 'interrupted', 'WORKFLOW_INTERRUPTED'
             run.revision += 1
@@ -480,11 +529,20 @@ async def coordinate():
     """已提交状态驱动有限轮询；失败只记录固定安全事件，不输出任务或异常原文。"""
     while True:
         try:
+            from .planning import advance_all
+            await advance_all()
             async with SessionLocal() as session:
                 ids = list((await session.scalars(select(WorkflowRun.id).where(WorkflowRun.status.in_(ACTIVE)))).all())
             for rid in ids:
                 try:
-                    await with_locked_retry(lambda: advance(rid))
+                    async with SessionLocal() as lookup:
+                        row = await lookup.get(WorkflowRun, rid)
+                        v2 = row is not None and row.runtime_version == 2
+                    if v2:
+                        from .engine import advance as advance_v2
+                        await with_locked_retry(lambda: advance_v2(rid))
+                    else:
+                        await with_locked_retry(lambda: advance(rid))
                 except asyncio.CancelledError:
                     raise
                 except HTTPException as exc:

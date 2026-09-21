@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, Panel, Handle, Position, MarkerType,
-  applyNodeChanges, useNodesInitialized, useReactFlow, BaseEdge, BezierEdge,
-  type Node, type NodeProps, type NodeChange, type Edge, type EdgeProps, type Connection,
+  applyNodeChanges, useNodesInitialized, useReactFlow,
+  type Node, type NodeProps, type NodeChange, type Edge, type Connection,
 } from '@xyflow/react'
+import { SmartEdgeProvider, type SmartEdgeProviderOptions } from '@tisoap/react-flow-smart-edge'
+import { WorkflowEdge } from './WorkflowEdge'
+import { returnRoutes } from './workflow-routing'
 import '@xyflow/react/dist/style.css'
 import './workflow-flow.css'
 import type { WorkflowGraph, WorkflowRun } from '../../api/workflows'
-import { statusLabel } from './WorkflowContext'
+import { statusLabel, useWorkflow } from './WorkflowContext'
 
 const edgeId = (source: string, target: string) => JSON.stringify([source, target])
 import { defaultPosition, nodeColor } from './workflow-layout'
@@ -26,13 +29,7 @@ function TaskCard({ data, selected, isConnectable }: NodeProps<TaskNode>) {
   </div>
 }
 
-/** 自环沿节点外侧显示，普通边继续使用 React Flow 的贝塞尔边。 */
-function WorkflowEdge(props: EdgeProps) {
-  if (props.source !== props.target) return <BezierEdge {...props} />
-  const { sourceX: sx, sourceY: sy, targetX: tx, targetY: ty } = props
-  return <BaseEdge id={props.id} path={`M ${sx},${sy} C ${sx + 110},${sy - 150} ${tx - 110},${ty - 150} ${tx},${ty}`}
-    markerEnd={props.markerEnd} style={props.style} />
-}
+const routingOptions: SmartEdgeProviderOptions = { preset: 'smoothstep', borderRadius: 12, nodePadding: 18, gridRatio: 10, routeOnlyWhenBlocked: false, routeWhileDragging: true, debounceMs: 24 }
 const nodeTypes = { task: TaskCard }
 const edgeTypes = { workflow: WorkflowEdge }
 
@@ -55,6 +52,15 @@ export function WorkflowFlow(props: Props) {
 }
 
 function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setSelectedEdge, onInsertAfter, roleNames, onSelect, onGraphChange }: Props) {
+  const workflow = useWorkflow()
+  const visibleRun = useMemo(() => {
+    if (!run || !workflow.historyGraph) return run
+    const version = workflow.historyGraph.revision
+    const attempts = run.attempts.filter(a => a.graph_revision === version || (a.graph_revision == null && version === 0))
+    const latest = new Map(attempts.map(a => [a.node_id, a.id]))
+    return { ...run, activations: run.activations?.filter(a => a.graph_revision === version), attempts: attempts.map(a => ({ ...a, current: latest.get(a.node_id) === a.id })) }
+  }, [run, workflow.historyGraph])
+
   const flow = useReactFlow<TaskNode>()
   const initialized = useNodesInitialized()
   const lastCount = useRef(-1)
@@ -62,14 +68,15 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setS
   const root = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<string | null>(null)
   const makeNodes = useCallback((): TaskNode[] => graph.nodes.map((node, index) => {
-    const attempt = !editable ? run?.attempts.find(a => a.node_id === node.id && a.current) : undefined
+    const activation = !editable ? visibleRun?.activations?.find(a => a.node_id === node.id && (workflow.historyGraph || !a.loop_id || a.iteration === run?.loop_states?.[a.loop_id]?.iteration)) : undefined
+    const attempt = !editable ? visibleRun?.attempts.find(a => a.node_id === node.id && a.current) : undefined
     return {
       id: node.id, type: 'task', position: node.position ?? defaultPosition(index), selected: selected === node.id,
       draggable: editable, connectable: editable, deletable: editable, ariaRole: 'button', ariaLabel: `节点 ${index + 1}：${node.title}`,
-      data: { title: node.title, index, color: nodeColor(node), role: node.kind === 'approval' ? '人工确认' : roleNames[node.role_id ?? 0] ?? '角色不可用', editable,
-        status: editable ? '' : attempt ? `${statusLabel(attempt.status)} · 尝试 ${attempt.number}` : '未执行 · 旧结果不沿用' },
+      data: { title: node.title, index, color: nodeColor(node), role: ({ approval: '人工确认', join: '结果汇合', condition: '条件选择' } as Record<string, string>)[node.kind] ?? roleNames[attempt?.assigned_role_id ?? node.role_id ?? 0] ?? (node.kind === 'judge' ? '模型判断' : '待协调分配'), editable,
+        status: editable ? '' : attempt ? `${attempt.waiting_resource ? '等待资源（' + (attempt.waiting_resource === 'read' ? '读' : '写') + '）' : statusLabel(attempt.status)}${attempt.loop_id ? ' · 第 ' + ((attempt.iteration ?? 0) + 1) + ' 轮' : ''} · 尝试 ${attempt.number}` : activation ? statusLabel(activation.status) : '未执行 · 旧结果不沿用' },
     }
-  }), [graph, run, editable, selected, roleNames])
+  }), [graph, run, workflow.historyGraph, editable, selected, roleNames])
   const [nodes, setNodes] = useState<TaskNode[]>(makeNodes)
   useEffect(() => {
     const next = makeNodes()
@@ -90,12 +97,21 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setS
     if (target) { target.focus(); pendingFocus.current = null }
   }, [initialized, nodes])
 
-  const edges = useMemo<Edge[]>(() => graph.edges.map(([source, target]) => ({
-    id: edgeId(source, target), source, target, sourceHandle: 'out', targetHandle: 'in', type: 'workflow',
-    selected: selectedEdge === edgeId(source, target), deletable: editable,
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#739bb0' },
-    ariaLabel: `连线：${graph.nodes.find(n => n.id === source)?.title ?? source} → ${graph.nodes.find(n => n.id === target)?.title ?? target}`,
-  })), [graph, selectedEdge, editable])
+  const edges = useMemo<Edge[]>(() => {
+    const routes = returnRoutes(graph, nodes)
+    return graph.edges.map(([source, target]) => {
+      const loop = graph.loops?.find(loop => loop.decision === source && loop.entry === target)
+      const rule = graph.edge_rules?.find(rule => rule.source === source && rule.target === target)?.when
+      return {
+        id: edgeId(source, target), source, target, sourceHandle: 'out', targetHandle: 'in', type: 'workflow',
+        data: routes.get(edgeId(source, target)) ?? { returnEdge: false },
+        selected: selectedEdge === edgeId(source, target), deletable: editable,
+        label: loop ? `循环 · ${loop.repeat_when ?? false}` : rule && rule !== 'always' ? rule : source === target ? '自环' : undefined,
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#739bb0' },
+        ariaLabel: `连线：${graph.nodes.find(n => n.id === source)?.title ?? source} → ${graph.nodes.find(n => n.id === target)?.title ?? target}`,
+      }
+    })
+  }, [graph, nodes, selectedEdge, editable])
 
   function changes(changes: NodeChange<TaskNode>[]) {
     setNodes(current => applyNodeChanges(changes, current))
@@ -121,6 +137,7 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setS
   }}>
     {deleteNotice && <p role="status" className="px-3 py-1 text-xs text-amber-600">{deleteNotice}</p>}
     <div className="min-h-36 flex-1">
+      <SmartEdgeProvider nodes={nodes} options={routingOptions}>
       <ReactFlow<TaskNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={changes} onNodeClick={(_, node) => { onSelect(node.id); setSelectedEdge(''); setDeleteNotice('') }} onPaneClick={() => { onSelect(null); setSelectedEdge(''); setDeleteNotice('') }}
         onEdgeClick={(_, edge) => { setSelectedEdge(edge.id); onSelect(null); setDeleteNotice('') }} onEdgesChange={changes => { const change = changes.find(c => c.type === 'select' && c.selected); if (change?.type === 'select') { setSelectedEdge(change.id); onSelect(null); setDeleteNotice('') } }}
@@ -154,6 +171,7 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setS
         <MiniMap pannable zoomable nodeColor={node => String(node.data.color ?? '#a9c9d7')} maskColor="rgba(243,249,252,.7)" className="!hidden sm:!block" />
         {!graph.nodes.length && <Panel position="top-center"><p className="p-4 text-center text-xs text-slate-500">添加角色任务，编排你的工作流。</p></Panel>}
       </ReactFlow>
+      </SmartEdgeProvider>
     </div>
   </div>
 }

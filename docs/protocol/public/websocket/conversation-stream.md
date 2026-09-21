@@ -163,3 +163,7 @@ page_bytes 计入完整 snapshot 信封（含 subscription_id）。未提交该�
 兼容新增 `workflow_updated`：负载 `{run_id,status,revision}`，在运行状态提交后发布，复用 conversation_id、event_seq 和 stream_epoch。
 不推送私有任务、目录或工具详情。Owner 使用工作流 REST 完整快照恢复；Guest 仅获得该公开提示。
 事件可以重复/乱序，快照按运行 revision 合并，未知客户端可忽略并继续推进事件游标。
+
+群任命通过既有 conversation_updated 广播 orchestrator_enabled、orchestrator_role_id、orchestrator_revision 与会话 revision；客户端读取共享会话并按版本合并。workflow_updated 继续只携带 run_id/status/revision，v2 并行激活、循环轮次与资源等待通过工作流快照恢复，不对旧客户端要求识别新的流式事件。
+
+图管理兼容新增 `workflow_graph_updated`（definition_id、可空 run_id、graph_revision、mutation_id）与 `workflow_coordination_updated`（coordination_id、status、revision）。均只通知身份/版本，不广播私有图、目标正文或差异内容；Owner 再读完整控制快照。客户端合并快照遵守各对象 revision，重复/乱序通知不执行图操作；未知客户端可忽略，有限轮询仍可恢复缺口。

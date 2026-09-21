@@ -54,6 +54,9 @@ async def authorized_execution(session: AsyncSession, *, execution_id: str, conv
         require_tool=require_tool)
     if actor is None:
         return None
+    from ..workflows.allocations import allowed
+    if not await allowed(session, execution_id, tool_name):
+        return None
     execution = await session.scalar(select(AgentExecution).where(AgentExecution.execution_id == execution_id,
         AgentExecution.conversation_id == conversation_id, AgentExecution.role_id == role_id,
         AgentExecution.execution_kind == ('single' if actor[0].type == 'single' else 'group_role'), AgentExecution.status == 'running'))

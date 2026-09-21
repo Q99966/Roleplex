@@ -962,3 +962,7 @@ T4.2 沿用 generation.budget_stopped，reason 兼容新增 decision_budget；pr
 用量观测增加 usage.record_failed 事件，仅含既有 generation_id/execution_id、可选 call_index 和固定 error_type；不记录 usage 原始载荷或异常正文。页面用量来自业务记录，不从日志反推；采集失败不终止任务。
 
 中断事实采集兼容新增 `tool.evidence_record_failed`：仅记录既有 execution_id、tool_call_id、安全 error_type；不得记录路径、证据体、源码或异常原文。记录失败不改写文件提交结果；无新增 Trace。
+
+群协调运行继续使用现有 chain、parent_execution_id 和节点 activation/attempt 关联，不引入新 Trace。资源准入新增 `tool.resource_wait_started/completed` 安全事件，字段与耗时边界见[观测协议](../protocol/internal/observability.md#工作流资源等待)。协调规划与结果正文仅保存在产品记录，不进入日志。
+
+图管理追加 workflow.graph_committed 安全摘要，仍沿既有 request/chain/execution/tool 关联；字段与禁止内容见[观测协议](../protocol/internal/observability.md#图管理提交)。

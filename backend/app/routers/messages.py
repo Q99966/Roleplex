@@ -294,6 +294,21 @@ async def stop_generation(
     )
     if generation is None:
         return {"stopped": False, "generation_id": None, "generation_ids": []}
+    from ..models import WorkflowRun
+    workflow = await session.scalar(select(WorkflowRun).where(WorkflowRun.conversation_id == conversation_id, WorkflowRun.chain_id == generation.run_id))
+    if workflow is not None:
+        if not user.is_owner:
+            raise HTTPException(403, 'OWNER_REQUIRED')
+        from ..workflows import service as workflow_service
+        async with workflow_service.control_lock:
+            from ..db import SessionLocal
+            async with SessionLocal() as fresh:
+                active_run = await workflow_service.get_run(fresh, conversation_id, user.id, workflow.id)
+                if active_run.status in workflow_service.ACTIVE:
+                    active_run.status = 'stopping'
+                    event = await workflow_service.changed(fresh, active_run)
+                    await fresh.commit()
+                    await event_store.publish_events(event)
     generation_ids = await conversation_scheduler.stop_chain(conversation_id, generation.run_id or "")
     stopped = bool(generation_ids)
     logger.info(

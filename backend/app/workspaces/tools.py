@@ -291,7 +291,9 @@ async def _create_lease(
         triggered_by_user_id：调度器绑定的触发者。
         allow_dangerous：链路是否获准使用 dangerous 工具。
     """
-    enabled = tuple(name for name in WORKSPACE_TOOLS if name != 'workspace_service_status' and name in (role.builtin_tools_json or []))
+    from ..workflows.allocations import tools_for
+    allocated = await tools_for(session, execution_id)
+    enabled = tuple(name for name in WORKSPACE_TOOLS if name != 'workspace_service_status' and name in (role.builtin_tools_json or []) and (allocated is None or name in allocated))
     if not enabled or not role.active or role.deleted_at is not None or not allow_dangerous or triggered_by_user_id is None:
         return None
     conversation = await session.get(Conversation, conversation_id)
@@ -320,7 +322,9 @@ async def _create_lease(
     if binding is None or not _enabled_tools(role, binding, conversation.type):
         return None
     # 工具暴露前也复核双方成员、执行类型和取消状态；实际调用仍再次检查。
-    enabled = _enabled_tools(role, binding, conversation.type)
+    enabled = [name for name in _enabled_tools(role, binding, conversation.type) if allocated is None or name in allocated]
+    if not enabled:
+        return None
     if await authorized_execution(session, execution_id=execution_id, conversation_id=conversation_id,
         role_id=role.id, user_id=user.id, tool_name=enabled[0]) is None:
         return None
@@ -336,12 +340,7 @@ async def _create_lease(
         ))
         if existing is not None:
             return (existing, binding) if existing.status == "ready" else None
-        busy = await session.scalar(select(ExecutionWorkspace.id).where(
-            ExecutionWorkspace.workspace_binding_id == binding.id,
-            ExecutionWorkspace.status == "ready",
-        ))
-        if busy is not None:
-            return None
+        # lease 只保存授权根快照；真实读写占用在文件操作入口协调。
         lease = ExecutionWorkspace(
             execution_id=execution_id,
             workspace_binding_id=binding.id,
@@ -441,7 +440,13 @@ async def _service_decision(
             return reject('WORKSPACE_UNAVAILABLE', 'workspace')
         if str(root) != root_path_snapshot:
             return reject('WORKSPACE_BINDING_CHANGED', 'workspace')
-        return AccessDecision(service=WorkspaceFileService(root=root, execution_id=execution_id), error_code='')
+        async def recheck():
+            decision = await _service_decision(execution_id=execution_id, conversation_id=conversation_id,
+                role_id=role_id, triggered_by_user_id=triggered_by_user_id, workspace_binding_id=workspace_binding_id,
+                root_path_snapshot=root_path_snapshot, tool_name=tool_name, query_available=query_available)
+            if decision.service is None:
+                raise AccessRejected(decision) if mutation else WorkspaceFileError('WORKSPACE_TOOL_NOT_AVAILABLE')
+        return AccessDecision(service=WorkspaceFileService(root=root, execution_id=execution_id, authorize=recheck), error_code='')
 
 
 async def _authorized_service(**identity) -> WorkspaceFileService | None:
@@ -760,7 +765,9 @@ async def create_workspace_tools(
             command：服务端登记的命令 ID。
             args：只允许该命令的专用参数。
         """
-        async with _COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()):
+        from .resource_admission import OperationLock
+        async with OperationLock(_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()),
+            lease.root_path_snapshot, execution_id, mode='read'):
             authorized = await service('workspace_run_command')
             if authorized is None:
                 return f'{REJECTED_OUTPUT_PREFIX} WORKSPACE_TOOL_NOT_AVAILABLE'
@@ -780,6 +787,7 @@ async def create_workspace_tools(
         """
         from ..agent.tool_context import tool_call_id
         from .approvals import request_and_run
+        from .resource_admission import OperationLock
         try:
             from ..runtime.manager import manager
             async with manager.command(**runtime_identity('workspace_run_shell')):
@@ -787,7 +795,8 @@ async def create_workspace_tools(
                     conversation_id=conversation_id, role_id=role.id, owner_id=triggered_by_user_id,
                     workspace_binding_id=lease.workspace_binding_id, root_path=lease.root_path_snapshot,
                     tool_call_id=tool_call_id.get(),
-                    execution_lock=_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock())))
+                    execution_lock=OperationLock(_COMMAND_CALL_LOCKS.setdefault(lease.workspace_binding_id, asyncio.Lock()),
+                        lease.root_path_snapshot, execution_id)))
         except WorkspaceCommandError as exc:
             return _command_result({'ok': False, 'error_code': exc.code})
 
@@ -895,7 +904,9 @@ async def create_workspace_tools(
             args_schema=schema, handle_validation_error=lambda _error: _command_result({'error_code': 'RUNTIME_ARGUMENT_INVALID'}))
     raw.update({tool.name: tool for tool in query_tools})
     enabled = {*_enabled_tools(role, _binding, conversation.type), *(tool.name for tool in query_tools)}
-    selected = [raw[name] for name in WORKSPACE_TOOLS if name in enabled]
+    from ..workflows.allocations import tools_for
+    allocated = await tools_for(session, execution_id)
+    selected = [raw[name] for name in WORKSPACE_TOOLS if name in enabled and (allocated is None or name in allocated)]
     return guard_tools(selected, allow_dangerous=allow_dangerous)
 
 

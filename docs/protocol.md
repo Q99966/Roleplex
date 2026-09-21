@@ -2,7 +2,7 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-复核日期：2026-09-16。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
+复核日期：2026-09-21。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
 
 > API 已实现表示存在对应服务端处理与验证；完整产品能力还需对应客户端行为。仅有 schema、数据表或风险验证的内容单独标为原型/预留。
 
@@ -31,7 +31,7 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
-| REST 会话工作流 | 已实现串行编排与节点控制 | [public/rest/workflows.md](protocol/public/rest/workflows.md) |
+| REST 会话工作流 | 已实现独立规划、图读写/编辑、并行循环、运行修订与节点控制 | [public/rest/workflows.md](protocol/public/rest/workflows.md) |
 | REST 会话管理与回收站 | 已实现（单聊与串行群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
 | REST 当前 World 工作区 | 已实现（Owner 单聊及群聊文件工具；含批量修改与多片段编辑） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
@@ -92,8 +92,7 @@ REST 使用 `Authorization: Bearer <访问令牌>`，WebSocket 通过首帧传�
 
 会话历史读取、用户消息发送（含 `client_message_id` 幂等键）和停止生成已实现，权威文档见 [public/messaging/messages.md](protocol/public/messaging/messages.md)。流式增量和终态不通过 REST 返回，客户端必须订阅 WebSocket 事件流。
 
-M4a 群聊创建、成员管理和 `@` 串行调度已实现；当前 wire contract 以对应领域文档为准。Orchestrator
-分派、附件和 Artifact part 仍属后续里程碑。
+群聊创建、成员管理和 `@` 串行调度已实现；群协调工作流通过独立入口规划、编辑和运行图，见[工作流协议](protocol/public/rest/workflows.md)，不改变普通消息路由。图管理权限只属于明确协调请求；附件和 Artifact part 尚未实现。
 
 ## WebSocket 订阅恢复
 

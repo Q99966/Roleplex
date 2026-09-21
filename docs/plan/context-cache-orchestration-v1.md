@@ -1,6 +1,6 @@
 # 上下文、缓存观测与编排阶段记录
 
-状态：C0–C2 与 M4a 已完成；并行编排、Checkpoint、Memory 和导出/导入尚未实施。整理日期：2026-09-16。
+状态：C0–C2、M4a、工作流及固定图协调/并行循环已有实现；协调者图管理与版本化重规划已接入，具体范围和验证见图管理阶段记录。世界 Orchestrator、Checkpoint、Memory 和导出/导入独立安排。复核日期：2026-09-21。
 
 [历史原文](../archive/plan/context-cache-orchestration-v1.md)保留阶段设计与取舍；[外部缓存参考](../design/cache-v1.md)用于理解来源。旧排期不自动成为新需求的前置条件。
 
@@ -22,4 +22,6 @@
 
 后续顺序以[重排建议与实际依赖](README.md#后续执行顺序建议)为入口：文本编排与仓库能力分开，导出和 Checkpoint 可按需求提前。
 
-首版已实现[会话内可操作工作流图](conversation-workflows-v1.md)：先支持用户明确编排的串行节点及可操作运行，再按需求增加自动分工。它复用现有 ContextBuilder 和执行身份，并补齐节点/尝试的结果交接；不将旧 M4b 全部设计当作前置，也不假定当前“最近本角色中断回复”的投影已经覆盖节点重试。
+首版已实现[会话内可操作工作流图](conversation-workflows-v1.md)，复用 ContextBuilder 和执行身份，补齐节点/尝试的结果交接。
+
+已接入的群内任命、固定图分配/结果上报及并行循环见[基础记录](orchestrator-parallel-loops-v1.md)。当前以[图管理与重规划整改](orchestrator-graph-control-v1.md)为权威：协调执行可以早于 run 创建，模型获得目标图及明确编辑范围，运行重规划按准确图版本/激活/迭代组织上下文。不能继续把固定图上的 assignment 提交当作已完成图规划，也不扩大到其他群或世界级入口。

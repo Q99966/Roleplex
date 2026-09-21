@@ -446,3 +446,29 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 | 参数、说明与中断事实 | [参数恢复](tool-argument-recovery.md)、[工具说明](workspace-tool-guidance.md)、[中断交接](interruption-context.md) |
 | 界面 | [输出设置](role-output-settings.md)、[侧栏主题](sidebar-theme.md)、[会话详情](conversation-details.md) |
 | Provider 排障 | [Token 核查](token-usage-audit.md)、[中转接口核验](tokenrhythm-contract-check.md) |
+
+## 十一、群协调与并行循环
+
+后端确定性入口（在 backend/）：`pytest tests/test_orchestrator.py tests/test_resource_admission.py -q`。覆盖实际协调工具分工、两轮文件开发/并行审查/判断/汇总、同角色不同工具分配、执行时撤权、全部分支停止、取消任命、人工条件与跳过汇合、局部重试保留独立分支/旧轮次，以及资源别名、公平读写、取消释放与版本冲突。并发重叠由事件屏障证明，不以总耗时猜测。旧工作流、群聊、原生文件和 Shell/服务回归仍复用原入口。
+
+浏览器入口（在 frontend/）：`npm run test:e2e:commands -- orchestration.spec.ts`，真实前后端 + fake Provider 验证群任命、右侧工具/循环配置、协调返工、刷新选择历史，以及未任命入口和人工等待期间撤销。受控工作区位于本轮 commands 根下的 orchestration / orchestration-revoke，不碰用户文件。
+
+真实入口：`npm run test:e2e:real-world -- orchestration-provider.spec.ts`。此命令联网计费，复用既有专用凭据和正常 World 包装器，独立群由开发者、两名审查者和协调者组成；实际文件第一轮不通过、第二轮返工后通过，验证结构化结果、独立 execution、真实 usage 和刷新历史。使用 64 次共享测试预算与本轮根下的 orchestration 文件目录，关闭截图/trace/video；失败只保存阶段标签，正文留在产品 World。没有配置真实凭据时不能用 fake 结果替代。
+
+实际运行记录与保留 World 见[群协调 v2 验证](orchestrator-v2.md)。
+
+以上入口当前覆盖预设图上的固定分配/上报和运行，并不证明模型创建/修改图、独立规划授权或运行图重规划已经实现。新增用例按[整改验收](../plan/orchestrator-graph-control-v1.md#7-实施顺序与验收)补齐；实现后再登记实际命令与结果，不把历史通过作为整改完成。
+
+### 工作流连线避障
+
+`npm run test:e2e:commands -- workflow-routing.spec.ts workflow-reactflow.spec.ts` 使用真实前后端与 fake Provider，验证普通边绕过中间节点、外侧循环回边、自环、拖动后重算、保存恢复及键盘删除。通过 SVG 路径采样与屏幕节点边界检查穿越，而非只断言路径字符串变化；受控截图用于检查走线形态。此项不需要真实 Provider，也不改变工作流执行协议。
+
+2026-09-21 实测：上述组合 3 passed；外侧拐角整理后单独复跑 workflow-routing 用例 1 passed，TypeScript/Vite 构建通过。检查了受控截图，测试服务已退出。本轮未调用真实模型。
+
+## 十二、独立协调与图管理
+
+后端入口（backend/）：`pytest tests/test_graph_control.py -q --tb=short`。与既有 test_orchestrator/test_workflows/test_group_chat/resource_admission 联合回归，覆盖明确管理授权、整体写入与 ID 编辑、原子版本/幂等、运行新增节点、未来循环修订、历史激活、撤销与恢复及结果修订 CAS。迁移检查包含 0021/0022。
+
+浏览器入口（frontend/）：`npm run test:e2e:commands -- graph-control.spec.ts`。从聊天 `/plan@协调者` 开始，实际模型工具写图，验证冲突保留、共享预算启动、运行追加审查与历史版本。工作区使用本轮 commands 根下的独立用例子目录。
+
+真实入口：`npm run test:e2e:real-world -- graph-control-provider.spec.ts`，会联网计费，复用既有真实 World/凭据准备入口，工作区位于本轮 default/graph-control。测试只预置角色、工作区和空群，最终图必须由真实协调者通过工具创建/调整，并执行文件验证。截图/trace/video 关闭；失败仅记录安全阶段。实测、保留 World 和覆盖边界见[本次图管理验收](orchestrator-graph-control.md)。

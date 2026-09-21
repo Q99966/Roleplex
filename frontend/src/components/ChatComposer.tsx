@@ -2,6 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent
 import { AlertCircle, Send, Square, X } from 'lucide-react'
 import type { Role } from '../api/client'
 import { useChatStore } from '../store/chat'
+import { useWorkflow } from './workflows/WorkflowContext'
+import { useAppStore } from '../store/app'
 
 type Mention = number | 'all'
 type Props = {
@@ -16,6 +18,10 @@ type Props = {
  * @param props 会话身份、群聊成员和本地进程面板入口；切换会话由父组件重新挂载。
  */
 export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole, onProcessCommand }: Props) {
+  const workflow = useWorkflow()
+  const owner = useAppStore(state => Boolean(state.user?.is_owner))
+  const [planningTarget, setPlanningTarget] = useState<string | null>(null)
+  const [commandError, setCommandError] = useState('')
   const { loading, sending, generating, activeGenerationIds, subscription, sendMessage, stopGeneration } = useChatStore()
   const [draft, setDraft] = useState('')
   const [mentions, setMentions] = useState<Mention[]>([])
@@ -29,16 +35,18 @@ export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole,
   const input = useRef<HTMLTextAreaElement>(null)
   const selectionAfterRender = useRef<number | null>(null)
   const listId = useId()
+  const planning = group && /^\/plan(?:@|\s|$)/.test(draft.trimStart())
+  const targetDefinition = planningTarget ?? (workflow.mode === 'edit' && !workflow.draft.runTarget && workflow.draft.definition.revision ? workflow.draft.definition.id : '')
   const match = group && cursor.start === cursor.end ? draft.slice(0, cursor.start).match(/@([^\s@]*)$/) : null
   const query = match?.[1].toLocaleLowerCase() ?? ''
   const options: Array<{ target: Mention; label: string }> = [
-    { target: 'all', label: '全部 · 按成员顺序回复' },
+    ...(!planning ? [{ target: 'all' as const, label: '全部 · 按成员顺序回复' }] : []),
     ...memberRoles.filter((role) => role.active && !role.deleted_at && role.name.toLocaleLowerCase().includes(query))
       .map((role) => ({ target: role.id, label: role.name })),
   ]
-  const showSuggestions = Boolean(match) && !dismissed && !composingView
+  const showSuggestions = Boolean(match) && options.length > 0 && !dismissed && !composingView
   const selected = Math.min(choice, options.length - 1)
-  const canSend = hasReplyRole && !loading && !sending && subscription === 'ready' && Boolean(draft.trim())
+  const canSend = hasReplyRole && !loading && !sending && !workflow.busy && subscription === 'ready' && Boolean(draft.trim())
 
   useEffect(() => {
     alive.current = true
@@ -121,7 +129,15 @@ export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole,
     }
     if (!canSend) return
     const submittedRevision = revision.current
-    const accepted = await sendMessage(draft, mentions)
+    let accepted: boolean
+    if (planning) {
+      setCommandError('')
+      const roleId = mentions.length === 1 && typeof mentions[0] === 'number' ? mentions[0] : null
+      const role = memberRoles.find(r => r.id === roleId)
+      const command = draft.trimStart().slice(5).trimStart()
+      if (!owner || !role || !command.startsWith(`@${role.name} `)) { setCommandError('规划需要 Owner 通过 @ 选择本群当前协调者，并在后面填写要求。'); return }
+      accepted = await workflow.coordinate(command.slice(role.name.length + 2).trim(), role.id, 'design', targetDefinition)
+    } else accepted = await sendMessage(draft, mentions)
     if (accepted && alive.current && submittedRevision === revision.current) {
       revision.current++
       setDraft(''); setMentions([]); setCursor({ start: 0, end: 0 }); setDismissed(false)
@@ -146,13 +162,21 @@ export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole,
     if (window.matchMedia('(pointer: coarse)').matches && !event.code) return
     event.preventDefault()
     if (event.repeat) return
-    if (showSuggestions) selectMention(options[selected].target)
+    if (showSuggestions && options[selected]) selectMention(options[selected].target)
     else void submit()
   }
 
   return <form onSubmit={(event) => { event.preventDefault(); void submit() }} className="shrink-0 border-t border-slate-800 bg-slate-900 p-3 sm:p-4">
     {!hasReplyRole && <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
       <AlertCircle size={13} className="shrink-0" /><span>角色已删除，当前会话仅可查看历史消息。</span>
+    </div>}
+    {planning && <div className="mb-2 space-y-2 rounded-lg border border-slate-700 p-2 text-xs">
+      <p>规划模式 · 创建或调整草稿，不启动执行</p>
+      <label className="block">规划目标<select aria-label="规划目标" value={targetDefinition} onChange={e => setPlanningTarget(e.target.value)} className="ml-2 max-w-full rounded border border-slate-700 bg-panel p-1">
+        <option value="">新草稿</option>{workflow.data.definitions.map(d => <option key={d.id} value={d.id}>{d.name} · v{d.revision}</option>)}
+      </select></label>
+      <p className="text-slate-500">使用 /plan@角色名，并通过补全选择当前协调者。</p>
+      {(commandError || workflow.error) && <p role="alert" className="text-red-500">{commandError || workflow.error}</p>}
     </div>}
     {group && <div className="mb-2 flex min-h-6 flex-wrap items-center gap-1.5">
       {mentions.map((target) => {
@@ -162,7 +186,7 @@ export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole,
             onClick={() => { revision.current++; setMentions((current) => current.filter((item) => item !== target)) }}><X size={12} /></button>
         </span> : null
       })}
-      {!mentions.length && <span className="text-xs text-slate-400">无 @ 时消息只记录，不触发 Agent。</span>}
+      {!mentions.length && !planning && <span className="text-xs text-slate-400">无 @ 时消息只记录，不触发 Agent。</span>}
     </div>}
     <div className="relative rounded-xl border border-slate-800 bg-slate-950/80 p-2.5 focus-within:border-indigo-400">
       {showSuggestions && <div id={listId} role="listbox" aria-label="@ 角色补全" className="absolute bottom-full left-0 z-20 mb-2 max-h-48 w-72 max-w-full overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 shadow-panel">

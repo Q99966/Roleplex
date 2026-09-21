@@ -1,3 +1,4 @@
+import { OrchestratorAppointment } from './OrchestratorAppointment'
 import { WorkflowModule } from './workflows/WorkflowModule'
 import { ConversationWorkspace } from './ConversationWorkspace'
 import { RoleUsagePanel } from './RoleUsagePanel'
@@ -47,6 +48,11 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
 }) {
   const { roles, roleDirectory, worldName, user } = useAppStore()
   const [module, setModule] = useState<Module>('overview')
+  useEffect(() => {
+    const show = (event: Event) => { if ((event as CustomEvent).detail === conversation.id) { setModule('workflows'); setMenuOpen(false) } }
+    window.addEventListener('roleplex:workflow-show', show)
+    return () => window.removeEventListener('roleplex:workflow-show', show)
+  }, [conversation.id])
   const [menuOpen, setMenuOpen] = useState(false)
   const [order, setOrder] = useState<WheelId[]>(['overview', 'members', 'workflows', 'reserved-1', 'reserved-2'])
   const [radius, setRadius] = useState(FAN_RADIUS)
@@ -224,12 +230,13 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
         </div><div hidden={module !== 'members'} className="space-y-3">
           <div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-500">参与角色 · {conversation.role_ids.length}</p>
             {conversation.type === 'group' && user?.is_owner && <button type="button" onClick={() => { if (drawer) close(); onManageMembers(conversation) }} className="text-xs text-indigo-600">管理群聊成员</button>}</div>
+          <OrchestratorAppointment key={`${conversation.id}:${user?.id}`} conversation={conversation} />
           {conversation.role_ids.map(id => {
             const role = roles.find(value => value.id === id)
             const summary = role ?? roleDirectory[id]
             return <div key={id} role="group" aria-label={`会话角色：${summary?.name ?? `角色 #${id}`}`} className="rounded-xl border border-slate-800 bg-panel p-3">
               <div className="flex items-center gap-2"><span className="rounded-lg bg-emerald-100 p-2 text-emerald-700"><Bot size={15} /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold" title={summary?.name}>{summary?.name ?? `角色 #${id}`}{summary?.deleted_at ? '（已删除）' : ''}</p>
+                <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold" title={summary?.name}>{summary?.name ?? `角色 #${id}`}{summary?.deleted_at ? '（已删除）' : ''}{conversation.orchestrator_enabled && (conversation.orchestrator_revision ?? 0) > 0 && conversation.orchestrator_role_id === id ? ' · 群协调者' : ''}</p>
                   {user?.is_owner && role && <p className="mt-1 truncate text-[10px] text-slate-500">{role.model_name}</p>}</div>
                 {user?.is_owner && role && <button type="button" aria-label={`编辑角色：${role.name}`} onClick={() => { if (drawer) close(); onEditRole(role) }} className="text-xs text-indigo-600">编辑</button>}
               </div>

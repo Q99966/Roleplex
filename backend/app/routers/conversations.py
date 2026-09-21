@@ -12,6 +12,7 @@ from ..models import Conversation, ConversationMember, Generation, Role, User, W
 from ..realtime import store as event_store
 from ..schemas import (
     ConversationCreate,
+    OrchestratorUpdate,
     ConversationMembersUpdate,
     ConversationResponse,
     ConversationWorkspaceUpdate,
@@ -59,6 +60,7 @@ async def response(session: AsyncSession, conversation: Conversation, member: Co
         id=conversation.id, type=conversation.type, title=conversation.title,
         orchestrator_enabled=conversation.orchestrator_enabled,
         orchestrator_role_id=conversation.orchestrator_role_id,
+        orchestrator_revision=conversation.orchestrator_revision,
         workspace_binding_id=conversation.workspace_binding_id,
         role_ids=list(role_members),
         revision=conversation.revision,
@@ -209,6 +211,39 @@ async def update_conversation_workspace(
         return await apply_binding()
 
 
+@router.put('/{conversation_id}/orchestrator', response_model=ConversationResponse)
+async def appoint_orchestrator(conversation_id: int, payload: OrchestratorUpdate,
+    user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
+    """本群 Owner 显式任命协调者；更新后旧协调运行封闭派发，不静默接管。"""
+    from ..workflows import service
+    from ..scheduling import conversation_scheduler
+    async with service.control_lock:
+        conversation = await _owned_conversation(session, conversation_id, user.id)
+        member = await require_member(session, conversation_id, user.id)
+        if conversation.type != 'group':
+            raise HTTPException(422, 'GROUP_CHAT_REQUIRED')
+        if payload.role_id is not None:
+            await service.validate_roles(session, conversation, [{'kind': 'role', 'role_id': payload.role_id}], user.id)
+        updated = await session.scalar(update(Conversation).where(Conversation.id == conversation_id,
+            Conversation.revision == payload.expected_revision).values(revision=Conversation.revision + 1,
+            orchestrator_revision=Conversation.orchestrator_revision + 1, orchestrator_enabled=payload.role_id is not None,
+            orchestrator_role_id=payload.role_id).returning(Conversation.revision))
+        if updated is None:
+            raise HTTPException(409, 'CONVERSATION_REVISION_CONFLICT')
+        from ..workflows.coordination import revoke_runs
+        pending, chains = await revoke_runs(session, conversation_id)
+        await session.refresh(conversation)
+        pending.append(await event_store.append_event(session, conversation_id, 'conversation_updated',
+            {'orchestrator_enabled': conversation.orchestrator_enabled, 'orchestrator_role_id': payload.role_id,
+             'orchestrator_revision': conversation.orchestrator_revision, 'revision': conversation.revision}, revision=conversation.revision))
+        await session.commit()
+        result = await response(session, conversation, member)
+        await event_store.publish_events(*pending)
+        for chain in chains:
+            await conversation_scheduler.stop_chain(conversation_id, chain)
+        return result
+
+
 @router.put("/{conversation_id}/members", response_model=ConversationResponse)
 async def update_group_members(
     conversation_id: int,
@@ -224,67 +259,77 @@ async def update_group_members(
         user：当前世界 Owner。
         session：请求级数据库会话。
     """
-    conversation = await _owned_conversation(session, conversation_id, user.id)
-    if conversation.deleted_at is not None:
-        raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
-    if conversation.type != "group":
-        raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRED")
-    if len(payload.role_ids) < 2:
-        raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
-    if len(payload.role_ids) != len(set(payload.role_ids)):
-        raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
-    roles = (await session.scalars(select(Role).where(
-        Role.id.in_(payload.role_ids),
-        Role.created_by == user.id,
-        Role.active.is_(True),
-        Role.deleted_at.is_(None),
-    ))).all()
-    if len(roles) != len(payload.role_ids):
-        raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+    from ..workflows import service
+    async with service.control_lock:
+        conversation = await _owned_conversation(session, conversation_id, user.id)
+        if conversation.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+        if conversation.type != "group":
+            raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRED")
+        if len(payload.role_ids) < 2:
+            raise HTTPException(status_code=422, detail="GROUP_CHAT_REQUIRES_MULTIPLE_ROLES")
+        if len(payload.role_ids) != len(set(payload.role_ids)):
+            raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
+        roles = (await session.scalars(select(Role).where(
+            Role.id.in_(payload.role_ids),
+            Role.created_by == user.id,
+            Role.active.is_(True),
+            Role.deleted_at.is_(None),
+        ))).all()
+        if len(roles) != len(payload.role_ids):
+            raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
 
-    next_revision = payload.expected_revision + 1
-    updated = await session.scalar(
-        update(Conversation)
-        .where(Conversation.id == conversation_id, Conversation.revision == payload.expected_revision)
-        .values(
-            revision=next_revision,
-            orchestrator_enabled=(
-                conversation.orchestrator_enabled
-                and conversation.orchestrator_role_id in set(payload.role_ids)
-            ),
-            orchestrator_role_id=(
-                conversation.orchestrator_role_id
-                if conversation.orchestrator_role_id in set(payload.role_ids)
-                else None
-            ),
+        revoked_coordinator = conversation.orchestrator_enabled and conversation.orchestrator_role_id not in payload.role_ids
+        next_revision = payload.expected_revision + 1
+        updated = await session.scalar(
+            update(Conversation)
+            .where(Conversation.id == conversation_id, Conversation.revision == payload.expected_revision)
+            .values(
+                revision=next_revision,
+                orchestrator_revision=Conversation.orchestrator_revision + (1 if revoked_coordinator else 0),
+                orchestrator_enabled=(
+                    conversation.orchestrator_enabled
+                    and conversation.orchestrator_role_id in set(payload.role_ids)
+                ),
+                orchestrator_role_id=(
+                    conversation.orchestrator_role_id
+                    if conversation.orchestrator_role_id in set(payload.role_ids)
+                    else None
+                ),
+            )
+            .returning(Conversation.revision)
         )
-        .returning(Conversation.revision)
-    )
-    if updated is None:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail="CONVERSATION_REVISION_CONFLICT")
+        if updated is None:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail="CONVERSATION_REVISION_CONFLICT")
 
-    await session.execute(delete(ConversationMember).where(
-        ConversationMember.conversation_id == conversation_id,
-        ConversationMember.member_type == "role",
-    ))
-    now = datetime.now(timezone.utc)
-    for role_id in payload.role_ids:
-        session.add(ConversationMember(
-            conversation_id=conversation_id,
-            member_type="role",
-            member_id=role_id,
-            joined_at=now,
+        await session.execute(delete(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.member_type == "role",
         ))
-    pending = await event_store.append_event(
-        session,
-        conversation_id,
-        "member_updated",
-        {"role_ids": payload.role_ids, "revision": next_revision},
-        revision=next_revision,
-    )
-    await session.commit()
-    await event_store.publish_events(pending)
+        now = datetime.now(timezone.utc)
+        for role_id in payload.role_ids:
+            session.add(ConversationMember(
+                conversation_id=conversation_id,
+                member_type="role",
+                member_id=role_id,
+                joined_at=now,
+            ))
+        pending = await event_store.append_event(
+            session,
+            conversation_id,
+            "member_updated",
+            {"role_ids": payload.role_ids, "revision": next_revision},
+            revision=next_revision,
+        )
+        extra, chains = [], []
+        if revoked_coordinator:
+            from ..workflows.coordination import revoke_runs
+            extra, chains = await revoke_runs(session, conversation_id)
+        await session.commit()
+    await event_store.publish_events(pending, *extra)
+    from ..scheduling import conversation_scheduler
+    for chain in chains: await conversation_scheduler.stop_chain(conversation_id, chain)
     await session.refresh(conversation)
     member = await require_member(session, conversation_id, user.id)
     return await response(session, conversation, member)
