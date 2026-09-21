@@ -7,6 +7,7 @@ from ..models import WorkflowRun, WorkflowAttempt, ExecutionAllocation, Role, Co
 from ..db import SessionLocal
 from ..agent.tools import guard_tools, REJECTED_OUTPUT_PREFIX
 from .schemas import Strict, Scalar
+from .feedback_schemas import FeedbackItem
 
 
 class Assignment(Strict):
@@ -25,6 +26,7 @@ class ResultInput(Strict):
     expected_result_revision: StrictInt | None = Field(default=None,ge=0,description='修正已接受的结果时携带上次返回的 result_revision，避免并发报告互相覆盖。')
     values: dict[str, Scalar]
     summary: str = ''
+    feedback: list[FeedbackItem] = Field(default_factory=list, max_length=20)
 
 
 class SummaryInput(Strict):
@@ -33,7 +35,7 @@ class SummaryInput(Strict):
 
 DESCRIPTIONS = {
     'workflow_plan': '提交本次流程的结构化任务分工。为每个 role/judge 节点提交一次 node_id、role_id、tools 和可选 instruction。保留用户指定角色/必要工具；只能从当前群授权能力中选择。后台校验和持久化成功才表示计划被接受；本工具不会修改角色全局配置。',
-    'workflow_result': '报告本节点的结构化结果。values 使用命名标量（布尔/数字/字符串/null），缺少必要字段会被拒绝。条件只读取此结构化结果，不从正文判断“通过”。summary 简述依据，不伪造未执行的工具或文件修改。',
+    'workflow_result': '报告本节点的结构化结果。values 使用命名标量，条件只读取这些值。summary 简述实际依据。需要后续处置时用 feedback 登记 implementation 实现问题、contract 契约冲突、capability 能力缺口、unverified 未验证项或 suggestion 建议；不能把缺少验证能力当作实现失败。每项使用稳定 request_key；blocking=true 暂停受影响的后继，普通建议设 false。没有问题省略 feedback。不授予图管理或额外工具权限。',
     'workflow_summary': '提交当前群流程的最终汇总，明确失败、跳过或未知结果，不再派发任务。',
 }
 SCHEMAS = {'workflow_plan': PlanInput, 'workflow_result': ResultInput, 'workflow_summary': SummaryInput}
@@ -136,27 +138,43 @@ async def create_control_tools(session, *, execution_id):
                         result = result_model.model_validate(payload).model_dump(mode='json',by_alias=True)
                     if name=='workflow_result':
                         expected=result.pop('expected_result_revision',None)
+                        reports = result.pop('feedback', [])
+                        from .graph_service import digest
+                        if reports: result['feedback_digest'] = digest(reports)
                         prior=a.result_json
                         revision=prior.get('revision',1) if prior else 0
-                        if prior and {k:v for k,v in prior.items() if k!='revision'}==result:
+                        if prior and {k:v for k,v in prior.items() if k not in ('revision', 'feedback_ids')}==result:
                             return json.dumps({'recorded':True,'replayed':True,'result_revision':revision})
                         if (prior and expected!=revision) or (not prior and expected not in (None,0)):
                             return f'{REJECTED_OUTPUT_PREFIX} '+json.dumps({'code':'WORKFLOW_RESULT_REVISION_CONFLICT','result_revision':revision})
                         result['revision']=revision+1
+                        feedback_ids = list((prior or {}).get('feedback_ids', []))
+                        from .feedback import create_in_session
+                        for report in reports:
+                            item, _ = await create_in_session(fresh, run, a, FeedbackItem.model_validate(report),
+                                uid=run.owner_id, execution_id=execution_id, result_revision=revision+1)
+                            if item.id not in feedback_ids: feedback_ids.append(item.id)
+                        if feedback_ids: result['feedback_ids'] = feedback_ids
                     elif a.result_json is not None:
                         if a.result_json==result: return json.dumps({'recorded':True,'replayed':True})
                         return f'{REJECTED_OUTPUT_PREFIX} WORKFLOW_RESULT_ALREADY_RECORDED'
                     a.result_json = result
+                    notice = await service.changed(fresh, run) if name == 'workflow_result' and reports else None
                     await fresh.commit()
-                    return json.dumps({'recorded':True,**({'result_revision':result['revision']} if name=='workflow_result' else {})},ensure_ascii=False)
+                    output = json.dumps({'recorded':True,**({'result_revision':result['revision'], 'feedback_ids': result.get('feedback_ids', [])} if name=='workflow_result' else {})},ensure_ascii=False)
                 except ValidationError:
                     return f'{REJECTED_OUTPUT_PREFIX} WORKFLOW_RESULT_INVALID'
                 except HTTPException as exc:
                     return f'{REJECTED_OUTPUT_PREFIX} {exc.detail}'
+        if notice:
+            from ..realtime import store as events
+            await events.publish_events(notice)
+        return output
     async def plan(assignments: list):
         return await submit('workflow_plan', {'assignments': [a.model_dump() if hasattr(a, 'model_dump') else a for a in assignments]})
-    async def result(values: dict, summary: str = '', expected_result_revision: int | None = None):
-        return await submit('workflow_result', {'values': values.model_dump(mode='json',by_alias=True) if hasattr(values,'model_dump') else values, 'summary': summary,'expected_result_revision':expected_result_revision})
+    async def result(values: dict, summary: str = '', expected_result_revision: int | None = None, feedback: list | None = None):
+        return await submit('workflow_result', {'values': values.model_dump(mode='json',by_alias=True) if hasattr(values,'model_dump') else values, 'summary': summary,'expected_result_revision':expected_result_revision,
+            'feedback': [item.model_dump(mode='json') if hasattr(item, 'model_dump') else item for item in feedback or []]})
     async def summary(summary: str):
         return await submit('workflow_summary', {'summary': summary})
     functions = {'workflow_plan': plan, 'workflow_result': result, 'workflow_summary': summary}

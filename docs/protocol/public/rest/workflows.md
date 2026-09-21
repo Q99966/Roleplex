@@ -2,10 +2,10 @@
 
 | 元数据 | 值 |
 |---|---|
-| 状态 | 已实现独立规划、图读取/整体写入/局部编辑、版本化运行重规划；保留并行循环与 v1 兼容 |
-| 协议版本 | 3（兼容新增协调会话、图修改与历史版本）；图执行内核仍用 runtime_version=1/2 |
+| 状态 | 已实现图管理、版本化重规划、节点反馈与局部处置；保留并行循环与 v1 兼容 |
+| 协议版本 | 4（兼容新增反馈、处置与显式自动处理授权）；图执行内核仍用 runtime_version=1/2 |
 | 复核日期 | 2026-09-21 |
-| 事实来源 | `workflows/{schemas,graph_schemas,graph_service,planning,graph_tools,replanning,results,engine,coordination,allocations,service}.py`、`routers/workflows.py` |
+| 事实来源 | `workflows/{schemas,graph_schemas,graph_service,planning,graph_tools,replanning,results,feedback_schemas,feedback,engine,coordination,allocations,service}.py`、`routers/workflows.py` |
 | 验证入口 | [测试指南](../../../testing/README.md) |
 
 ## 权限与入口
@@ -55,11 +55,11 @@
 
 ## 协调与手动启动
 
-`POST /runs` 返回 202，请求 `{definition_id,expected_revision,request_key,input_text,mode}`。mode 缺省 manual；coordinated 要求群聊已显式任命有效协调者（见[会话管理](conversations.md)）。普通发送、@、@全部继续原串行群聊规则，不进入协调模式。单聊及手动流程不依赖群协调者。
+`POST /runs` 返回 202，请求 `{definition_id,expected_revision,request_key,input_text,mode,feedback_mode}`。mode 缺省 manual；coordinated 要求群聊已显式任命有效协调者（见[会话管理](conversations.md)）。feedback_mode 缺省 manual，仅 coordinated 可选 automatic，授权在原运行范围和预算内自动处置反馈。普通发送、@、@全部继续原串行群聊规则，不进入协调模式。单聊及手动流程不依赖群协调者。
 
 `POST /runs` 的 coordinated 模式保留旧固定图兼容：先编译，再由 workflow_plan 提交全部已有 role/judge 节点的分配。它仍不是从目标创建图的入口。新的前端“协调执行”使用下述独立协调会话；模型实际读/写/编辑图后显式调用 workflow_start。judge 使用协调角色进行结构化判断，workflow_summary 汇总真实结果。
 
-普通工作节点（即使使用协调者角色）只获得自身原生工具；仅在 result_keys/result_schema 或条件消费需要结果时获得 workflow_result。它不获得图管理权。旧已存 allocation 通过迁移保留已知阶段的历史能力，未知职责默认无权。
+新派发的 v2 普通工作/判断节点（即使使用协调者角色）获得自身分配的原生工具及 workflow_result，可按需报告反馈；没有结果契约时不强制提交。它不获得图管理权。旧已存 allocation 不扩大能力，未知职责默认无权。
 
 本运行的模型调用、分支、迭代、重试共享同一冻结 WorkflowBudget。启动同事务保存快照、任命版本、工作区身份、触发消息和 chain；定义修改不影响既有运行。request_key 同会话同请求幂等，不同内容冲突。一会话只允许一个活动流程，普通聊天使用独立 chain。
 
@@ -80,6 +80,8 @@
 | expected_graph_revision | 已有定义/运行必填；使用目标最新图版本，与进度 revision 分开 |
 | continue_session_id | 可选同群同目标、同任命的前次会话，创建新 execution 继续，不恢复旧模型状态 |
 | protected_nodes | 可选 Owner 固定节点列表，保护业务字段、相连边及涉及的循环；省略沿用任务保护，显式列表是本次 Owner 的保护范围 |
+| feedback_mode | manual（缺省）或 automatic；execute 启动时冻结到运行，design/replan 不修改已有运行的自动管理授权 |
+| feedback_ids | replan 可选本运行反馈 ID 列表，最多 20 项；同事务关联此次处置，不能引用其他运行或已关闭反馈 |
 
 同一尚未启动的目标草稿继续规划，沿用前次协调的 chain/预算；execute 启动复用这一预算，replan 复用目标运行预算。已用于另一运行的规划链不能再启动第二个运行；新运行是独立任务。换任命不能借前次会话恢复旧授权。定义不存在时的新草稿槽位也可通过 continue_session_id 延续。
 
@@ -88,7 +90,7 @@
 - `POST /coordination/{id}/cancel`：携带 expected_revision，取消本协调 execution；如果本请求已启动运行，同时封闭该运行。针对原有运行的重规划请求只取消本协调执行，已提交图修订保留。
 - `GET /coordination/{id}/message`：Owner 读取该执行的准确原消息/工具卡（可能尚为 null），禁止缓存。
 
-设计请求只授予 read/write/edit/validate，不能启动；execute 额外获得 workflow_start；replan 额外获得 workflow_inspect_run/workflow_control。管理工具不授予文件访问。能力显式保存在 execution_allocations，与工具 schema、ContextBuilder 和实际工厂共享，并在每次调用及提交时重新检查。
+设计请求只授予 read/write/edit/validate，不能启动；execute 额外获得 workflow_start；replan 额外获得 workflow_inspect_run/workflow_control/workflow_feedback_update。管理工具不授予文件访问。能力显式保存在 execution_allocations，与工具 schema、ContextBuilder 和实际工厂共享，并在每次调用及提交时重新检查。
 
 ## 图工具与统一提交
 
@@ -100,6 +102,7 @@
 | workflow_inspect_run | 当前授权运行的状态、版本、尝试、结果及原执行最小文件证据；不读取当前文件正文，不把缺失证据当未执行 |
 | workflow_start | 携带 expected_graph_revision，启动授权定义；同协调请求重复调用不多建运行 |
 | workflow_control | 在授权运行内 stop/retry/resume，使用运行 expected_revision；不能 confirm 或代签工具审批 |
+| workflow_feedback_update | inspect_run 后处置本运行具体反馈；复用 Owner 处置服务，但不能代签人工核验、豁免问题或接受遗留 |
 
 write/edit 均携带 expected_graph_revision、mutation_key、可选 validate_only（默认 false）。新目标图版本为 0；同目标修改键持久去重，摘要包含工具名和规范化请求。同键同内容返回原结果，换工具或不同内容冲突。只校验不创建定义/修订，正式提交仍复核当前版本与授权。模型整体覆盖前须取得完整当前图；部分读取会清除完整读护栏，完整编辑结果可作为后续完整图依据。
 
@@ -120,21 +123,52 @@ Owner REST 共用同一服务：
 
 运行 graph_revision 表示当前有效图，latest_graph_revision 包含最新已提交（可能待采用）修订，pending_graph_revision 指向等待循环边界的版本。graph_versions 给出版本和 applied/pending/superseded/not_applied 状态。进度 revision 不用作图编辑版本。
 
-未派发节点可增删改并重算就绪依赖；已入队/活跃、人工等待或已处理节点的业务内容、入边与作用域冻结，仍可增加后继。新节点创建 activation，原未执行意图标为 superseded，旧尝试/文件事实保留。修改已结束运行的图不会自动恢复执行，仍需明确 resume。
+未派发节点（包括 waiting_feedback）可增删改并重算就绪依赖；已入队/活跃、人工等待或已处理节点的业务内容、入边与作用域冻结，仍可增加后继。新节点创建 activation，原未执行意图标为 superseded，旧尝试/文件事实保留。单纯修改已结束运行的图不恢复执行；明确 resume 或在反馈处置中 assign 新的待执行任务才继续，并检查同群不能已有另一活动运行。
 
 活动循环的节点、连线或循环声明变更暂存为未来修订。受影响的循环分别交接完本轮判断后等待共同边界，无关分支继续；全部选择重复时原子采用新图、创建下一轮激活并检查新轮数限制。如果循环已退出或必要分支失败，修订标为 not_applied，原有效图继续按事实收口；不重跑旧轮。新的修订可替代尚未采用的修订。循环支持范围仍是互不嵌套的独立域。
+
+阻塞反馈已暂停本轮交接时，可以保持循环入口、判断、出口、重复规则和上限，在本轮未派发区域局部补充处理节点。仍逐项检查已执行内容、入边和作用域冻结。改变上述循环边界返回 WORKFLOW_FEEDBACK_LOOP_BOUNDARY，避免“等下一轮采用处置节点、又等处置结束才能进入下一轮”的互等。
 
 activation/attempt 新增 graph_revision；attempt.node_snapshot 保存派发所依据节点。旧记录保持 null，不倒推不存在的历史版本；首次纳入版本服务时仅保存标有 legacy 的当时基线。历史图通过精确版本读取，界面不把新图节点叠到旧版本。旧尝试与当前图的节点内容/循环作用域已经不兼容时，retry 返回 WORKFLOW_GRAPH_RETRY_VERSION；不能假借重试重写历史。循环达到上限后，Owner 可提交新的未来修订并显式继续，预算不重置。
 
 workflow_result 的导出 schema 由节点结果类型与条件来源推导，非法值不保存，可以在原预算中修正。同一尝试相同结果重复提交返回原结果；执行仍活跃且结果尚未交接时，可携带上次返回的 expected_result_revision 修正报告，成功返回 result_revision；并发不同结果不能无版本覆盖。执行结束/已消费后旧工具对象无权改写。规划/汇总旧工具保留兼容，但不能更改真实运行终态。
 
+## 节点反馈与处置
+
+workflow_result 兼容新增 `feedback` 列表（缺省空，单次最多 20 项）。每项为 `{request_key,category,summary,details?,blocking?,requested_tools?,suggested_role_id?}`；category 为 implementation/contract/capability/unverified/suggestion，分别表示实现问题、契约冲突、能力缺口、未验证和建议。summary 为 1–240 字符，details 最多 8000 字符，blocking 缺省 true，普通建议应设 false。requested_tools 只核对实际能力，不授予工具；suggested_role_id 必须仍为本群可用角色。
+
+结果与反馈在同一事务提交。模型不能传入来源身份；后台绑定 run、graph_revision、node、activation/iteration、attempt、结果 revision、实际角色及 execution。Owner 可以从明确尝试提交意见。原意见不可覆盖，后续处置只追加事件；result 保存反馈 ID 和幂等指纹，原消息/工具/文件事实继续通过既有接口读取。修正结构化结果不会隐式撤销已有问题。
+
+| REST（Owner） | 请求与结果 |
+|---|---|
+| `GET /runs/{rid}/feedback` | `{items}`，禁止缓存；运行完整快照也返回 feedback 列表 |
+| `POST /runs/{rid}/feedback` | 反馈字段另加 attempt_id；新建 201，同来源 request_key 同内容重发 200，不同内容 409 |
+| `POST /runs/{rid}/feedback/{fid}/actions` | `{expected_revision,request_key,action,reason,...}`；返回最新反馈，版本冲突 409 |
+
+处置 reason 不得为空、最多 4000 字符。action 及额外参数：
+
+- `assign`：handler_role_id 与 handler_node_ids 必填，必须匹配本运行未派发的角色节点；记录精确 handler activation。先通过已有图服务安排任务，再关联反馈。
+- `wait` / `review`：分别等待外部条件或复核，保留具体依据。
+- `resolve`：模型必须引用 verification_attempt_id；该尝试须属于关联激活、仍为选中尝试、实际完成且 `values.feedback_resolved=true`，所有关联处理尝试均已完成。Owner 可明确 `manual_verification=true` 并填写核验依据。完成执行与验证结论分开，工具不靠一句文字承诺关闭反馈。
+- `dismiss` / `accept` / `obsolete`：Owner 记录未采纳、接受遗留或已失效；accept 不是验证通过。
+- `reopen`：Owner 重新打开已关闭记录，不覆盖原历史。
+- `coordinate`：Owner 显式委托当前群协调者处理该反馈，包含处理完成后的复核；不把整个手动运行改为 automatic。
+
+模型工具另传 feedback_id，目标 run 从本次 replan 授权绑定；只允许 assign/wait/review/resolve。每个处置有独立反馈 revision；重复请求不增加事件，同键异参拒绝。返回来源、source_current、category/summary/details、blocking/status/revision、处理角色/节点、验证尝试、协调会话、capability_check、history 和 graph_changes；历史区分 owner/role/system，图修改关联真实修订及采用状态。
+
+反馈状态为 open/in_progress/waiting/review/resolved/dismissed/accepted/obsolete。节点模型结束保持原 attempt/execution 终态。当前选中来源的未关闭阻塞反馈，使尚未派发的后继成为 waiting_feedback，并暂停所在循环进入下一轮；明确关联的处理节点可以执行，无关分支继续。已启动的副作用不撤回，历史来源不阻塞新的选中结果。关闭阻塞反馈后只重新评估未派发依赖，原节点不重跑。已结束运行上补充意见不会把原完成记录改成失败。
+
+automatic 运行在来源执行结束后将待处理项合并到新的 replan 协调会话；每次最多 20 项，同运行同一时间只认领一批，认领与授权创建原子提交。普通成功不唤醒协调模型。每反馈版本至多自动派发一次；处理尝试真实结束后再交回复核，沿用原 chain、预算和父 execution 关联。协调者无处置就结束、失败、取消或能力不足时，问题继续保留；不靠后台无限重试或重置预算。Owner 可核对后明确再次委托。
+
+自动交接和复核重新检查当前任命、资源、会话、Owner 与原授权；撤权/停止/取消不复活旧授权。重启时含阻塞反馈的等待运行降为 interrupted，由 Owner 核对后 resume；浏览器刷新只读持久快照。WS 继续使用 workflow_updated 和 workflow_coordination_updated 的安全身份/版本提示，不广播反馈正文或另建 Trace。
+
 ## 状态与控制
 
 运行返回 id、definition_id/revision、name、graph、runtime_version、mode、coordinator_role_id、appointment_revision、phase、status、revision、error_code、workspace_binding_id、input_text、decision_limit、used_decisions、created_at，以及 activations、attempts、loop_states。v2 cursor 返回 null；v1 仍为零基串行游标。
 
-activation 返回 id、node_id、loop_id、iteration、status、attempt_id、error_code。attempt 保留所有历史，含 id、node_id、number、activation_id、iteration、loop_id、phase、status、current、selected_in_activation、upstream_ids、retry_source_id、instruction、message/generation/execution_id、assigned_role_id、assigned_tools、waiting_resource、result、usage、created_at/ended_at。current 表示当前轮的选中尝试，selected_in_activation 表示该历史激活仍选择它。不可用的 usage 保持未知。人工/汇合/规则节点无模型执行身份。
+activation 返回 id、node_id、loop_id、iteration、status、attempt_id、error_code、current（是否为当前有效图/轮次选中的激活）。attempt 保留所有历史，含 id、node_id、number、activation_id、iteration、loop_id、phase、status、current、selected_in_activation、upstream_ids、retry_source_id、instruction、message/generation/execution_id、assigned_role_id、assigned_tools、waiting_resource、result、usage、created_at/ended_at。attempt.current 表示当前轮的选中尝试，selected_in_activation 表示该历史激活仍选择它。不可用的 usage 保持未知。人工/汇合/规则节点无模型执行身份。
 
-运行状态 queued/running/waiting/stopping/stopped/failed/interrupted/blocked/completed；激活还有 pending/active/skipped/dormant/superseded。waiting_resource 为 read/write/null，与模型排队状态分开。completed 表示 execution 结束，业务效果仍以工具事实为准。
+运行状态 queued/running/waiting/stopping/stopped/failed/interrupted/blocked/completed；waiting 可能等待人工确认或反馈处置，激活还有 pending/active/waiting_feedback/skipped/dormant/superseded。waiting_resource 为 read/write/null，与模型排队状态分开。completed 表示 execution 结束，业务效果仍以工具事实为准。
 
 `POST /runs/{run_id}/control` 总是携带 expected_revision：
 
@@ -161,4 +195,4 @@ execution_allocations 冻结每个尝试的工具、资源与授权来源；上�
 
 React Flow 负责选择、连线和位置；配置与操作在右侧工作流模块。Tab 在选中聚焦的编辑态节点后插入任务；Delete 仅删除选中连线或无连接节点。非编辑态和文本输入不触发删除。节点类型与颜色可修改；定义编辑不影响当前运行，运行图须通过明确修订入口更新。
 
-数据迁移见[数据模型](../../internal/data-model.md) 0021/0022；错误码见[注册表](../../error-codes.md)。字段校验仅返回安全的 type/loc/msg 定位，不回显 Prompt 或无效输入。
+数据迁移见[数据模型](../../internal/data-model.md) 0021–0023；错误码见[注册表](../../error-codes.md)。字段校验仅返回安全的 type/loc/msg 定位，不回显 Prompt 或无效输入。

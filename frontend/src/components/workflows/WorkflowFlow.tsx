@@ -68,7 +68,7 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge: setS
   const root = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<string | null>(null)
   const makeNodes = useCallback((): TaskNode[] => graph.nodes.map((node, index) => {
-    const activation = !editable ? visibleRun?.activations?.find(a => a.node_id === node.id && (workflow.historyGraph || !a.loop_id || a.iteration === run?.loop_states?.[a.loop_id]?.iteration)) : undefined
+    const activation = !editable ? visibleRun?.activations?.find(a => a.node_id === node.id && (workflow.historyGraph || (a.current ?? (!a.loop_id || a.iteration === run?.loop_states?.[a.loop_id]?.iteration)))) : undefined
     const attempt = !editable ? visibleRun?.attempts.find(a => a.node_id === node.id && a.current) : undefined
     return {
       id: node.id, type: 'task', position: node.position ?? defaultPosition(index), selected: selected === node.id,

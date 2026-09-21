@@ -275,14 +275,16 @@ Context schema 5兼容增加中断事实交接，原文投影规则保持；具�
 | 普通聊天/普通 @，无任务分配 | 无图管理工具 |
 | 明确 design 协调会话 | workflow_read_graph、workflow_write_graph、workflow_edit_graph |
 | 明确 execute 协调会话 | design 工具及 workflow_start |
-| 明确 replan 协调会话 | design 工具及 workflow_inspect_run、workflow_control |
-| 普通工作/判断节点 | 仅确有结果契约时获得 workflow_result，不继承管理权 |
+| 明确 replan 协调会话 | design 工具及 workflow_inspect_run、workflow_control、workflow_feedback_update |
+| 新派发 v2 工作/判断节点 | workflow_result（可选反馈）；没有结果契约时不强制报告，不继承管理权 |
 | 旧固定图 plan / summary | 显式保留 workflow_plan / workflow_summary 兼容，不代表读图/改图 |
 | 未知职责、无归属或已失效分配 | 无工具权限 |
 
 所有控制工具默认 dangerous，在 Owner 的具体请求内授予；工具参数没有 Owner、conversation 或任意目标覆盖字段。每次调用与提交复核当前任命、成员、角色、资源、执行及精确目标；执行结束后的旧对象不能继续修改。独立规划 allocation 没有伪造 attempt，原生工具集合为空，图管理不会顺带授予工作区访问。
 
 `workflow_result` schema 由 result_keys/result_schema 与条件来源推导，ContextBuilder 与实际工厂相同。非法结果不持久化，允许模型在剩余额度内修正；同结果重复报告幂等，合法报告的修正使用 expected_result_revision/result_revision 防止并发覆盖。已结束/已消费的结果不接受旧执行覆盖。工作节点恰好采用协调者角色时仍按自身分配处理。
+
+反馈与结果原子提交，来源由真实执行绑定。授权 automatic 的运行或 Owner 明确委托的具体反馈会建立新的 replan 授权，工作角色不会因上报意见获得图工具。普通成功不多调用协调模型；重复扫描不重复计费，处理实际结束后才触发复核。处置工具不能代签人工核验或接受遗留；模型 resolve 必须引用关联处理激活中真实完成、仍选中的验证尝试。自动协调和处理任务通过既有 parent_execution_id 与反馈来源/协调执行关联，仍共享原 chain 和预算；具体契约见[节点反馈](../public/rest/workflows.md#节点反馈与处置)。
 
 协调上下文提供明确会话、模式、目标及能力，实际成员工具说明由 read_graph 返回；不从普通历史混入协调者其他任务的私有中断事实。inspect_run 仅提供原执行最小文件证据与准确引用，不解密展示文件正文，也不声称当前文件版本已核对。模型委托重试须先 inspect_run；写入证据缺失、过期或 prepared 时交回 Owner 核对，不能自称已确认未知副作用。
 

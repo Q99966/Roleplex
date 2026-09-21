@@ -7,6 +7,7 @@ from ..db import SessionLocal
 from ..models import ExecutionAllocation
 from ..agent.tools import guard_tools, REJECTED_OUTPUT_PREFIX
 from . import graph_schemas as schemas
+from .feedback_schemas import FeedbackToolUpdate, FeedbackUpdate
 
 DESCRIPTIONS={
     'workflow_read_graph':'读取本次授权目标的完整图、图版本、合法成员及工具说明、编译问题、保护约束和运行可编辑范围。省略 node_ids 得到完整图；部分读图不能作为整图覆盖依据。graph_revision 可读取历史，历史本身不可改写。',
@@ -15,10 +16,12 @@ DESCRIPTIONS={
     'workflow_inspect_run':'观察授权运行的真实节点、轮次、尝试、图版本、上游引用、错误和结构化结果。状态不代表副作用已回滚，不能依据正文猜测文件修改。用于本次运行重规划，不可任意查询其他运行。',
     'workflow_start':'在 Owner 已授予的启动范围内启动当前定义；先确保图可执行且指定所有任务角色，携带准确图版本。复用本次协调链和已消耗预算，重复调用不多建运行。仅设计请求没有此工具。',
     'workflow_control':'在本次明确授权运行内停止、继续或核对事实后重试准确尝试，使用 inspect_run 的最新进度 revision。不能代替人工确认、审批工具或隐式续额；图修改与运行控制分开。',
+    'workflow_feedback_update':'处置本运行反馈。先 inspect_run 读取原意见及 feedback.revision；需要任务时先用 edit_graph 新增或调整未派发节点，再 assign 关联角色和节点。节点应通过 workflow_result 报告 feedback_resolved 布尔值。resolve 必须引用该处置节点真实完成的验证尝试，不能把新增节点、工具成功或文字承诺当作已解决；缺少能力时 wait 并说明需要的人类操作。不得代签人工确认或接受遗留。',
 }
 SCHEMAS={'workflow_read_graph':schemas.ReadGraph,'workflow_write_graph':schemas.WriteGraph,
     'workflow_edit_graph':schemas.EditGraph,'workflow_inspect_run':schemas.InspectRun,
-    'workflow_start':schemas.StartGraph,'workflow_control':schemas.ManageRun}
+    'workflow_start':schemas.StartGraph,'workflow_control':schemas.ManageRun,
+    'workflow_feedback_update':FeedbackToolUpdate}
 
 
 def specs(names):
@@ -67,7 +70,11 @@ async def invoke(execution_id,name,body):
             from .engine import start
             from .schemas import Start
             result=await start(cid,uid,Start(definition_id=tid,expected_revision=payload.expected_graph_revision,
-                request_key='coord-'+grant.id,input_text=grant.goal,mode='coordinated'),manager_execution_id=execution_id)
+                request_key='coord-'+grant.id,input_text=grant.goal,mode='coordinated',feedback_mode=grant.feedback_mode),manager_execution_id=execution_id)
+        elif name=='workflow_feedback_update':
+            from .feedback import update
+            result=await update(cid,uid,grant.run_id,payload.feedback_id,
+                FeedbackUpdate(**payload.model_dump(exclude={'feedback_id'})),execution_id=execution_id)
         else:
             from .schemas import Control
             result=await service.control(cid,uid,grant.run_id,Control(**payload.model_dump()),manager_execution_id=execution_id)

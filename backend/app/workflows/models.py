@@ -131,6 +131,8 @@ class CoordinationSession(Base):
     request_key: Mapped[str] = mapped_column(String(64), nullable=False)
     request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     constraints_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    feedback_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default='[]')
+    feedback_mode: Mapped[str] = mapped_column(String(16), nullable=False, default='manual', server_default='manual')
     workspace_binding_id: Mapped[int | None] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -159,3 +161,58 @@ class WorkflowGraphRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     __table_args__ = (UniqueConstraint('target_key', 'number', name='uq_workflow_graph_number'),
         UniqueConstraint('target_key', 'mutation_key', name='uq_workflow_graph_mutation'),)
+
+
+class WorkflowFeedback(Base):
+    """来源不可改写的节点意见；处置状态与实际执行终态分别维护。"""
+    __tablename__ = 'workflow_feedback'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey('workflow_runs.id', ondelete='CASCADE'), nullable=False)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey('workflow_attempts.id', ondelete='CASCADE'), nullable=False)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    actor_execution_id: Mapped[str | None] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='SET NULL'))
+    source_role_id: Mapped[int | None] = mapped_column(ForeignKey('roles.id', ondelete='SET NULL'))
+    graph_revision: Mapped[int | None] = mapped_column(Integer)
+    source_result_revision: Mapped[int | None] = mapped_column(Integer)
+    node_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(24), nullable=False)
+    summary: Mapped[str] = mapped_column(String(240), nullable=False)
+    details: Mapped[str] = mapped_column(Text, nullable=False)
+    blocking: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    requested_tools: Mapped[list] = mapped_column(JSON, nullable=False)
+    capability_check: Mapped[dict] = mapped_column(JSON, nullable=False)
+    suggested_role_id: Mapped[int | None] = mapped_column(ForeignKey('roles.id', ondelete='SET NULL'))
+    handler_role_id: Mapped[int | None] = mapped_column(ForeignKey('roles.id', ondelete='SET NULL'))
+    handler_node_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    handler_activation_ids: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    verification_attempt_id: Mapped[str | None] = mapped_column(ForeignKey('workflow_attempts.id', ondelete='SET NULL'))
+    coordination_session_id: Mapped[str | None] = mapped_column(ForeignKey('coordination_sessions.id', ondelete='SET NULL'))
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_dispatch_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
+    coordination_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='0')
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint('attempt_id', 'request_key', name='uq_workflow_feedback_request'),
+                     Index('ix_workflow_feedback_run_status', 'run_id', 'status'))
+
+
+class WorkflowFeedbackEvent(Base):
+    """追加的反馈处置事实，原意见、人工核验与模型处置可独立追查。"""
+    __tablename__ = 'workflow_feedback_events'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    feedback_id: Mapped[str] = mapped_column(ForeignKey('workflow_feedback.id', ondelete='CASCADE'), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    actor_execution_id: Mapped[str | None] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='SET NULL'))
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint('feedback_id', 'revision', name='uq_feedback_event_revision'),
+                     UniqueConstraint('feedback_id', 'request_key', name='uq_feedback_event_request'))

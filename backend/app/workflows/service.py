@@ -139,6 +139,7 @@ async def run_json(session, run):
     budget = await session.get(WorkflowBudget, run.chain_id)
     from ..models import WorkflowGraphRevision
     graph_versions=(await session.scalars(select(WorkflowGraphRevision).where(WorkflowGraphRevision.run_id==run.id).order_by(WorkflowGraphRevision.number))).all()
+    from .feedback import for_run
     return {'id': run.id, 'chain_id':run.chain_id, 'definition_id': run.definition_id, 'definition_revision': run.definition_revision,
         'name': run.snapshot['name'], 'graph': {k: run.snapshot[k] for k in ('nodes', 'edges', 'runtime_version', 'entries', 'edge_rules', 'loops', 'concurrency') if k in run.snapshot},
         'constraints':run.snapshot.get('constraints',{}),'graph_revision':run.graph_revision,'latest_graph_revision':graph_versions[-1].number if graph_versions else None,
@@ -148,9 +149,11 @@ async def run_json(session, run):
         'coordinator_role_id': run.snapshot.get('coordinator_role_id'), 'appointment_revision': run.snapshot.get('appointment_revision'),
         'loop_states': run.state_json.get('loops', {}), 'phase': run.state_json.get('phase', 'work'),
         'activations': [{'id': row.id, 'node_id': row.node_id, 'iteration': row.iteration, 'loop_id': row.loop_id, 'status': row.status,
+            'current': current_activation_map.get(row.node_id) is row,
             'attempt_id': row.selected_attempt_id, 'graph_revision':row.graph_revision,'error_code': row.error_code} for row in activations.values()],
         'status': run.status, 'revision': run.revision, 'cursor': run.cursor if run.runtime_version == 1 else None, 'error_code': run.error_code,
         'workspace_binding_id': run.workspace_binding_id, 'input_text': run.input_text, 'attempts': result,
+        'feedback': await for_run(session, run), 'feedback_mode': run.snapshot.get('feedback_mode', 'manual'),
         'decision_limit': budget.decision_limit if budget else None,
         'used_decisions': budget.used_decisions if budget else None, 'created_at': run.created_at}
 
@@ -187,6 +190,8 @@ async def save(cid, uid, did, payload: Save):
 
 async def start(cid, uid, payload: Start):
     """启动键按会话唯一，运行与预算、触发消息同事务保存。"""
+    if payload.feedback_mode == 'automatic' and payload.mode != 'coordinated':
+        reject('WORKFLOW_FEEDBACK_COORDINATOR_REQUIRED', 422)
     async with SessionLocal() as inspect:
         definition = await inspect.get(WorkflowDefinition, payload.definition_id)
         v2 = payload.mode == 'coordinated' or (definition is not None and definition.graph.get('runtime_version') == 2)
@@ -196,7 +201,7 @@ async def start(cid, uid, payload: Start):
     async with control_lock:
         async with SessionLocal() as session:
             conv = await owned(session, cid, uid)
-            digest = hashlib.sha256(payload.model_dump_json().encode()).hexdigest()
+            digest = hashlib.sha256(payload.model_dump_json(exclude={'feedback_mode'} if payload.feedback_mode == 'manual' else set()).encode()).hexdigest()
             existing = await session.scalar(select(WorkflowRun).where(WorkflowRun.conversation_id == cid,
                 WorkflowRun.request_key == payload.request_key))
             if existing:
@@ -531,6 +536,8 @@ async def coordinate():
         try:
             from .planning import advance_all
             await advance_all()
+            from .feedback import dispatch_pending
+            await dispatch_pending()
             async with SessionLocal() as session:
                 ids = list((await session.scalars(select(WorkflowRun.id).where(WorkflowRun.status.in_(ACTIVE)))).all())
             for rid in ids:

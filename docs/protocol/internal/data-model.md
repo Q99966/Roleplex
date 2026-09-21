@@ -545,3 +545,13 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 - `execution_allocations.attempt_id` 改为可空，新增 coordination_session_id 与 control_tools_json。真实归属为工作尝试或独立协调会话；执行层拒绝缺失/未知归属。authority_json 保存明确 Owner、角色、phase 或目标作用域、结果契约/任命版本、完整读版本与必要观察记录。0021 只为已知旧 phase 迁移控制能力，未知职责保持空集合。
 
 图正文、任务、修改差异和结果属于 Owner 业务数据；日志只记录允许的修改身份、版本与计数。前端状态恢复读取这些持久记录，模型不能直接写执行状态或修改来源身份。迁移均使用通用 ORM 类型，SQLite 重放/一致性/降级与 PostgreSQL 离线 SQL 入口见测试指南。
+
+### 节点反馈与处置记录（0023）
+
+- `workflow_feedback`：id；run_id/attempt_id 外键（级联删除）；actor_user_id、可空 actor_execution_id/source_role_id；来源 graph_revision/source_result_revision/node_id；category、summary、details、blocking；requested_tools/capability_check JSON；可空 suggested_role_id/handler_role_id、handler_node_ids/handler_activation_ids JSON；可空 verification_attempt_id/coordination_session_id；status/revision、last_dispatch_revision、coordination_requested；request_key/request_digest、created_at/updated_at。唯一(attempt_id,request_key)，索引(run_id,status)。原意见内容和来源不修改，处置状态及精确关联随 revision 更新。
+- `workflow_feedback_events`：id、feedback_id 外键（级联删除）、revision、action/status/reason、actor_user_id/可空 actor_execution_id、request_key/request_digest、data_json、created_at。唯一(feedback_id,revision)和(feedback_id,request_key)。data_json 保存 owner/role/system 操作身份、精确处理/验证/图版本关联；事件只追加，不把业务意见写到日志。
+- `coordination_sessions` 新增 feedback_ids_json（缺省 []）和 feedback_mode（缺省 manual）。反馈认领与新的会话、execution、allocation 和 QueueJob 在同一事务创建；last_dispatch_revision 防止重复扫描重新派发。复核使用原任命及原 WorkflowBudget；coordination_requested 表示 Owner 明确委托或这次委托的验证后复核，不给整个运行增加自动管理范围。
+- `workflow_runs.snapshot.feedback_mode` 冻结本次 manual/automatic 选择；旧快照缺省 manual。activation 新增 waiting_feedback 状态，保留来源 completed/failed 等实际终态。关联反馈的 handler activation 与验证 attempt 精确对应，不从同角色最近一条消息推断。
+- `workflow_attempts.result_json` 可含 feedback_ids 和 feedback_digest；原始意见在反馈表，原消息/文件效果与 Trace 不复制。图变更从原协调 execution 或 assign 的图版本关联读取，显示实际 applied/pending 等状态。
+
+0023 使用通用 JSON、Boolean 和日期类型，提供升级/降级。权限、状态、自动派发及重启语义见[工作流协议](../public/rest/workflows.md#节点反馈与处置)；SQLite 迁移重放与 PostgreSQL 离线 SQL 验证不等于 PostgreSQL 实例运行验收。

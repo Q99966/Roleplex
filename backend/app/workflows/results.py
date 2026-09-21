@@ -1,6 +1,7 @@
 """每节点结果契约同时驱动工具 schema 和提交验证，不靠正文推断类型。"""
 from pydantic import BaseModel, ConfigDict, Field, create_model, StrictBool, StrictInt, StrictFloat, StrictStr
 from .schemas import Scalar
+from .feedback_schemas import FeedbackItem
 
 TYPES={'boolean':StrictBool,'integer':StrictInt,'number':StrictInt|StrictFloat,'string':StrictStr,'null':type(None)}
 
@@ -36,4 +37,5 @@ def schema(fields):
     return create_model('WorkflowNodeResult',__config__=ConfigDict(extra='forbid',allow_inf_nan=False),
         expected_result_revision=(StrictInt|None,Field(default=None,ge=0,description='首次报告可省略或传 0；修正已接受但尚未交接的报告，必须传上次工具返回的 result_revision。')) ,
         values=(values,Field(description='结构化字段；条件只消费这些值，不读取正文中的“通过”。可附加其他标量依据。')),
-        summary=(str,Field(default='',description='简述判断依据；不能伪造文件操作或上游结果。')))
+        summary=(str,Field(default='',description='简述判断依据；不能伪造文件操作或上游结果。')),
+        feedback=(list[FeedbackItem],Field(default_factory=list,max_length=20,description='需要后续处置的意见；按实现、契约、能力缺口、未验证或建议分类。没有问题传空列表，不为正常完成制造反馈。')))

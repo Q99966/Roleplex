@@ -99,6 +99,7 @@ class Start(Strict):
     request_key: str = Field(min_length=1, max_length=64)
     input_text: str = ''
     mode: Literal['manual', 'coordinated'] = 'manual'
+    feedback_mode: Literal['manual', 'automatic'] = Field(default='manual', description='协调执行可授权自动处置节点反馈；使用原链预算，不扩大成员或工具权限。')
 
 
 class Control(Strict):

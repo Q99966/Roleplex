@@ -193,6 +193,8 @@ class Coordinate(Strict):
     expected_graph_revision: int | None = Field(default=None, ge=0)
     continue_session_id: str | None = None
     protected_nodes: list[str] | None = Field(default=None, description='Owner 明确固定的节点及其连接/循环结构；发送前展示保护范围。')
+    feedback_mode: Literal['manual','automatic'] = 'manual'
+    feedback_ids: list[str] = Field(default_factory=list, max_length=20, description='重规划时明确处理的本运行反馈；后端核对来源和状态。')
 
 
 class CancelCoordination(Strict):

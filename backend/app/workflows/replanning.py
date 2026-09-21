@@ -28,7 +28,7 @@ async def edit_scope(session,run):
     rows=list((await session.scalars(select(WorkflowActivation).where(WorkflowActivation.run_id==run.id))).all())
     current=current_activations(run,rows)
     return {'effective_graph_revision':run.graph_revision,'pending_graph_revision':run.state_json.get('pending_graph_revision'),
-        'frozen_nodes':[nid for nid,a in current.items() if not nid.startswith('__') and a.status not in ('pending','skipped','dormant')],
+        'frozen_nodes':[nid for nid,a in current.items() if not nid.startswith('__') and a.status not in ('pending','waiting_feedback','skipped','dormant')],
         'future_loop_ids':[l['id'] for l in run.snapshot.get('loops',[]) if not run.state_json['loops'][l['id']].get('exited')],
         'rules':'已派发/等待确认/已处理节点的内容和入边保持冻结；可新增后继。活动循环修改在未来轮次边界采用。'}
 
@@ -44,17 +44,27 @@ async def prepare(session,run,before,after):
     rows=list((await session.scalars(select(WorkflowActivation).where(WorkflowActivation.run_id==run.id))).all())
     current=current_activations(run,rows)
     changed_loops=loop_changes(effective,after)
+    from .feedback import blockers
+    _, feedback_loops, _ = await blockers(session, run, current)
+    new_loops = {loop['id']: loop for loop in after.get('loops', [])}
     deferred=set()
     for loop in effective.get('loops',[]):
-        started=any(current.get(n) and current[n].status not in ('pending','dormant','skipped') for n in loop['body'])
+        started=any(current.get(n) and current[n].status not in ('pending','waiting_feedback','dormant','skipped') for n in loop['body'])
         if loop['id'] in changed_loops and started:
+            if loop['id'] in feedback_loops:
+                proposed = new_loops.get(loop['id'], {})
+                # 反馈已挡住本轮交接，不能再把处置节点延迟到下一轮造成互等。
+                # 保持循环边界，只调整未派发区域；下方仍逐项冻结已有执行及其入边。
+                if {k:v for k,v in loop.items() if k != 'body'} != {k:v for k,v in proposed.items() if k != 'body'}:
+                    problem('WORKFLOW_FEEDBACK_LOOP_BOUNDARY', fields=['loops', loop['id']])
+                continue
             if run.state_json['loops'][loop['id']].get('exited'): problem('WORKFLOW_GRAPH_FROZEN',fields=['loops',loop['id']])
             if any(current.get(n) and current[n].status in ('failed','blocked','stopped','interrupted') for n in loop['body']):
                 problem('WORKFLOW_RETRY_REVIEW_REQUIRED',fields=['loops',loop['id']])
             deferred.add(loop['id'])
     old_nodes={n['id']:n for n in effective['nodes']};new_nodes={n['id']:n for n in after['nodes']}
     for nid,activation in current.items():
-        if nid.startswith('__') or activation.status in ('pending','dormant','skipped'): continue
+        if nid.startswith('__') or activation.status in ('pending','waiting_feedback','dormant','skipped'): continue
         if activation.loop_id in deferred: continue
         incoming=lambda graph:sorted(e for e in graph['edges'] if e[1]==nid)
         if (nid not in new_nodes or structure(old_nodes[nid])!=structure(new_nodes[nid]) or incoming(effective)!=incoming(after)
@@ -109,10 +119,10 @@ async def apply_version(session,run,version,prepared,*,advance_loops=None):
         modified=nid in old_nodes and structure(node)!=structure(old_nodes[nid])
         # 当前循环整体进入新轮；从被移除循环转为普通节点时，仅显式改变的任务创建新激活。
         retired_changed=bool(prior and prior.loop_id in advance_loops and not lid and modified)
-        if prior and prior.status not in ('pending','dormant','skipped') and not advanced and not retired_changed:
+        if prior and prior.status not in ('pending','waiting_feedback','dormant','skipped') and not advanced and not retired_changed:
             state['activation_selection'][nid]=prior.id
             continue
-        if prior and prior.status in ('pending','skipped','dormant') and not advanced:
+        if prior and prior.status in ('pending','waiting_feedback','skipped','dormant') and not advanced:
             if prior.selected_attempt_id:
                 attempt=await session.get(WorkflowAttempt,prior.selected_attempt_id)
                 if attempt and attempt.execution_id: problem('WORKFLOW_GRAPH_FROZEN',node_id=nid)
@@ -124,7 +134,7 @@ async def apply_version(session,run,version,prepared,*,advance_loops=None):
     for nid,a in current.items():
         if nid not in new_nodes and not nid.startswith('__'):
             state['activation_selection'].pop(nid,None)
-            if a.status in ('pending','skipped','dormant'):
+            if a.status in ('pending','waiting_feedback','skipped','dormant'):
                 a.status='superseded'
                 if a.selected_attempt_id:
                     attempt=await session.get(WorkflowAttempt,a.selected_attempt_id)

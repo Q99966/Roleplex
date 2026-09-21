@@ -7,6 +7,7 @@ import { MessageParts } from '../MessageParts'
 import { NodeRuntimeSettings } from './NodeRuntimeSettings'
 import { nodeColor, upstreamNodes } from './workflow-layout'
 import { useWorkflow, statusLabel } from './WorkflowContext'
+import { FeedbackReportForm } from './WorkflowFeedback'
 
 const WorkflowFlow = lazy(() => import('./WorkflowFlow').then(module => ({ default: module.WorkflowFlow })))
 
@@ -157,7 +158,7 @@ function AttemptDetails({ attempt, onClose }: { attempt: WorkflowAttempt; onClos
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label="节点尝试详情" className="max-h-full w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-700 bg-panel p-4 outline-none" onKeyDown={e => {
       if (e.key === 'Escape') { e.stopPropagation(); onClose() }
       if (e.key === 'Tab') {
-        const items = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea,[tabindex="0"]') ?? []).filter(n => n.getClientRects().length)
+        const items = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea,summary,[tabindex="0"]') ?? []).filter(n => n.getClientRects().length)
         const first = items[0], last = items.at(-1)
         if (e.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { e.preventDefault(); last?.focus() }
         else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { e.preventDefault(); first?.focus() }
@@ -172,6 +173,7 @@ function AttemptDetails({ attempt, onClose }: { attempt: WorkflowAttempt; onClos
       {w.error && <p role="alert" className="text-xs text-red-500">{w.error}</p>}
       {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
       {facts && <details open className="my-3 text-xs"><summary>服务器核对事实</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-slate-950 p-3">{facts}</pre></details>}
+      {w.run?.runtime_version === 2 && !attempt.node_id.startsWith('__') && <FeedbackReportForm attempt={attempt} />}
       {terminal && (attempt.current || attempt.selected_in_activation) && <div className="space-y-3 border-t border-slate-700 pt-3 text-xs">
         <label className="block">本次修订要求<textarea className={field} value={instruction} onChange={e => setInstruction(e.target.value)} /></label>
         <label className="flex gap-2"><input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} />我已核对本次结果；未知副作用不作为自动重放依据</label>

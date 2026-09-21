@@ -478,3 +478,11 @@ rg 'generation.created|provider.call_started|provider.call_completed|generation.
 
 后端：在 `backend/` 运行 `python -m pytest tests/test_workflow_draft_scope.py -q`，检查分区稳定性、会话隔离、无缓存及 Owner/Guest 权限。
 浏览器：在 `frontend/` 运行 `npm run test:e2e:commands -- workflow-drafts.spec.ts workflow-node-editing.spec.ts`，使用隔离 World 与 fake Provider，覆盖输入后立即刷新、节点/颜色/补充要求恢复、远端版本冲突、显式保存后的干净状态、多标签页独立副本、存储不可用与下载备份、运行图目标恢复、损坏副本降级、手动恢复时保留当前编辑、同一 Owner 重新登录恢复及原节点编辑操作。此命令不验证操作系统强杀浏览器时的写入完成保证，也不验证真实 Windows 浏览器的崩溃恢复。
+
+### 工作流反馈与局部处置
+
+后端（backend/）：`python -m pytest tests/test_workflow_feedback.py tests/test_graph_control.py tests/test_orchestrator.py -q --tb=short --show-capture=no`。反馈用例覆盖来源及结果原子提交、重复请求/并发版本、Guest/跨运行拒绝、无关分支继续、契约裁定/实现修复/能力缺口/未验证分类、循环内局部补图、真实完成后复核、停止/撤权/取消竞态及重启后人工继续。迁移检查 `python scripts/check_migrations.py` 包含 0023。
+
+浏览器（frontend/）：`npm run test:e2e:commands -- workflow-feedback.spec.ts graph-control.spec.ts`，实际前后端和 fake Provider 验证从节点反馈来源到人工委托、局部改图、验证关闭、补充反馈、版本竞争，以及启动时的明确自动授权。受控截图通过既有日志 reporter 保留。
+
+真实入口：`npm run test:e2e:real-world -- workflow-feedback-provider.spec.ts`，会联网计费。复用既有真实 World、后端凭据和保留规则；用例工作区位于本轮 `workflow-feedback` 子目录。只预置受控冲突文件、角色与来源流程，反馈、图修改、处理执行和复核都必须走真实模型工具。截图/trace/video 关闭，失败只记录安全阶段；实际记录和覆盖边界见[反馈验收](workflow-feedback.md)。

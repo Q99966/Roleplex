@@ -5,6 +5,7 @@ import { WorkflowSettings } from './WorkflowSettings'
 import { lazy, Suspense } from 'react'
 const GraphManagement = lazy(() => import('./GraphManagement').then(module => ({ default: module.GraphManagement })))
 import { WorkflowLinks } from './WorkflowLinks'
+import { WorkflowFeedbackPanel } from './WorkflowFeedback'
 
 const button = 'rounded-lg border border-slate-700 bg-panel px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-40'
 const field = 'mt-1 w-full min-w-0 rounded-lg border border-slate-700 bg-panel p-2 text-sm text-slate-200'
@@ -62,6 +63,8 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
       </div>
       {w.conversation.type === 'group' && <div className="space-y-2 border-t border-slate-700 pt-3">
         <p className="text-slate-500">群协调者：{appointed ? coordinator?.name ?? '角色不可用' : '尚未任命，请到成员模块设置'}</p>
+        <label className="flex gap-2"><input type="checkbox" checked={w.automaticFeedback} onChange={e => w.setAutomaticFeedback(e.target.checked)} />协调执行时自动处理节点反馈</label>
+        {w.automaticFeedback && <p className="text-slate-500">允许协调者在本次授权内局部调整运行图并安排验证，沿用原决策预算。</p>}
         <button type="button" disabled={!appointed || w.busy || w.conflict || Boolean(w.draft.runTarget) || (!w.draft.definition.revision && !w.draft.input.trim())} className={button} onClick={() => void (async () => {
           if (await w.start('coordinated')) { w.setOpen(true); onExpand() }
         })()}>协调执行</button>
@@ -71,7 +74,7 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
       </div>}
       {w.run && <button type="button" onClick={() => w.setMode('run')} className="text-indigo-500">查看运行</button>}
     </section> : w.run && <section aria-label="工作流运行操作" className="space-y-3 rounded-2xl border border-slate-800 bg-panel p-4">
-      <p role="status">{statusLabel(w.run.status)} · 定义快照 v{w.run.definition_revision}</p>
+      <p role="status">{w.run.status === 'waiting' && !w.run.activations?.some(a => a.status === 'waiting') ? '等待反馈处置' : statusLabel(w.run.status)} · 定义快照 v{w.run.definition_revision}</p>
       <p className="text-slate-500">{w.run.runtime_version === 2 ? `活跃节点 ${w.run.activations?.filter(a => a.status === 'active').length ?? 0}` : `步骤 ${Math.min((w.run.cursor ?? 0) + 1, w.run.graph.nodes.length)} / ${w.run.graph.nodes.length}`} · 决策 {w.run.used_decisions ?? '未知'} / {w.run.decision_limit ?? '不限'}</p>
       <p className="text-slate-500">工作区：{workspaceName}</p>
       {w.run.runtime_version === 2 && <div className="space-y-2">
@@ -98,6 +101,7 @@ export function WorkflowModule({ onExpand, drawer }: { onExpand: () => void; dra
       {!w.open && <button type="button" onClick={() => { w.setOpen(true); onExpand() }} className="text-indigo-500">查看运行画布</button>}
     </section>}
 
+    {w.mode === 'run' && <WorkflowFeedbackPanel />}
     {w.graphNotice && <p role="status" className="text-slate-500">{w.graphNotice}</p>}
     {w.error && <p role="alert" className="text-red-500">{w.error}</p>}
     <Suspense fallback={<p className="text-slate-500">读取图管理记录…</p>}><GraphManagement /></Suspense>

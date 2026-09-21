@@ -6,6 +6,13 @@ import { useAppStore } from '../../store/app'
 
 import { DraftWriter, readLocalDrafts, deleteLocalDraft, type Draft, type LocalDraft, type DraftStatus } from './local-drafts'
 const errorText: Record<string, string> = {
+  WORKFLOW_FEEDBACK_REVISION_CONFLICT: '反馈已被其他操作更新，请查看最新处置记录后再提交。',
+  WORKFLOW_FEEDBACK_REQUEST_CONFLICT: '这次提交与原请求不一致，请核对已经保存的反馈。',
+  WORKFLOW_FEEDBACK_EVIDENCE_REQUIRED: '解决反馈需要实际完成的验证尝试，或 Owner 明确记录人工核验。',
+  WORKFLOW_FEEDBACK_HANDLER_REQUIRED: '请选择本次运行中尚未派发、且由所选角色执行的处理节点。',
+  WORKFLOW_FEEDBACK_STATE_CONFLICT: '反馈状态已改变，请查看记录后重新选择处置。',
+  WORKFLOW_FEEDBACK_COORDINATION_ACTIVE: '协调者正在处理本次运行，请等待当前处置结束。',
+  WORKFLOW_FEEDBACK_LOOP_BOUNDARY: '反馈正在阻塞本轮循环，请保持入口、判断和出口，先在未派发区域补充处置节点。',
   WORKFLOW_GRAPH_REVISION_CONFLICT: '图已被其他编辑更新。本地草稿已保留，请核对版本差异。',
   WORKFLOW_GRAPH_FROZEN: '修改涉及已派发的节点或已生效依赖，请保留这些内容，或先停止并核对结果。',
   WORKFLOW_GRAPH_SCOPE: '本次请求没有该目标或操作的授权。',
@@ -53,6 +60,7 @@ function useController(conversation: Conversation) {
   const [historyGraph, setHistoryGraph] = useState<{ runId: string; revision: number; graph: WorkflowGraph } | null>(null)
   const [protectedNodes, setProtectedNodesState] = useState<string[]>([])
   const [protectionEdited, setProtectionEdited] = useState(false)
+  const [automaticFeedback, setAutomaticFeedback] = useState(false)
   const [coordinationId, setCoordinationId] = useState<string | null>(null)
   const coordinationRequests = useRef(new Map<string, string>())
   const historyRequest = useRef(0)
@@ -228,6 +236,7 @@ function useController(conversation: Conversation) {
       const targetRun = intent === 'replan' ? run ?? data.runs.find(r => r.id === draft.runTarget) : null
       if (intent === 'replan' && !targetRun) throw new Error('missing run')
       const body: Omit<CoordinateRequest, 'request_key'> = { role_id: roleId, mode: intent, goal,
+        feedback_mode: intent === 'execute' && automaticFeedback ? 'automatic' : 'manual',
         ...(targetRun ? { run_id: targetRun.id, definition_id: targetRun.definition_id, expected_graph_revision: targetRun.latest_graph_revision ?? 0 }
           : chosen?.revision ? { definition_id: chosen.id, expected_graph_revision: chosen.revision } : {}) }
       if (targetRun && protectionEdited) body.protected_nodes = protectedNodes.filter(id => targetRun.graph.nodes.some(n => n.id === id))
@@ -259,6 +268,14 @@ function useController(conversation: Conversation) {
   }
   async function cancelCoordination(value: Coordination) {
     return perform(async () => { await workflows.cancelCoordination(conversation.id, value) })
+  }
+  async function reportFeedback(body: Parameters<typeof workflows.reportFeedback>[2]) {
+    if (!run) return false
+    return perform(async () => { await workflows.reportFeedback(conversation.id, run.id, body) })
+  }
+  async function updateFeedback(fid: string, body: Parameters<typeof workflows.updateFeedback>[3]) {
+    if (!run) return false
+    return perform(async () => { await workflows.updateFeedback(conversation.id, run.id, fid, body) })
   }
   async function selectHistory(revision: string) {
     const ticket = ++historyRequest.current
@@ -333,7 +350,7 @@ function useController(conversation: Conversation) {
   return { localReady, localStatus, localNotice, localCopies, retryLocal, exportLocal, restoreLocal, removeLocal, protectedNodes, setProtectedNodes: (values: string[]) => { setProtectedNodesState(values); setProtectionEdited(true) }, conflict, remoteDefinition, remoteRun, acceptRemote, forkDraft, coordinate, cancelCoordination, editRun, historyGraph, selectHistory, coordinationId, detailAttempt, selectAttempt: setDetailAttempt, conversation, draft, data, run, graph, selected, selectedEdge, graphNotice, addNode, changeGraph, editDefinition,
     selectNode: (id: string | null) => { setSelected(id); if (id) setSelectedEdge('') },
     selectEdge: (id: string) => { setSelectedEdge(id); if (id) setSelected(null) }, mode, setMode, open, setOpen, busy, error, setError, refresh,
-    update, choose, save, start, control,
+    update, choose, save, start, control, automaticFeedback, setAutomaticFeedback, reportFeedback, updateFeedback,
     selectRun: (id: string) => { historyRequest.current++; setHistoryGraph(null); setCoordinationId(null); setRunId(id || null); setMode(id ? 'run' : 'edit'); setProtectedNodesState(Object.keys(data.runs.find(r => r.id === id)?.constraints?.nodes ?? {})); setProtectionEdited(false) },
     input: (input: string) => setDraft(value => ({ ...value, input, requestKey: crypto.randomUUID() })),
     newRun: () => {
@@ -352,4 +369,4 @@ export function useWorkflow() {
   if (!value) throw new Error('WorkflowProvider missing')
   return value
 }
-export const statusLabel = (status: string) => ({ pending: '待执行', queued: '排队中', running: '执行中', waiting: '等待人工确认', stopping: '正在停止', stopped: '已停止', failed: '失败', interrupted: '已中断', blocked: '受阻', skipped: '已跳过', dormant: '历史轮次', active: '执行中', completed: '本次执行结束' }[status] ?? status)
+export const statusLabel = (status: string) => ({ pending: '待执行', queued: '排队中', running: '执行中', waiting: '等待人工确认', waiting_feedback: '等待反馈处置', stopping: '正在停止', stopped: '已停止', failed: '失败', interrupted: '已中断', blocked: '受阻', skipped: '已跳过', dormant: '历史轮次', active: '执行中', completed: '本次执行结束' }[status] ?? status)

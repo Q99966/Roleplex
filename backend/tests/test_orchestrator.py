@@ -294,7 +294,7 @@ async def test_same_role_parallel_allocations_and_execution_recheck(command_root
             {'id':n, 'title':n, 'kind':'role', 'role_id':ids[0], 'task':f'allocation-{n}', 'tools':['workspace_read'] if n=='read' else []} for n in ['read','none']], 'edges':[]}
         rid = await launch(client, headers, cid, graph)
         await asyncio.wait_for(entered.wait(), 10)
-        assert bound == {'read':{'workspace_read'}, 'none':set()}
+        assert bound == {'read':{'workspace_read', 'workflow_result'}, 'none':{'workflow_result'}}
         run = await wait_state(client, headers, cid, rid, lambda r:len(r['attempts'])==2)
         read = next(a for a in run['attempts'] if a['node_id']=='read')
         none = next(a for a in run['attempts'] if a['node_id']=='none')

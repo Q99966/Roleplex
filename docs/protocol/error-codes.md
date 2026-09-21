@@ -425,3 +425,21 @@ WORKFLOW_NODE_INVALID/WORKFLOW_PATH_INVALID/WORKFLOW_INPUT_INVALID 为图 schema
 | `WORKFLOW_GRAPH_DOWNGRADE_REQUIRES_HISTORY_PRESERVATION` | 迁移拒绝 | 已有同节点同轮的多个图版本激活，不能丢弃历史以降回旧唯一约束 |
 
 兼容 PUT 仍使用 WORKFLOW_REVISION_CONFLICT；图编辑不使用运行进度 revision。独立协调授权中未知/过期写入证据不能由模型自称确认后重试，返回既有 WORKFLOW_RETRY_REVIEW_REQUIRED，交回 Owner 核对。
+
+### 工作流反馈处置
+
+| 错误码 | HTTP / 位置 | 语义 |
+|---|---|---|
+| `WORKFLOW_FEEDBACK_INVALID` | 422 / 工具拒绝 | 反馈标题或处置依据为空白，未接受记录 |
+| `WORKFLOW_FEEDBACK_NOT_FOUND` | 404 | 指定反馈不属于当前授权运行 |
+| `WORKFLOW_FEEDBACK_REQUEST_CONFLICT` | 409 | 来源/反馈请求键已用于不同内容或操作身份 |
+| `WORKFLOW_FEEDBACK_REVISION_CONFLICT` | 409 | 并发处置或自动认领版本已过期，重新读取 |
+| `WORKFLOW_FEEDBACK_STATE_CONFLICT` | 409 | 当前状态不允许本次处置或来源已过期 |
+| `WORKFLOW_FEEDBACK_OWNER_REQUIRED` | 403 / 工具拒绝 | 未授权自动处理，或模型试图人工核验、接受遗留等 Owner 操作 |
+| `WORKFLOW_FEEDBACK_HANDLER_REQUIRED` | 422 | 处理角色/节点不匹配、来源自指或节点已派发 |
+| `WORKFLOW_FEEDBACK_EVIDENCE_REQUIRED` | 422 | 缺少关联且实际完成的验证结果；已派发任务不算解决 |
+| `WORKFLOW_FEEDBACK_COORDINATOR_REQUIRED` | 422 | automatic 只能在协调执行中授权 |
+| `WORKFLOW_FEEDBACK_COORDINATION_ACTIVE` | 409 | 同运行已有活跃协调执行，不能重复认领意见 |
+| `WORKFLOW_FEEDBACK_LOOP_BOUNDARY` | 422 | 当前反馈阻塞循环交接，只能在保留循环边界的未派发区域修正 |
+
+模型工具返回固定错误与允许的定位信息，不回显意见原文；Owner API 的来源越界复用 WORKFLOW_ATTEMPT_NOT_FOUND，旧 v1 不支持反馈调度，返回 WORKFLOW_VERSION_REQUIRED。

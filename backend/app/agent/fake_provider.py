@@ -209,6 +209,69 @@ class GroupFileModel(ScriptedChatModel):
             yield chunk
 
 
+class FeedbackCoordinationModel(ScriptedChatModel):
+    """通过真实图/反馈工具完成受控的局部处置和复核，用于隔离集成验收。"""
+    prompt: str = ''
+    _graph: dict = PrivateAttr(default_factory=dict)
+    _feedback: dict = PrivateAttr(default_factory=dict)
+    _role_id: int = PrivateAttr(default=0)
+    _assigned: bool = PrivateAttr(default=False)
+
+    async def _astream(self, messages, **kwargs):
+        outputs = [m for m in messages if isinstance(m, ToolMessage)]
+        last = {}
+        if outputs:
+            try: last = json.loads(outputs[-1].content)
+            except (ValueError, TypeError): pass
+        def call(name, args):
+            return ScriptedTurn(tool_calls=[{'name': name, 'args': args, 'id': f'feedback-step-{self.index}'}])
+        if self.index == 0:
+            turn = call('workflow_read_graph', {})
+        elif self.index == 1:
+            self._graph = last
+            turn = call('workflow_inspect_run', {})
+        elif self.index == 2:
+            self._feedback = next(item for item in last['feedback'] if item['status'] not in ('resolved', 'accepted', 'dismissed', 'obsolete'))
+            item = self._feedback
+            if item['category'] in ('capability', 'unverified') and item['status'] != 'review':
+                turn = call('workflow_feedback_update', {'feedback_id': item['id'], 'expected_revision': item['revision'],
+                    'request_key': 'wait-capability', 'action': 'wait', 'reason': '当前授权不能完成所需运行验证，等待 Owner 配置能力或人工验证。'})
+            elif item['status'] == 'review':
+                turn = call('workflow_feedback_update', {'feedback_id': item['id'], 'expected_revision': item['revision'],
+                    'request_key': 'verify-feedback', 'action': 'resolve', 'reason': '已核对处理节点真实完成及结构化验证结果',
+                    'verification_attempt_id': item['verification_attempt_id']})
+            else:
+                self._assigned = True
+                self._role_id = next(r['role_id'] for r in self._graph['members'] if r['role_id'] != item['source_role_id'])
+                graph = self._graph['graph']
+                nid = 'feedback_fix_' + item['id'][:8]
+                operations = [
+                    {'op': 'add_node', 'node': {'id': nid, 'kind': 'role', 'title': '实现修复与验证' if item['category'] == 'implementation' else '契约裁定与验证',
+                        'role_id': self._role_id, 'task': '[FEEDBACK_REPAIR]', 'tools': [], 'inputs': [item['node_id']],
+                        'result_schema': {'feedback_resolved': 'boolean'}}},
+                    {'op': 'connect', 'source': item['node_id'], 'target': nid},
+                ]
+                for source, target in graph['edges']:
+                    if source == item['node_id']:
+                        operations.append({'op': 'connect', 'source': nid, 'target': target})
+                for loop in graph.get('loops', []):
+                    if item['node_id'] in loop['body']:
+                        operations.append({'op': 'upsert_loop', 'loop': {**loop, 'body': [*loop['body'], nid]}})
+                turn = call('workflow_edit_graph', {'expected_graph_revision': self._graph['graph_revision'],
+                    'mutation_key': 'feedback-local-repair', 'operations': operations})
+        elif self.index == 3 and self._assigned:
+            item = self._feedback
+            turn = call('workflow_feedback_update', {'feedback_id': item['id'], 'expected_revision': item['revision'],
+                'request_key': 'assign-feedback', 'action': 'assign', 'reason': '先裁定冲突并核对结果，再继续交付',
+                'handler_role_id': self._role_id, 'handler_node_ids': ['feedback_fix_' + item['id'][:8]]})
+        else:
+            turn = ScriptedTurn(text='本次反馈处置已提交，后续状态以实际执行结果为准。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 class GraphControlModel(ScriptedChatModel):
     """图管理 E2E：从实际读图响应构造写入/编辑/启动调用，不直接播种最终定义。"""
     prompt: str = ''
@@ -315,9 +378,24 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         delay：分片间隔秒数。
     """
     if '本次图管理授权：' in prompt:
+        meta = json.loads(prompt.split('本次图管理授权：', 1)[1].split('\n', 1)[0])
+        if meta.get('feedback_ids'):
+            return FeedbackCoordinationModel(prompt=prompt, delay=delay)
         return GraphControlModel(prompt=prompt,delay=delay)
     if any(marker in prompt for marker in ['[WF_BUILD]', '[WF_REVIEW]', '[WF_JUDGE]', '你是本群已任命协调者', '作为本群协调者']):
         return WorkflowV2Model(prompt=prompt, delay=delay)
+    if any(marker in prompt for marker in ('[FEEDBACK_REPORT]', '[FEEDBACK_REPAIR]', '[FEEDBACK_IMPLEMENTATION]', '[FEEDBACK_CAPABILITY]', '[FEEDBACK_UNVERIFIED]')):
+        repair = '[FEEDBACK_REPAIR]' in prompt
+        category = 'implementation' if '[FEEDBACK_IMPLEMENTATION]' in prompt else 'capability' if '[FEEDBACK_CAPABILITY]' in prompt else 'unverified' if '[FEEDBACK_UNVERIFIED]' in prompt else 'contract'
+        args = {'values': {'feedback_resolved': True}, 'summary': '受控契约裁定与验证完成'} if repair else {
+            'values': {'checked': True}, 'summary': '受控审查发现契约冲突',
+            'feedback': [{'request_key': 'feedback-one', 'category': category,
+                          'summary': {'contract': '两个验收数字冲突', 'implementation': '实现结果需要修正', 'capability': '缺少运行验证工具', 'unverified': '尚未完成运行验证'}[category],
+                          'details': '需要责任角色处理并核对。', 'blocking': True,
+                          'requested_tools': ['workspace_run_shell'] if category == 'capability' else []}],
+        }
+        return ScriptedChatModel(delay=delay, turns=[ScriptedTurn(tool_calls=[
+            {'name': 'workflow_result', 'args': args, 'id': 'feedback-report'}]), ScriptedTurn(text='受控节点报告已提交。')])
     if '[GROUP_FILES_FAKE]' in prompt:
         return GroupFileModel(delay=delay)
     if '[REPLACEMENTS_FAKE]' in prompt or '[REPLACEMENTS_BAD_FAKE]' in prompt:

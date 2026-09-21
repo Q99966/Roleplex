@@ -17,7 +17,7 @@ from .graph_service import digest, target, constraints_for
 ACTIVE={'queued','running','stopping'}
 DESIGN_TOOLS=['workflow_read_graph','workflow_write_graph','workflow_edit_graph']
 MODE_TOOLS={'design':DESIGN_TOOLS,'execute':[*DESIGN_TOOLS,'workflow_start'],
-    'replan':[*DESIGN_TOOLS,'workflow_inspect_run','workflow_control']}
+    'replan':[*DESIGN_TOOLS,'workflow_inspect_run','workflow_control','workflow_feedback_update']}
 
 
 async def authorized(session,execution_id,tool=None,*,check_generation=True):
@@ -60,6 +60,7 @@ async def view(session,grant):
     calls=list((await session.scalars(select(ModelCallUsage).where(ModelCallUsage.execution_id==grant.execution_id))).all()) if grant.execution_id else []
     usage={field:sum(getattr(c,field) for c in calls) if calls and all(getattr(c,field) is not None for c in calls) else None for field in ['input_tokens','output_tokens']}
     return {'id':grant.id,'definition_id':grant.definition_id,'run_id':grant.run_id,'started_run_id':grant.started_run_id,
+        'feedback_ids':grant.feedback_ids_json,'feedback_mode':grant.feedback_mode,
         'role_id':grant.role_id,'appointment_revision':grant.appointment_revision,'mode':grant.mode,'goal':grant.goal,
         'status':grant.status,'revision':grant.revision,'execution_id':grant.execution_id,'chain_id':grant.chain_id,
         'message_id':generation.assistant_message_id if generation else None,'error_code':grant.error_code,
@@ -73,14 +74,24 @@ async def changed(session,grant):
         {'coordination_id':grant.id,'status':grant.status,'revision':grant.revision},revision=grant.revision)
 
 
-async def start(cid,uid,payload):
-    """规划不要求可运行图；run 创建、继续规划和重规划复用原任务预算。"""
+async def start(cid,uid,payload,*,feedback_revisions=None):
+    """规划与反馈处置复用原任务预算，在创建授权的同一事务认领反馈。
+
+    Args:
+        cid：当前群。
+        uid：已授权 Owner。
+        payload：明确设计、执行或重规划请求。
+        feedback_revisions：后台自动调度观察到的反馈版本；不属于公开请求参数。
+    """
     async with service.control_lock,SessionLocal() as session:
         conv=await service.owned(session,cid,uid)
         from ..runtime.models import RuntimeGate
         gate=await session.get(RuntimeGate,1)
         if gate and gate.closing: service.reject('WORKFLOW_WORLD_CLOSING')
-        request_hash=digest(payload.model_dump(mode='json'))
+        request_body = payload.model_dump(mode='json')
+        if not payload.feedback_ids: request_body.pop('feedback_ids')
+        if payload.feedback_mode == 'manual': request_body.pop('feedback_mode')
+        request_hash=digest(request_body)
         existing=await session.scalar(select(CoordinationSession).where(CoordinationSession.conversation_id==cid,
             CoordinationSession.request_key==payload.request_key))
         if existing:
@@ -91,8 +102,14 @@ async def start(cid,uid,payload):
         if payload.mode=='replan' and not payload.run_id: service.reject('WORKFLOW_GRAPH_SCOPE',422)
         if payload.mode!='replan' and payload.run_id: service.reject('WORKFLOW_GRAPH_SCOPE',422)
         run=await service.get_run(session,cid,uid,payload.run_id) if payload.run_id else None
+        if payload.feedback_ids and (not run or payload.mode != 'replan'):
+            service.reject('WORKFLOW_GRAPH_SCOPE', 422)
         if run and (run.runtime_version!=2 or run.status in ('stopping','stopped')): service.reject('WORKFLOW_STATE_CONFLICT')
         if run and payload.definition_id and run.definition_id!=payload.definition_id: service.reject('WORKFLOW_GRAPH_SCOPE',403)
+        feedback_items = []
+        if payload.feedback_ids:
+            from .feedback import claimable
+            feedback_items = await claimable(session, run, payload.feedback_ids, feedback_revisions)
         previous=await session.get(CoordinationSession,payload.continue_session_id) if payload.continue_session_id else None
         if payload.continue_session_id and (not previous or previous.conversation_id!=cid or previous.owner_id!=uid): service.reject('WORKFLOW_GRAPH_SCOPE',403)
         did=run.definition_id if run else payload.definition_id or (previous.definition_id if previous else uuid4().hex)
@@ -111,6 +128,11 @@ async def start(cid,uid,payload):
         if payload.expected_graph_revision is not None and payload.expected_graph_revision!=number: service.reject('WORKFLOW_GRAPH_REVISION_CONFLICT')
         chain_id=run.chain_id if run else uuid4().hex
         parent=run.state_json.get('plan_execution_id') if run else None
+        if feedback_items:
+            from ..models import WorkflowAttempt
+            source_item = feedback_items[0]
+            source = await session.get(WorkflowAttempt, source_item.verification_attempt_id or source_item.attempt_id)
+            if source and source.execution_id: parent = source.execution_id
         inherited=run.snapshot.get('constraints',{}) if run else {}
         if previous:
             if not previous or previous.conversation_id!=cid or previous.owner_id!=uid or previous.definition_id!=did or previous.run_id!=payload.run_id:
@@ -133,6 +155,7 @@ async def start(cid,uid,payload):
             appointment_revision=conv.orchestrator_revision,definition_id=did,run_id=run.id if run else None,
             chain_id=chain_id,mode=payload.mode,goal=payload.goal,status='queued',revision=0,
             request_key=payload.request_key,request_digest=request_hash,constraints_json=constraints,
+            feedback_ids_json=[item.id for item in feedback_items], feedback_mode=payload.feedback_mode,
             workspace_binding_id=conv.workspace_binding_id,created_at=service.now())
         message=Message(conversation_id=cid,sender_type='user',sender_id=uid,
             parts_json=[{'type':'text','text':payload.goal}],mentions_json=[role.id],status='done',revision=0,
@@ -143,6 +166,13 @@ async def start(cid,uid,payload):
             from ..services.agent_budget import freeze
             await freeze(session,message)
         session.add(grant);await session.flush()
+        for item in feedback_items:
+            from .feedback import append_event
+            item.coordination_session_id = grant.id
+            item.coordination_requested = False
+            item.revision += 1; item.last_dispatch_revision = item.revision; item.updated_at = service.now()
+            await append_event(session, item, 'coordinate', '反馈已交给当前群协调者处理', uid,
+                               data={'coordination_session_id': grant.id}, actor_kind='system' if feedback_revisions is not None else 'owner')
         generation=Generation(conversation_id=cid,stream_epoch=current_epoch(),status='queued',run_id=chain_id)
         session.add(generation);await session.flush()
         execution=AgentExecution(execution_id=uuid4().hex,conversation_id=cid,generation_id=generation.id,
@@ -158,7 +188,7 @@ async def start(cid,uid,payload):
         session.add(job);await session.flush()
         from ..services.chat import message_payload
         pending=[await events.append_event(session,cid,'message_created',{'message':message_payload(message)},revision=0),await changed(session,grant)]
-        if run and payload.protected_nodes is not None: pending.append(await service.changed(session,run))
+        if run and (payload.protected_nodes is not None or feedback_items): pending.append(await service.changed(session,run))
         await session.commit();result=await view(session,grant);job_id=job.id
     await events.publish_events(*pending)
     await conversation_scheduler.enqueue_parallel(cid,job_id)
@@ -229,9 +259,11 @@ async def context(session,execution_id):
     allocation=await session.get(ExecutionAllocation,execution_id) if execution_id else None
     if not allocation or not allocation.coordination_session_id: return None
     grant=await authorized(session,execution_id)
-    return '本次为明确授权的群流程协调请求。先调用 workflow_read_graph 读取图、成员能力、约束及版本。用 workflow_write_graph 创建完整图或整体替换，用 workflow_edit_graph 按 ID 局部调整；两者独立。错误后按定位修正，修改内容换新 mutation_key；重发同一修改保持原键。保存不等于执行，只有工具列表包含 workflow_start 时才可启动；不得代签人工确认。任务需要结构化结果时设置 result_schema。保持未改节点 ID、位置和颜色。不要只用文字宣称已改图。不要持续轮询等待其他节点，提交后简短结束。\n本次图管理授权：' + json.dumps({
+    feedback_instruction = ('本次包含节点反馈。必须 inspect_run 核对原意见、真实能力和既有处置。契约冲突安排裁定，能力不足核对成员可用工具，未验证项安排验证；不要统一派开发修改。需要任务时 edit_graph 局部补图，保留原来源节点与结果，再 workflow_feedback_update assign 关联处理节点。处置节点应输出 feedback_resolved 布尔值；等该节点真实完成后会重新交回协调者复核。没有证据不能 resolve，缺少权限或需要人工决定时 wait 说明原因。不要轮询或重跑已完成来源。\n' if grant.feedback_ids_json else '')
+    return feedback_instruction + '本次为明确授权的群流程协调请求。先调用 workflow_read_graph 读取图、成员能力、约束及版本。用 workflow_write_graph 创建完整图或整体替换，用 workflow_edit_graph 按 ID 局部调整；两者独立。错误后按定位修正，修改内容换新 mutation_key；重发同一修改保持原键。保存不等于执行，只有工具列表包含 workflow_start 时才可启动；不得代签人工确认。任务需要结构化结果时设置 result_schema。保持未改节点 ID、位置和颜色。不要只用文字宣称已改图。不要持续轮询等待其他节点，提交后简短结束。\n本次图管理授权：' + json.dumps({
         'coordination_session_id':grant.id,'mode':grant.mode,'definition_id':grant.definition_id,'run_id':grant.run_id,
-        'capabilities':allocation.control_tools_json,'protected':grant.constraints_json},ensure_ascii=False)
+        'capabilities':allocation.control_tools_json,'protected':grant.constraints_json,
+        'feedback_ids':grant.feedback_ids_json},ensure_ascii=False)
 
 
 async def check_retry_evidence(session,execution_id,run,attempt):

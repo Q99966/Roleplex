@@ -533,3 +533,4 @@ class FileEffect(Base):
 from .workflows.models import WorkflowDefinition, WorkflowRun, WorkflowAttempt, WorkflowActivation, ExecutionAllocation  # noqa: E402,F401
 
 from .workflows.models import CoordinationSession, WorkflowGraphRevision
+from .workflows.models import WorkflowFeedback, WorkflowFeedbackEvent

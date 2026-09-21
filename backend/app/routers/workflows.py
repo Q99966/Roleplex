@@ -6,6 +6,7 @@ from ..security.tokens import require_owner
 from ..workflows import service
 from ..workflows.schemas import Start, Control
 from ..workflows.graph_schemas import SaveDraft, Coordinate, CancelCoordination, WriteGraph, EditGraph
+from ..workflows.feedback_schemas import CreateFeedback, FeedbackUpdate
 
 router = APIRouter(prefix='/api/conversations/{conversation_id}/workflows', tags=['workflows'])
 Owner = Annotated[User, Depends(require_owner)]
@@ -42,6 +43,30 @@ async def workflow_facts(conversation_id: int, run_id: Id, attempt_id: Id, owner
     """Owner 核对选中尝试事实，不以模型宣称替代已提交证据。"""
     response.headers['Cache-Control'] = 'no-store'
     return await service.facts(conversation_id, owner.id, run_id, attempt_id)
+
+
+@router.get('/runs/{run_id}/feedback')
+async def list_feedback(conversation_id: int, run_id: Id, owner: Owner, response: Response):
+    """Owner 读取原反馈与处置历史；不缓存私有节点内容。"""
+    from ..workflows import feedback
+    response.headers['Cache-Control'] = 'no-store'
+    return await feedback.listing(conversation_id, owner.id, run_id)
+
+
+@router.post('/runs/{run_id}/feedback', status_code=201)
+async def create_feedback(conversation_id: int, run_id: Id, payload: CreateFeedback, owner: Owner, response: Response):
+    """精确绑定来源尝试；重复提交返回同一意见。"""
+    from ..workflows import feedback
+    result, fresh = await feedback.create(conversation_id, owner.id, run_id, payload)
+    response.status_code = 201 if fresh else 200
+    return result
+
+
+@router.post('/runs/{run_id}/feedback/{feedback_id}/actions')
+async def update_feedback(conversation_id: int, run_id: Id, feedback_id: Id, payload: FeedbackUpdate, owner: Owner):
+    """版本化处置意见；人工确认与执行验证分别记录。"""
+    from ..workflows import feedback
+    return await feedback.update(conversation_id, owner.id, run_id, feedback_id, payload)
 
 
 @router.get('/runs/{run_id}/attempts/{attempt_id}/message')
