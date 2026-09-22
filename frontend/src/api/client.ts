@@ -1,7 +1,7 @@
 export type UsageMetric = { total: number | null; known: number | null; missing_calls: number }
 export type UsageSummary = { executions: number; untracked_executions: number; untracked_messages: number; recorded_calls: number; completed_calls: number;
   missing_call_records: number; metrics: Record<'input_tokens' | 'output_tokens' | 'cache_hit_tokens' | 'cache_write_tokens' | 'cache_miss_tokens' | 'input_cache_hit_ratio' | 'model_duration_ms', UsageMetric> }
-export type RoleExecutionUsage = { latest: { execution_id: string; message_id: number | null; status: string; error_code: string | null; stop_reason: string | null;
+export type RoleExecutionUsage = { latest: { execution_id: string; execution_kind?: string; message_id: number | null; status: string; error_code: string | null; stop_reason: string | null;
   model_name: string | null; duration_ms: number | null; summary: UsageSummary } | null; cumulative: UsageSummary }
 export type AgentBudgetConfig = { decision_limit: number | null; effective_limit: number | null; ceiling: number | null; revision: number }
 export type User = { id: number; username: string; nickname: string; avatar: string | null; is_owner: boolean }

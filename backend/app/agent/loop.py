@@ -347,6 +347,7 @@ async def run_agent(
     decision_limit: int | None = DEFAULT_DECISION_LIMIT,
     before_decision: Callable[[int], Awaitable[bool]] | None = None,
     time_source: Callable[[], float] | None = None,
+    provider_call_index_offset: int = 0,
 ) -> AsyncIterator[AgentEvent]:
     """执行一次 Agent 循环，按领域事件流式产出结果。
 
@@ -360,6 +361,7 @@ async def run_agent(
         decision_limit：本轮冻结的正整数决策上限；None 表示不限次数。
         before_decision：可选共享预算原子消费，参数为本执行的决策序号。
         time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
+        provider_call_index_offset：同一维护 execution 分段调用时的既有调用数，保持日志/事件/usage 身份一致。
 
     Yields:
         `TextDelta` / `ToolCallStarted` / `ToolCallFinished` / `ProviderCallCompleted` /
@@ -375,6 +377,8 @@ async def run_agent(
         raise ValueError('decision_limit must be a positive safe integer or None')
     if recursion_limit is not None and (isinstance(recursion_limit, bool) or not isinstance(recursion_limit, int) or recursion_limit < 1):
         raise ValueError('recursion_limit must be a positive integer')
+    if type(provider_call_index_offset) is not int or provider_call_index_offset < 0:
+        raise ValueError('provider_call_index_offset must be a nonnegative integer')
     # 当前锁定框架按 step > stop 判断耗尽；inf 仅留在防腐层，不进入公开协议或 Provider 参数。
     graph_limit = recursion_limit if recursion_limit is not None else (2 * decision_limit + 2 if decision_limit is not None else float('inf'))
     decisions = 0
@@ -413,7 +417,7 @@ async def run_agent(
     provider_ttft_ms: dict[str, int] = {}
     provider_call_index: dict[str, int] = {}
     provider_stream_usage: dict[str, dict[str, int | float | bool]] = {}
-    next_provider_call_index = 0
+    next_provider_call_index = provider_call_index_offset
     pending_ids: set[str] = set()
     protocol_broken = False
     graph_completed = False
@@ -480,7 +484,7 @@ async def run_agent(
                     started = provider_started_at.pop(run_id, None)
                     duration_ms = int((clock() - started) * 1000) if started is not None else 0
                     yield ProviderCallCompleted(
-                        call_index=provider_call_index.pop(run_id, len(call_usages)),
+                        call_index=provider_call_index.pop(run_id, provider_call_index_offset + len(call_usages)),
                         ttft_ms=provider_ttft_ms.pop(run_id, None),
                         duration_ms=duration_ms,
                         input_tokens=normalized_usage.get("input_tokens"),

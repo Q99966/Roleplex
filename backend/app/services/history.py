@@ -6,7 +6,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from ..models import Conversation, Generation, Message
+from ..models import AgentExecution, Conversation, Generation, Message
 from ..realtime.events import current_epoch
 from ..schemas import HistoryWindowMetadata
 from .chat import message_payload
@@ -65,6 +65,7 @@ async def build_history_window(session, conversation_id: int, before: str | None
     event_seq = await session.scalar(select(Conversation.event_seq).where(Conversation.id == conversation_id)) or 0
     active_ids = list((await session.scalars(select(Generation.id).where(
         Generation.conversation_id == conversation_id, Generation.status.in_(['queued', 'running']),
+        ~select(AgentExecution.id).where(AgentExecution.generation_id == Generation.id, AgentExecution.execution_kind == 'context_compact').exists(),
     ).order_by(Generation.id))).all())
     key = 'messages' if snapshot else 'items'
     page = {key: [], 'event_seq': event_seq, 'stream_epoch': current_epoch(),

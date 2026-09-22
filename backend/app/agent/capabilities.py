@@ -17,7 +17,17 @@ from .tools import classify_tool
 async def role_tool_policy(session, *, conversation: Conversation, role: Role, triggered_by_user_id: int | None) -> dict:
     """解析角色可用的原生能力，不依赖某一次 allocation；新类别在这里接入自身资源规则。"""
     from ..workspaces.tools import workspace_tool_policy
-    return await workspace_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=triggered_by_user_id)
+    from ..memory.tools import specs
+    base = await workspace_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=triggered_by_user_id)
+    memory = specs(role.builtin_tools_json or [])
+    if not memory:
+        return base
+    from ..context.access import require_context_access
+    try:
+        await require_context_access(session, conversation_id=conversation.id, role_id=role.id, user_id=triggered_by_user_id)
+    except ContextBuildError:
+        memory = []
+    return {**base, 'memory_version': 1, 'exposed_tools': [*base['exposed_tools'], *memory]}
 
 
 @dataclass(frozen=True)
@@ -57,11 +67,13 @@ async def resolve_capabilities(session, *, conversation: Conversation, role: Rol
     resolved = await policy(session, execution_id, base)
     # 来源取自实际解析分支，不能按模型或外部服务提供的名称前缀猜测权限类别。
     source_names = {tool['name'] for tool in base['exposed_tools']}
-    sources = {tool['name']: 'workspace' if tool['name'] in source_names else 'workflow' for tool in resolved['exposed_tools']}
+    from ..memory.tools import NAMES
+    sources = {tool['name']: ('memory' if tool['name'] in NAMES else 'workspace') if tool['name'] in source_names else 'workflow'
+        for tool in resolved['exposed_tools']}
     return ExecutionCapabilities(conversation.id, role.id, triggered_by_user_id, execution_id, deepcopy(resolved), sources, triggered_by_user_id == role.created_by)
 
 
-async def create_execution_tools(session, capabilities: ExecutionCapabilities, *, role: Role, allow_dangerous: bool):
+async def create_execution_tools(session, capabilities: ExecutionCapabilities, *, role: Role, allow_dangerous: bool, material=None):
     """物化相同快照，当前权限有变则拒绝派发；各工具执行时仍做原有逐次授权。"""
     if not capabilities.execution_id:
         raise ContextBuildError('AGENT_CAPABILITIES_CHANGED')
@@ -81,6 +93,9 @@ async def create_execution_tools(session, capabilities: ExecutionCapabilities, *
             allow_dangerous=allow_dangerous))
     if 'workflow' in capabilities.sources.values():
         tools.extend(await create_control_tools(session, execution_id=capabilities.execution_id))
+    if 'memory' in capabilities.sources.values():
+        from ..memory.tools import create_tools
+        tools.extend(await create_tools(capabilities, material))
     available = {tool.name: tool for tool in tools}
     names = [spec['name'] for spec in capabilities.policy['exposed_tools']]
     if set(available) != set(names) or len(available) != len(tools):

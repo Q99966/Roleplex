@@ -130,7 +130,7 @@ function PromptSources({ conversationId, role, refresh }: { conversationId: numb
       <p className="mt-3 whitespace-pre-wrap break-words leading-relaxed">{layer.text || '此层为空'}</p>
     </details></li>)}</ol>
     <details className="rounded-xl border border-slate-800 p-3"><summary className="cursor-pointer">当前可用工具 · {value.capabilities.tools.length}</summary>
-      <ul className="mt-2 space-y-2">{value.capabilities.tools.map(tool => <li key={tool.name}><p className="break-all font-medium">{tool.name}</p><p className="text-slate-500">{tool.source === 'workspace' ? '工作区能力' : '任务控制能力'} · {tool.danger === 'safe' ? '安全白名单' : '按权限执行'}</p></li>)}</ul>
+      <ul className="mt-2 space-y-2">{value.capabilities.tools.map(tool => <li key={tool.name}><p className="break-all font-medium">{tool.name}</p><p className="text-slate-500">{tool.source === 'workspace' ? '工作区能力' : tool.source === 'memory' ? '历史检索能力' : '任务控制能力'} · {tool.danger === 'safe' ? '安全白名单' : '按权限执行'}</p></li>)}</ul>
       {!!unavailable.length && <p className="mt-3 break-words text-slate-500">角色已配置，但当前会话不可用：{unavailable.join('、')}</p>}
     </details>
     {value.latest_execution && <details className="rounded-xl border border-slate-800 p-3"><summary className="cursor-pointer">最近实际采用</summary>

@@ -20,7 +20,7 @@ from ..workspaces.catalog import WORKSPACE_FILE_TOOLS
 
 # 显式 safe 白名单：只包含只读或纯生成类内置工具。
 # 新增工具默认不在此列表内，必须经安全评审后显式加入。
-SAFE_BUILTIN_TOOLS: frozenset[str] = frozenset({"create_artifact", "update_artifact", "read_artifact"})
+SAFE_BUILTIN_TOOLS: frozenset[str] = frozenset({"create_artifact", "update_artifact", "read_artifact", "memory_search", "memory_read"})
 
 # MCP 工具统一使用该前缀，便于审计与排查；前缀本身不授予任何权限。
 MCP_TOOL_PREFIX = "mcp_"

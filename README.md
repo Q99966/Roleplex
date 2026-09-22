@@ -23,7 +23,9 @@ Owner 可在“系统与环境设置 → 提示词与规则”配置当前世界
 
 所有单聊和群聊都有随消息同步保存的共享上下文。“上下文”面板可按角色查看裁剪前占用、实际准备发送的输入、来源版本及最近一次模型调用；生成中、失败和中断内容明确标出未纳入原因，原消息保留。估算与厂商用量分开，见[上下文协议](docs/protocol/public/rest/conversation-context.md)。
 
-[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A/B 已实现；主动/自动压缩、Agent 主动历史检索及 Skills/MCP 完整模块继续按 C–F 实施。
+Owner 可在“上下文 → 主动压缩”整理当前会话的共享上下文，独立选择生成摘要的模型配置，查看进度、停止和回退摘要版本；原消息与后来追加内容保留。角色显式启用 `memory_search/read` 后可主动搜索可共享历史并回读原文，Owner 也能在“历史检索”核对来源。见[主动压缩](docs/protocol/public/rest/context-compression.md)与[Memory 协议](docs/protocol/public/rest/memory.md)。
+
+[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A–C 已实现；自动压缩策略、Skills/MCP 完整模块继续按 D–F 实施。
 
 会话内工作流从右侧“工作流”模块打开；画布覆盖主消息和输入区域，返回对话保留草稿与阅读位置，不停止运行。画布采用 React Flow，可编辑保存分支和环路，连线支持节点避障与循环外侧绕行；新图支持并行分支、汇合与显式条件循环，旧串行图保持兼容；编辑草稿自动保存在当前浏览器，刷新或重开会话后恢复，仍需明确“保存模板”或“提交本次运行调整”提交对应服务端版本；操作与恢复规则见[工作流协议](docs/protocol/public/rest/workflows.md)。
 

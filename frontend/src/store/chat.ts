@@ -393,6 +393,11 @@ export function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
     return
   }
 
+  if (event.type === 'context_updated') {
+    window.dispatchEvent(new CustomEvent('roleplex:context-updated', { detail: event.conversation_id }))
+    return
+  }
+
   if (['workflow_updated', 'workflow_graph_updated', 'workflow_coordination_updated'].includes(event.type)) {
     window.dispatchEvent(new CustomEvent('roleplex:workflow', { detail: event.conversation_id }))
     return

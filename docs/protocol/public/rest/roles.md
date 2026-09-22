@@ -107,6 +107,10 @@ DELETE /api/roles/{role_id}
 对已有会话的影响：墓碑从会话成员的 `role_ids` 中消失，但历史消息不变，
 客户端应在发送者旁标注"已删除"。
 
+## 历史检索工具
+
+`builtin_tools` 兼容支持 `memory_search` 和 `memory_read`，由 Owner 显式启用；前端位于“内置工具 → 历史检索（只读）”。两者是有当前身份/来源复核的 safe 工具，不要求文件工作区，也不授予图管理权。工作流还需具体 allocation 分配；Schema 与工厂共用能力解析。旧角色不会自动添加检索工具。边界见[Memory](memory.md)。
+
 ## 错误
 
 | 错误码 | 状态码 | 含义 |

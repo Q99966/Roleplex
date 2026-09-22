@@ -6,26 +6,29 @@ import { useAppStore } from '../../store/app'
 import { useChatStore } from '../../store/chat'
 import { useContextDraft } from '../../store/contextDraft'
 import { ConversationPromptSettings } from '../prompts/PromptSettings'
+import { CompressionPanel } from './CompressionPanel'
+import { MemoryPanel } from './MemoryPanel'
+import { SummaryBody } from './SummaryBody'
 
 const button = 'rounded-lg border border-slate-700 px-3 py-2 text-xs disabled:opacity-40 focus-visible:outline focus-visible:outline-indigo-400'
 const card = 'rounded-xl border border-slate-800 bg-panel p-3'
 const number = (value: number | null | undefined) => value == null ? '未知' : value.toLocaleString()
 const reasons: Record<string, string> = { generating: '生成中，尚未纳入', failed: '失败片段保留在原消息', interrupted: '中断片段保留在原消息', empty: '没有可用正文', tool_pending: '工具尚未收口' }
-const parts: Record<string, string> = { system: '规则、角色与技能', tools: '可用工具定义', current: '本次消息', history: '已选会话历史', interruption: '中断执行事实' }
-type ContextTab = 'usage' | 'material' | 'prompts'
+const parts: Record<string, string> = { system: '规则、角色与技能', tools: '可用工具定义', current: '本次消息', history: '已选会话历史', interruption: '中断执行事实', summary: '已采用历史摘要' }
+type ContextTab = 'usage' | 'material' | 'prompts' | 'compression' | 'memory'
 const viewPreferences = new Map<string, { tab: ContextTab; roleId: number }>()
-let preferenceEpoch = getAuthEpoch()
 
 /** 共享材料、角色输入和提示词分开查看，草稿只预估，不触发执行。 */
-export function ConversationContextPanel({ conversation }: { conversation: Conversation }) {
+export function ConversationContextPanel({ conversation, onEditRole }: { conversation: Conversation; onEditRole: (role: Role) => void }) {
   const { user, worldName } = useAppStore()
+  const epoch = getAuthEpoch()
+  useEffect(() => { for (const key of viewPreferences.keys()) if (!key.startsWith(`${epoch}:`)) viewPreferences.delete(key) }, [epoch])
   if (!user?.is_owner) return <p className="text-xs text-slate-500">上下文由 Owner 管理。</p>
-  if (preferenceEpoch !== getAuthEpoch()) { viewPreferences.clear(); preferenceEpoch = getAuthEpoch() }
   const scope = `${getAuthEpoch()}:${worldName}:${user.id}:${conversation.id}`
-  return <ContextPanel key={scope} scope={scope} conversation={conversation} />
+  return <ContextPanel key={scope} scope={scope} conversation={conversation} onEditRole={onEditRole} />
 }
 
-function ContextPanel({ conversation, scope }: { conversation: Conversation; scope: string }) {
+function ContextPanel({ conversation, scope, onEditRole }: { conversation: Conversation; scope: string; onEditRole: (role: Role) => void }) {
   const [tab, setTab] = useState<ContextTab>(() => viewPreferences.get(scope)?.tab ?? 'usage')
   const roles = useAppStore(state => state.roles).filter(role => conversation.role_ids.includes(role.id) && role.active && !role.deleted_at)
   const [roleId, setRoleId] = useState(() => viewPreferences.get(scope)?.roleId ?? conversation.role_ids[0] ?? 0)
@@ -33,17 +36,19 @@ function ContextPanel({ conversation, scope }: { conversation: Conversation; sco
   const selected = roles.find(role => role.id === roleId) ?? roles[0]
   return <section aria-label="会话上下文管理" className="space-y-4 text-xs text-slate-300">
     <div role="group" aria-label="上下文视图" className="flex rounded-xl bg-slate-950/40 p-1">
-      {([['usage', '占用与输入'], ['material', '会话材料'], ['prompts', '提示词']] as const).map(([id, title]) =>
-        <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)} className={`flex-1 rounded-lg px-1 py-2 focus-visible:outline focus-visible:outline-indigo-400 ${tab === id ? 'bg-panel font-medium text-indigo-500 shadow-sm' : 'text-slate-500'}`}>{title}</button>)}
+      {([['usage', '占用与输入'], ['material', '会话材料'], ['compression', '主动压缩'], ['memory', '历史检索'], ['prompts', '提示词']] as const).map(([id, title]) =>
+        <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)} className={`flex-1 whitespace-nowrap rounded-lg px-1 py-2 focus-visible:outline focus-visible:outline-indigo-400 ${tab === id ? 'bg-panel font-medium text-indigo-500 shadow-sm' : 'text-slate-500'}`}>{title}</button>)}
     </div>
-    {tab === 'usage' && <>
+    {['usage', 'memory'].includes(tab) && <>
       <label className="block">查看角色<select aria-label="上下文角色" value={selected?.id ?? ''} onChange={event => setRoleId(Number(event.target.value))}
         className="mt-2 block w-full rounded-xl border border-slate-700 bg-panel p-2.5">
         {!roles.length && <option value="">没有可用角色</option>}{roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
       </select></label>
-      {selected ? <Usage key={selected.id} conversationId={conversation.id} role={selected} /> : <p>共享会话材料仍保留，可切换查看。</p>}
+      {tab === 'usage' && (selected ? <Usage key={selected.id} conversationId={conversation.id} role={selected} /> : <p>共享会话材料仍保留，可切换查看。</p>)}
     </>}
     {tab === 'material' && <Material conversationId={conversation.id} />}
+    {tab === 'compression' && <CompressionPanel conversation={conversation} roles={roles} scope={`${scope}:compression`} />}
+    {tab === 'memory' && (selected ? <MemoryPanel key={selected.id} conversationId={conversation.id} role={selected} scope={`${scope}:${selected.id}:memory`} onEditRole={onEditRole} /> : <p>请选择一个当前可用角色，按它的权限检索历史。</p>)}
     {tab === 'prompts' && <ConversationPromptSettings conversation={conversation} />}
   </section>
 }
@@ -62,9 +67,11 @@ function Usage({ conversationId, role }: { conversationId: number; role: Role })
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     const update = () => setRefresh(value => value + 1)
+    const contextUpdate = (event: Event) => { if ((event as CustomEvent).detail === conversationId) update() }
     window.addEventListener('roleplex:prompts-updated', update)
-    return () => window.removeEventListener('roleplex:prompts-updated', update)
-  }, [])
+    window.addEventListener('roleplex:context-updated', contextUpdate)
+    return () => { window.removeEventListener('roleplex:prompts-updated', update); window.removeEventListener('roleplex:context-updated', contextUpdate) }
+  }, [conversationId])
   useEffect(() => {
     const controller = new AbortController(), epoch = getAuthEpoch()
     let pending = false
@@ -109,6 +116,8 @@ function Usage({ conversationId, role }: { conversationId: number; role: Role })
         <dl className="mt-3 space-y-2">{Object.entries(request.breakdown).map(([key, count]) => <div key={key} className="flex justify-between gap-2"><dt className="text-slate-500">{parts[key] ?? key}</dt><dd className="font-mono">{number(count)}</dd></div>)}
           <div className="flex justify-between border-t border-slate-800 pt-2"><dt className="text-slate-500">本次安全余量</dt><dd>{number(request.safety_margin_tokens)}</dd></div></dl>
         <p className="mt-3 leading-relaxed text-slate-500">共享材料 v{value.shared.revision} · {value.shared.counts.included} 条稳定来源 · {value.shared.counts.pending} 条生成中 · {value.shared.counts.excluded} 条未纳入</p>
+        {value.material.summary_id && <p className="mt-2 text-indigo-500">已采用历史摘要，原消息可在“历史检索”回读。</p>}
+        {value.material.summary_omitted_reason && <p className="mt-2 text-amber-700">{value.material.summary_omitted_reason === 'does_not_fit' ? '当前摘要无法装入这个角色的窗口，按原文选择历史。' : '摘要不适用于当前来源或执行边界，按原文选择历史。'}</p>}
         {request.recovery_omitted && <p className="mt-2 text-amber-600">中断事实未能装入，不能据此认定操作未执行。</p>}
         <button type="button" aria-expanded={content} className={`${button} mt-3`} onClick={() => setContent(value => !value)}>{content ? '收起输入内容' : '查看输入内容'}</button>
       </div>
@@ -128,7 +137,7 @@ function Usage({ conversationId, role }: { conversationId: number; role: Role })
           {call.input_estimate && <p className="text-slate-500">已包含 {call.input_estimate.tool_message_count} 条工具结果；每次模型调用开始时更新。</p>}
           <p>厂商输入 {number(call.provider_usage.input_tokens)} · 输出 {number(call.provider_usage.output_tokens)} Token</p>
           <p className="text-slate-500">{call.provider_mode === 'fake' ? 'fake Provider 不提供真实 Token 用量。' : '厂商未报告的字段保持未知。'}累计用量在成员的“执行用量”查看。</p>
-          <p className="text-slate-500">{call.snapshot?.material?.scope === 'conversation' ? `采用共享材料 v${call.snapshot.material.revision}` : call.snapshot?.material ? '采用工作流指定材料' : '旧执行没有来源快照'} · {call.execution_status === 'running' ? '本次执行仍在进行' : '历史执行记录'}</p>
+          <p className="text-slate-500">{call.snapshot?.material?.scope === 'conversation' ? `采用共享材料 v${call.snapshot.material.revision}` : call.snapshot?.material?.scope === 'context_compaction' ? '上下文压缩维护请求' : call.snapshot?.material ? '采用工作流指定材料' : '旧执行没有来源快照'} · {call.execution_status === 'running' ? '本次执行仍在进行' : '历史执行记录'}</p>
         </>}
       </section>
     </>}
@@ -141,6 +150,11 @@ function Material({ conversationId }: { conversationId: number }) {
   const [value, setValue] = useState<ContextPage | null>(null), [error, setError] = useState('')
   const [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0)
   const controller = useRef<AbortController | null>(null)
+  useEffect(() => {
+    const update = (event: Event) => { if ((event as CustomEvent).detail === conversationId) setRefresh(value => value + 1) }
+    window.addEventListener('roleplex:context-updated', update)
+    return () => window.removeEventListener('roleplex:context-updated', update)
+  }, [conversationId])
   useEffect(() => {
     const abort = new AbortController(), epoch = getAuthEpoch()
     controller.current?.abort(); controller.current = abort
@@ -169,6 +183,8 @@ function Material({ conversationId }: { conversationId: number }) {
     {busy && <p role="status">正在读取会话材料…</p>}
     {value && <>
       <p className="text-slate-500">材料 v{value.revision} · 稳定 {value.counts.included} · 生成中 {value.counts.pending} · 未纳入 {value.counts.excluded}</p>
+      {value.active_summary && <details className={card}><summary className="cursor-pointer font-medium">当前摘要 · 覆盖 {value.active_summary.source_count} 条原消息</summary><div className="mt-3"><SummaryBody text={value.active_summary.text} /></div><p className="mt-2 text-slate-500">下方来源保留完整记录，输入会按摘要和未覆盖消息组装。</p></details>}
+      {value.summary_unavailable && <p className="text-amber-700">原摘要的来源已变化，当前使用原文。</p>}
       {!value.entries.length && <p className="py-4 text-center text-slate-500">还没有会话材料。发送消息后自动同步。</p>}
       {value.entries.map(entry => <details key={entry.message_id} className={card}>
         <summary className="cursor-pointer"><span className="font-medium">{entry.sender_type === 'role' ? directory[entry.sender_id ?? 0]?.name ?? `角色 #${entry.sender_id}` : entry.sender_type === 'user' ? `用户 #${entry.sender_id}` : entry.sender_type}</span>

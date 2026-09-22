@@ -126,6 +126,10 @@ schema 7 从持久共享材料选取普通会话历史，按 SQL 聚合计算裁
 
 `ProviderCallStarted.input_estimate` 是防腐层从该事件实际消息和绑定工具 Schema 提取的无正文估算，包含工具轮参数和结果；写入 model_call_usage，与厂商 usage 分离。每次决策前复核会话及角色/触发者当前成员资格，撤权封闭后续请求，保留已有工具事实。请求来源快照、前端预览、版本竞争与恢复以[上下文协议](../public/rest/conversation-context.md)为准。
 
+schema 8 增加有来源的摘要单元与显式启用的 `memory_search/read`。人和模型共用目的地共享范围校验；工作流分配、工具 Schema 和工厂使用 role_tool_policy，知识工具不要求文件绑定。已经读取的 Memory 来源在下一次模型请求前再次复核，失效则拒绝继续带入工具结果。摘要只用于相容的普通会话边界，不能替代工作流明确上游。
+
+`context_compact` 是现有 QueueJob/AgentExecution 的维护分支，无聊天消息和工具。分段调用复用同 chain 额度及 ModelCallUsage；防腐层 `provider_call_index_offset` 让日志、领域事件和业务调用索引连续，不把多段都记成第 1 次。正常聊天默认偏移 0。压缩回退、幂等、停止与恢复见[维护协议](../public/rest/context-compression.md)。
+
 ## 防腐层边界与实测结论
 
 框架事件到领域事件的转换全部收敛在 `app/agent/loop.py`，测试用源码扫描保证其他模块

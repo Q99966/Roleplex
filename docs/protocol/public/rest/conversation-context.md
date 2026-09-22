@@ -1,6 +1,6 @@
 # 持久会话上下文与输入占用
 
-状态：已实现总体计划 B；压缩、策略阈值、主动检索仍按 C/D 实施。入口为单聊/群聊右侧“上下文”，分为“占用与输入”“会话材料”“提示词”。提示词字段见[提示词配置](prompt-settings.md)。
+状态：B 已实现，C 增加[主动压缩](context-compression.md)与[Memory 检索回读](memory.md)；自动策略阈值仍按 D 实施。入口为单聊/群聊右侧“上下文”，分为“占用与输入”“会话材料”“提示词”。提示词字段见[提示词配置](prompt-settings.md)。
 
 ## 内容、材料和调用
 
@@ -37,7 +37,9 @@
 | `entries` | 按消息 ID 降序；各项含 message_id/revision/status、sender_type/sender_id、state/reason、text/text_truncated/text_bytes、created_at |
 | `next_before` | 下一页边界；无更多为 null |
 
-每项展示正文最多前 4,000 字符，`text_truncated=true` 表示列表展示截断，材料本身不截断。pending 的 revision 是最初登记时的来源版本，收口后同步最新版本；它不提供仍在流式变动的正文。没有提供编辑/删除原消息、压缩或再生成接口。
+每项展示正文最多前 4,000 字符，`text_truncated=true` 表示列表展示截断，材料本身不截断。pending 的 revision 是最初登记时的来源版本，收口后同步最新版本；它不提供仍在流式变动的正文。没有提供编辑/删除原消息或再生成接口；主动压缩使用[独立维护请求](context-compression.md)。
+
+C 兼容新增 active_summary（id/source_count/through_message_id/text/text_bytes/created_at）、summary_unavailable 和 material_text_bytes。原 text_bytes/counts 仍表示稳定来源投影；material_text_bytes 用当前有效摘要替换覆盖原文后计算，未叠加角色规则/身份和工具。无有效摘要时使用原文。material 增加 summary_id/summary_omitted_reason，request.breakdown 增加 summary；预算内条数包含一段摘要，覆盖原消息不重复发送。
 
 ## 按角色预览
 
@@ -90,7 +92,7 @@
 
 历史调用的窗口/预留取其 snapshot.request，不能套用角色现在的新配置。执行内每次调用从该次框架事件取输入，不读取可能已经推进到下一轮的可变图状态。停止/重启将未完整结束的用量标记 unconfirmed，保留已经报告的数字与原输入估算；缺失采集保持未知。
 
-面板使用既有消息 WS 刷新稳定边界，运行期间每 2.5 秒读取调用级统计，不逐 Token 请求。没有新增含私有上下文的广播事件。断线/刷新从上述业务接口恢复，不依赖浏览器历史缓存；累计统计仍见[角色执行用量](execution-usage.md)。
+面板使用既有消息 WS 刷新稳定边界，运行期间每 2.5 秒读取调用级统计，不逐 Token 请求。C 兼容增加只含状态与版本的 context_updated 事件，没有含私有上下文的广播。断线/刷新从上述业务接口恢复，不依赖浏览器历史缓存；累计统计仍见[角色执行用量](execution-usage.md)。
 
 ## 存储、升级和错误
 

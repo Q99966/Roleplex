@@ -93,6 +93,10 @@ ws(s)://<host>/api/ws
 
 ## 当前事件类型
 
+### 上下文维护提示
+
+`context_updated` 兼容用于主动压缩进度、发布、停止和版本回退；payload 为 `{revision,compression_id,status}`，compression_id 可空。只含业务版本和状态，不广播要求、摘要、搜索词或原文。Owner 面板重新读取上下文接口；未知客户端可忽略此事件，仍按 event_seq 恢复。没有聊天消息的维护 generation 不进入聊天 active_generation_ids，也不由普通“停止生成”控制。详情见[主动压缩](../rest/context-compression.md)。
+
 ### 登录会话级连接与订阅控制（A，已实现）
 
 连接由登录会话管理，会话组件不拥有 socket；同一 socket 同时仅有一个会话订阅。首帧认证仍保持不变，

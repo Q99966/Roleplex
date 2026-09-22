@@ -104,6 +104,58 @@ class ScriptedChatModel(BaseChatModel):
         ]
 
 
+class ContextCompactionModel(ScriptedChatModel):
+    """压缩验收固件从实际传入的来源取简短句子和引用，不伪造 Provider usage。"""
+    delay: float = 0
+    chunk_size: int = 256
+
+    async def _astream(self, messages, **kwargs):
+        payload = json.loads(messages[-1].content)
+        if '[COMPACT_SLOW]' in payload.get('instructions', ''):
+            await asyncio.sleep(3)
+        facts = []
+        for item in payload['items']:
+            if 'summary' in item:
+                facts.extend(item['summary'].get('facts', []))
+            else:
+                facts.append({'text': item['text'].split('。')[0][:30], 'sources': item['sources'][:1]})
+        facts = facts[:8]
+        value = {'facts': facts, 'open_items': [], 'conflicts': [], 'inferences': []}
+        while len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()) > payload['target_tokens'] and len(facts) > 1:
+            facts.pop()
+        self.turns = [ScriptedTurn(text=json.dumps(value, ensure_ascii=False, separators=(',', ':')))]
+        self.index = 0
+        async for chunk in super()._astream(messages, **kwargs):
+            yield chunk
+
+
+class MemoryProbeModel(ScriptedChatModel):
+    """检索验收根据真实工具结果继续回读；校验内容只存在于受控来源，模型不预埋答案。"""
+    query: str
+    chunk_size: int = 256
+
+    async def _astream(self, messages, **kwargs):
+        replies = [message for message in messages if isinstance(message, ToolMessage)]
+        if not replies:
+            turn = ScriptedTurn(tool_calls=[{'name': 'memory_search', 'args': {'query': self.query, 'scope': 'related'}, 'id': 'memory-search'}])
+        elif len(replies) == 1:
+            try:
+                results = json.loads(replies[-1].content)['results']
+            except (ValueError, KeyError, TypeError):
+                results = []
+            turn = ScriptedTurn(tool_calls=[{'name': 'memory_read', 'args': {'reference': results[0]['reference']}, 'id': 'memory-read'}]) if results else ScriptedTurn(text='历史检索没有可共享结果。')
+        else:
+            try:
+                content = json.loads(replies[-1].content)['text']
+                text = '历史原文核对：' + content
+            except (ValueError, KeyError, TypeError):
+                text = '历史原文暂时无法读取。'
+            turn = ScriptedTurn(text=text)
+        self.turns, self.index = [turn], 0
+        async for chunk in super()._astream(messages, **kwargs):
+            yield chunk
+
+
 class SearchReadModel(ScriptedChatModel):
     """T2 浏览器模型按真实搜索结果生成行读取请求，不预埋目标行号。"""
     _hit: dict = PrivateAttr(default_factory=dict)
@@ -392,6 +444,8 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[MEMORY_PROBE]' in prompt:
+        return MemoryProbeModel(query=prompt.split('[MEMORY_PROBE]', 1)[1].strip(), delay=delay)
     if '[PROMPT_LAYERS_PROBE]' in prompt:
         return PromptLayersProbeModel(delay=0)
     if '本次图管理授权：' in prompt:

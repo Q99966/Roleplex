@@ -592,3 +592,20 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 迁移先建立旧会话身份，启动用有界批次补齐缺失或版本/状态失配的消息，每批独立提交。差异查询是可恢复进度，不使用浏览器分页游标或运行时建表。未来压缩段/发布版本有独立迁移与采用语义，本批没有创建空的压缩任务表。
 
 `agent_executions.context_snapshot_json` 的 schema 7 兼容增加 `material`（范围、版本、可见边界、当前来源和已选消息 revision/status）与 `request`（首次组装的预算/裁剪前压力/组成）；同执行不覆盖首份采用来源。逐次工具轮增长来自 model_call_usage.input_estimate_json，不复制 Prompt 或工具内容。接口、正文投影及预算详细语义见[上下文协议](../public/rest/conversation-context.md)。
+
+### 主动压缩、摘要和检索引用（0026）
+
+| 对象 | 字段与一致性 |
+|---|---|
+| `conversation_contexts.summary_revision` | 非空 BigInteger 默认 0，仅发布/回退递增；消息追加只改变原 revision，保护压缩期间的指针 ABA 竞争 |
+| `conversation_context_entries` 新投影字段 | search_text 可空 Text（失败/中断的可检索正文，稳定正文沿用 text）；execution_facts_json 可空 JSON（服务器公开执行状态计数）；text_hash String64 非空；projection_version Integer 非空。迁移旧行版本 0，启动按有界批次构建 v2，不复制全会话 |
+| `context_compressions` | String64 主键 id，外键 conversation_id/owner_id/role_id/execution_id；execution_id 唯一。request_key/request_hash 与来源、模型/提示词快照、范围/目标/要求、前后估算、进度/状态/错误/取消和时间 |
+| 维护请求唯一性 | `(conversation_id,owner_id,request_key)` 唯一；active_conversation_id 可空且唯一，queued/running/stopping 占用、终态释放；不删除历史任务 |
+| `context_compression_sources` | `(compression_id,message_id)` 复合主键，compression_id 级联引用维护任务；source_revision/source_status/text_hash 冻结来源。message_id 是历史引用，故不级联删除，原消息缺失必须使摘要失效 |
+| `context_summaries` | id 引用同 ID 的成功维护任务，conversation_id 外键；active_conversation_id 可空唯一；不可变 content_json/text/text_bytes/created_at。权限与所有来源有效后才读取正文或重新采用 |
+| `memory_references` | String64 主键，execution_id 外键和索引、宿主 tool_call_id、source_kind/id/revision、短 reference、action、字符 offset/characters 和时间；没有搜索词或原文，没有第二套 Trace |
+| `workflow_budgets.trigger_message_id` | 兼容改为可空，普通聊天仍非空唯一，独立 context_compact 维护链为 null；额度冻结和原子消费规则不变 |
+
+压缩模型快照只保留实际 Provider 支持的采样参数、模型名/窗口及配置不可逆指纹，不复制 Key；模板、会话要求和一次性指令属于受 Owner 保护的业务数据，不进日志。发布和任务结果同事务，长模型调用不持写事务。降级会删除无聊天消息的维护预算，普通消息链、原消息和 0025 的稳定投影保留。
+
+Context schema 8 的普通材料兼容增加 summary_id/summary_omitted_reason，采用摘要时把只读历史段放在原文尾部之前；工作流精确上游单独处理。压缩 execution 的采用快照以 `material.scope=context_compaction` 及 compression_id/source revision 引用维护来源，不伪装成普通角色提示词快照。详情以[压缩](../public/rest/context-compression.md)与[Memory](../public/rest/memory.md)为准。

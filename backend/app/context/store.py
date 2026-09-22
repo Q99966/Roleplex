@@ -12,9 +12,10 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from ..db import ApplicationSession, SessionLocal, now_utc, with_locked_retry
 from ..models import Conversation, ConversationContext, ConversationContextEntry, Message
-from .projection import stable_message_text
+from .projection import stable_message_text, parts_text, public_execution_facts
+from .fingerprint import stable_hash
 
-PROJECTION_VERSION = 1
+PROJECTION_VERSION = 2
 _CHANGES = 'roleplex_context_changes'
 
 
@@ -22,13 +23,17 @@ def _values(message: Message) -> dict:
     pending = message.status in {'pending', 'generating'}
     unpaired = any(p.get('type') == 'tool_call' and p.get('status') == 'running' for p in message.parts_json or [])
     text = '' if unpaired else stable_message_text(message)
+    search_text = parts_text(message.parts_json or []) if not text and message.status in {'error', 'interrupted'} else None
+    facts = public_execution_facts(message)
     reason = ('generating' if pending else 'tool_pending' if unpaired else
         'failed' if message.status == 'error' else 'interrupted' if message.status == 'interrupted' else 'empty')
     return dict(conversation_id=message.conversation_id, source_revision=message.revision,
         source_status=message.status, sender_type=message.sender_type, sender_id=message.sender_id,
         chain_id=message.chain_id, pinned=message.pinned, text=text, text_bytes=len(text.encode('utf-8')),
         state='pending' if pending else 'included' if text else 'excluded', reason=None if text else reason,
-        created_at=message.created_at)
+        created_at=message.created_at, search_text=search_text, execution_facts_json=facts,
+        text_hash=stable_hash([text, search_text, facts, message.sender_type, message.sender_id, message.status]),
+        projection_version=PROJECTION_VERSION)
 
 
 def sync_sources(session: Session, messages: list[Message], *, conversations=(), deleted=()) -> None:
@@ -60,7 +65,7 @@ def sync_sources(session: Session, messages: list[Message], *, conversations=(),
         changed = cid in deleted
         for message in sources:
             entry = session.get(ConversationContextEntry, message.id)
-            if entry is not None and entry.state == 'pending' and message.status in {'pending', 'generating'}:
+            if entry is not None and entry.projection_version == PROJECTION_VERSION and entry.state == 'pending' and message.status in {'pending', 'generating'}:
                 continue
             values = _values(message)
             if entry is None:
@@ -72,7 +77,7 @@ def sync_sources(session: Session, messages: list[Message], *, conversations=(),
                 changed = True
         if changed:
             revision = session.execute(update(ConversationContext).where(ConversationContext.conversation_id == cid)
-                .values(revision=ConversationContext.revision + 1, updated_at=now_utc())
+                .values(revision=ConversationContext.revision + 1, updated_at=now_utc(), projection_version=PROJECTION_VERSION)
                 .returning(ConversationContext.revision), execution_options={'synchronize_session': False}).scalar_one()
             set_committed_value(state, 'revision', revision)
             session.expire(state, ['updated_at'])
@@ -117,6 +122,8 @@ async def backfill_contexts(*, batch_size: int = 200):
             rows = (await session.scalars(select(Message).outerjoin(ConversationContextEntry,
                 ConversationContextEntry.message_id == Message.id).where(Message.id > after, or_(
                 ConversationContextEntry.message_id.is_(None),
+                ConversationContextEntry.projection_version != PROJECTION_VERSION,
+                ConversationContextEntry.conversation_id != Message.conversation_id,
                 ConversationContextEntry.source_status != Message.status,
                 and_(Message.status.not_in(['pending', 'generating']),
                     ConversationContextEntry.source_revision != Message.revision)))

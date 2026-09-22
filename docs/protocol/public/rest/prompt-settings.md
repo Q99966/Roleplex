@@ -2,7 +2,7 @@
 
 | 元数据 | 值 |
 |---|---|
-| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；共享材料和完整输入占用见[上下文协议](conversation-context.md)，压缩待后续批次 |
+| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；共享材料和完整输入占用见[上下文协议](conversation-context.md)，主动压缩见[维护协议](context-compression.md)，自动策略待 D |
 | 协议版本 | 1；ContextBuilder 序列化版本 6 |
 | 复核日期 | 2026-09-22 |
 | 事实来源 | `routers/prompt_settings.py`、`context/prompts.py`、`agent/capabilities.py`、`services/chat.py`、`services/execution_usage.py` |

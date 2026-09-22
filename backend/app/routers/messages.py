@@ -289,7 +289,9 @@ async def stop_generation(
     await require_member(session, conversation_id, user.id)
     generation = await session.scalar(
         select(Generation)
-        .where(Generation.conversation_id == conversation_id, Generation.status.in_(["queued", "running"]))
+        .where(Generation.conversation_id == conversation_id, Generation.status.in_(["queued", "running"]),
+            ~select(AgentExecution.id).where(AgentExecution.generation_id == Generation.id,
+                AgentExecution.execution_kind == 'context_compact').exists())
         .order_by(case((Generation.status == "running", 0), else_=1), Generation.id.desc())
     )
     if generation is None:

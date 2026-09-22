@@ -119,6 +119,7 @@ async def preview_prompts(conversation_id: int, role_id: int, response: Response
         prompts = await resolve_prompt_layers(session, conversation, role)
         capabilities = await resolve_capabilities(session, conversation=conversation, role=role, triggered_by_user_id=user.id)
         previous = await session.scalar(select(AgentExecution).where(AgentExecution.conversation_id == conversation_id,
+            AgentExecution.execution_kind != 'context_compact',
             AgentExecution.role_id == role.id, AgentExecution.context_snapshot_json.is_not(None)).order_by(AgentExecution.id.desc()).limit(1))
         return {'world_name': settings.world_name, 'conversation_id': conversation_id, 'role_id': role.id,
             'role_name': role.name, 'configured_tools': role.builtin_tools_json or [],

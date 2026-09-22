@@ -251,7 +251,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
           {!conversation.role_ids.length && <p className="py-6 text-center text-xs text-slate-500">会话内暂未绑定任何角色</p>}
         </div>
         <div hidden={module !== 'workflows'}><WorkflowModule drawer={drawer} onExpand={() => { if (drawer) close() }} /></div>
-        {module === 'context' && <Suspense fallback={<p role="status" className="text-xs">正在读取上下文设置…</p>}><ConversationContextPanel conversation={conversation} /></Suspense>}
+        {module === 'context' && <Suspense fallback={<p role="status" className="text-xs">正在读取上下文设置…</p>}><ConversationContextPanel conversation={conversation} onEditRole={role => { if (drawer) close(); onEditRole(role) }} /></Suspense>}
       </div>
     </aside>
   </>

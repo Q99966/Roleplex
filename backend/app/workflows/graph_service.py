@@ -108,12 +108,12 @@ async def target(session, cid, uid, kind, target_id):
 
 async def member_capabilities(session, conv, uid):
     from .coordination import capabilities
-    from ..workspaces.tools import workspace_tool_policy
+    from ..agent.capabilities import role_tool_policy
     from ..models import Role
     result=await capabilities(session,conv,uid)
     for item in result:
         role=await session.get(Role,item['role_id'])
-        policy=await workspace_tool_policy(session,conversation=conv,role=role,triggered_by_user_id=uid)
+        policy=await role_tool_policy(session,conversation=conv,role=role,triggered_by_user_id=uid)
         item['tool_specs']=policy['exposed_tools']
     return result
 

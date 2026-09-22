@@ -68,3 +68,27 @@ def project_message(message: Message, *, target_role_id: int) -> BaseMessage | N
     """按目标角色投影一条终态来源；供工作流精确上游复用。"""
     text = stable_message_text(message)
     return project_text(text, message.sender_type, message.sender_id, target_role_id) if text else None
+
+
+def public_execution_facts(message: Message) -> dict | None:
+    """只归纳原消息的服务器执行标记；状态计数不冒充文件验收或具体副作用明细。"""
+    from ..services.execution_evidence import message_stop_reason
+    if message.sender_type not in {'role', 'orchestrator'} or message.status in {'pending', 'generating'}:
+        return None
+    tools = {}
+    for part in message.parts_json or []:
+        if part.get('type') != 'tool_call':
+            continue
+        name = str(part.get('tool_name', 'unknown'))[:128]
+        counts = tools.setdefault(name, {'statuses': {}, 'effects': {}, 'confirmed_applied_items': 0})
+        status = part.get('status') if part.get('status') in {'running', 'success', 'failed', 'rejected', 'cancelled', 'interrupted', 'not_executed'} else 'unknown'
+        effect = part.get('effect_state') if part.get('effect_state') in {'applied', 'not_applied', 'not_applicable'} else 'unknown'
+        counts['statuses'][status] = counts['statuses'].get(status, 0) + 1
+        counts['effects'][effect] = counts['effects'].get(effect, 0) + 1
+        count = part.get('confirmed_applied_items')
+        if type(count) is int and count > 0:
+            counts['confirmed_applied_items'] += count
+    if not tools and message.status == 'done':
+        return None
+    return {'status': message.status, 'stop_reason': message_stop_reason(message), 'tools': tools,
+        'notice': '仅为原消息的执行状态计数，不是任务验收；未知不能当作未执行。'}

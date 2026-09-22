@@ -9,6 +9,8 @@
 | 复核日期 | 2026-09-16 |
 | 事实来源 | ModelCallUsage、AgentExecution、领域 ProviderCallStarted/Completed、execution_usage 服务及对应测试 |
 
+主动压缩 `context_compact` 复用同一记录和汇总。`latest.execution_kind` 标记维护类型，此时 message_id 可为 null；成员面板注明维护调用，压缩面板按 execution 查看 usage。分段 call_index 在同一 execution 连续，缺失仍未知；材料压缩前后估算不能代替厂商累计 Token。
+
 GET /api/conversations/{conversation_id}/roles/{role_id}/usage：要求 Owner、有效 Token、会话成员、未删除会话及属于该 Owner 的未删除角色；角色须为当前成员或在本会话有 execution。Guest 为既有 Owner 鉴权拒绝，无归属会话返回404，角色不可用返回ROLE_NOT_FOUND。响应no-store。运行中查询是近实时观察，不承诺多个聚合读取构成同一计费事务快照，下一次刷新可能补齐在途记录。
 返回 latest（最近execution或null）与 cumulative（本会话此角色全部execution，非跨会话/跨World总量）。latest 包含 execution_id、message_id、status、error_code、stop_reason、model_name、duration_ms 和 summary。
 summary：executions、untracked_executions、untracked_messages、recorded_calls、completed_calls、missing_call_records；metrics 的 input_tokens/output_tokens/cache_hit_tokens/cache_write_tokens/model_duration_ms 各为 {total,known,missing_calls}。

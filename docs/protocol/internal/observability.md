@@ -74,6 +74,8 @@ checkpoint hash；完整 Prompt、层内容、用户输入和模型输出仍不�
 
 Context schema 7 的来源材料快照和逐次请求估算写入业务表，不另建 Trace 或从日志反推。估算器 conservative_utf8_v2 纳入实际工具 Schema 与执行内工具调用参数/结果；首次 ContextBuilder 的预算日志仍表示首次组装，后续调用增长读取 model_call_usage.input_estimate_json。材料正文、预览响应和输入框草稿不进入正式日志；接口语义见[会话上下文](../public/rest/conversation-context.md)。
 
+schema 8 的压缩维护仍用原 request/chain/execution/generation；调用偏移让分段的 provider_call_index 连续。诊断只记录状态、耗时、固定错误码、安全异常类型、模型/脱敏基址及厂商报告的 usage，不记录压缩要求、模型摘要或检索原文/词语。Memory 工具审计参数摘要默认空对象，来源事实在受权限保护的 memory_references 中。context_updated WS 事件只有版本与任务状态，正文通过 Owner 接口读取。
+
 ## 测试报告
 
 pytest summary 区分 full/partial，并记录 Git HEAD、dirty 指纹、数据库和通过/失败/跳过统计。失败文件不

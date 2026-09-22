@@ -54,9 +54,21 @@ async def context_view(session, cid):
             reasons[reason] = reasons.get(reason, 0) + count
         text_bytes += int(size or 0)
         through = max(through, last or 0)
+    from ..context.summaries import current_summary
+    from ..models import ContextCompression, ContextCompressionSource
+    summary, unavailable = await current_summary(session, cid)
+    active_summary = None
+    represented = 0
+    if summary:
+        job = await session.get(ContextCompression, summary.id)
+        represented = int(await session.scalar(select(func.sum(Entry.text_bytes)).where(Entry.conversation_id == cid,
+            Entry.message_id.in_(select(ContextCompressionSource.message_id).where(ContextCompressionSource.compression_id == summary.id)))) or 0)
+        active_summary = {'id': summary.id, 'source_count': job.source_count, 'through_message_id': job.through_message_id,
+            'text': summary.text, 'text_bytes': summary.text_bytes, 'created_at': utc_time(summary.created_at)}
     return {'conversation_id': cid, 'revision': revision, 'projection_version': row.projection_version,
         'updated_at': utc_time(row.updated_at), 'counts': counts, 'excluded_reasons': reasons,
-        'text_bytes': text_bytes, 'through_message_id': through}
+        'text_bytes': text_bytes, 'through_message_id': through, 'active_summary': active_summary,
+        'summary_unavailable': unavailable, 'material_text_bytes': text_bytes - represented + (summary.text_bytes if summary else 0)}
 
 
 async def verify_revision(session, cid, revision):

@@ -159,6 +159,39 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 领域适用范围见 [角色管理与墓碑](public/rest/roles.md) 和
 [会话管理与回收站](public/rest/conversations.md)。
 
+### 上下文维护与检索
+
+维护失败/取消不抹掉已经发生的调用，也不自动重放。详见[主动压缩](public/rest/context-compression.md)与[Memory](public/rest/memory.md)。
+
+| 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
+|---|---|---|---:|---|---|---|
+| `CONTEXT_COMPRESSION_REQUEST_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 同一请求键对应不同参数，先核对原任务 |
+| `CONTEXT_COMPRESSION_BUSY` | 已实现 | REST | 409 | rejected | conditional | 本会话已有在途维护请求 |
+| `CONTEXT_COMPRESSION_MODEL_UNAVAILABLE` | 已实现 | REST | 404/422 | rejected | conditional | 所选角色/成员或模型不可用，不另选模型 |
+| `CONTEXT_COMPRESSION_MODEL_CHANGED` | 已实现 | 任务结果 | — | rejected | conditional | 冻结后的模型配置变化，旧请求不继续调用 |
+| `CONTEXT_COMPRESSION_BUDGET_EXCEEDED` | 已实现 | REST/任务结果 | 422 / — | rejected | conditional | 压缩窗口或维护链决策额度不足 |
+| `CONTEXT_COMPRESSION_RANGE_INVALID` | 已实现 | REST | 422 | rejected | conditional | 边界不属于稳定来源或拆分已有摘要 |
+| `CONTEXT_COMPRESSION_RANGE_PENDING` | 已实现 | REST | 409 | rejected | conditional | 覆盖范围仍有生成中的消息 |
+| `CONTEXT_NOTHING_TO_COMPRESS` | 已实现 | REST/任务结果 | 422 / — | rejected | conditional | 所选范围没有可压缩来源 |
+| `CONTEXT_COMPRESSION_NOT_FOUND` | 已实现 | REST/任务结果 | 404 / — | rejected | conditional | 请求不存在或不属于当前会话 |
+| `CONTEXT_SUMMARY_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 摘要不存在或不属于当前会话 |
+| `CONTEXT_COMPRESSION_SOURCE_CHANGED` | 已实现 | 任务结果 | — | rejected | conditional | 来源、授权或活动版本变化，旧结果不采用 |
+| `CONTEXT_COMPRESSION_SOURCE_TOO_LARGE` | 已实现 | 任务结果 | — | rejected | conditional | 完整来源无法装入压缩窗口，不截断冒充完成 |
+| `CONTEXT_COMPRESSION_MERGE_TOO_LARGE` | 已实现 | 任务结果 | — | rejected | conditional | 两段仍无法合并，停止继续调用 |
+| `CONTEXT_COMPRESSION_RESULT_INVALID` | 已实现 | 任务结果 | — | failed | conditional | 摘要结构或来源引用无效 |
+| `CONTEXT_COMPRESSION_OUTPUT_TOO_LARGE` | 已实现 | 任务结果 | — | failed | conditional | 模型返回超过目标，旧材料保留 |
+| `CONTEXT_COMPRESSION_NO_GAIN` | 已实现 | 任务结果 | — | success | conditional | 无缩减，正常结束为 unchanged |
+| `CONTEXT_COMPRESSION_REQUIRED_FACTS_TOO_LARGE` | 已实现 | 任务结果 | — | success | conditional | 必要事实无法放进目标，正常结束为 unchanged |
+| `CONTEXT_COMPRESSION_FAILED` | 已实现 | 任务结果/日志 | — | failed | conditional | 安全兜底错误，不返回原异常 |
+| `MEMORY_NOT_AVAILABLE` | 已实现 | REST/工具 | 404 / — | rejected | conditional | 角色、成员、工具开关或 execution/allocation 无效 |
+| `MEMORY_SOURCE_NOT_FOUND` | 已实现 | REST/工具 | 404 / — | rejected | conditional | 来源不可共享、引用无效或越过执行边界，不泄露被排除来源 |
+| `MEMORY_SOURCE_CHANGED` | 已实现 | REST/工具 | 409 / — | rejected | conditional | 消息或摘要覆盖版本变化，重新搜索 |
+| `MEMORY_CURSOR_CHANGED` | 已实现 | REST/工具 | 409 / — | rejected | conditional | 查询、可读范围或材料变化，重新搜索 |
+| `MEMORY_CURSOR_INVALID` | 已实现 | REST/工具 | 422 / — | rejected | conditional | 游标签名或结构无效 |
+| `MEMORY_QUERY_INVALID` | 已实现 | REST/工具 | 422 / — | rejected | conditional | 没有可检索关键词 |
+| `MEMORY_READ_RANGE_INVALID` | 已实现 | REST/工具 | 422 / — | rejected | conditional | 字符偏移超过原文长度 |
+| `MEMORY_STORAGE_UNAVAILABLE` | 已实现 | REST/工具 | 503 / — | failed | conditional | 存储不可用，无查询词、正文或 SQL 参数 |
+
 ## 七、会话、消息与 Artifact 错误码
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |

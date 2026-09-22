@@ -82,13 +82,13 @@ async def resource_check(session, run):
             reject('WORKFLOW_RESOURCE_CHANGED')
     # 只校验尚将参与的角色，已完成旧角色的删除不使历史事实消失。
     await validate_roles(session, conv, run.snapshot['nodes'][run.cursor:], run.owner_id)
-    from ..workspaces.tools import workspace_tool_policy
+    from ..agent.capabilities import role_tool_policy
     for node in run.snapshot['nodes'][run.cursor:]:
         required = set(run.snapshot.get('capabilities', {}).get(node['id'], []))
         if not required:
             continue
         role = await session.get(Role, node['role_id'])
-        policy = await workspace_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=run.owner_id)
+        policy = await role_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=run.owner_id)
         if not required.issubset({tool['name'] for tool in policy['exposed_tools']}):
             reject('WORKFLOW_CAPABILITY_CHANGED')
     return conv
@@ -225,11 +225,11 @@ async def start(cid, uid, payload: Start):
                 binding = await session.get(WorkspaceBinding, conv.workspace_binding_id)
                 run.workspace_root = binding.root_path if binding else None
             await resource_check(session, run)
-            from ..workspaces.tools import workspace_tool_policy
+            from ..agent.capabilities import role_tool_policy
             capabilities = {}
             for node in run.snapshot['nodes']:
                 if node['kind'] == 'role':
-                    policy = await workspace_tool_policy(session, conversation=conv,
+                    policy = await role_tool_policy(session, conversation=conv,
                         role=await session.get(Role, node['role_id']), triggered_by_user_id=uid)
                     capabilities[node['id']] = [tool['name'] for tool in policy['exposed_tools']]
             run.snapshot = {**run.snapshot, 'capabilities': capabilities}

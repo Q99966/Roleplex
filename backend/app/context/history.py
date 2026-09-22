@@ -20,13 +20,18 @@ class HistorySelection:
 
 
 async def select_history(session: AsyncSession, *, conversation_id: int, role_id: int,
-                         boundary, fixed_tokens: int, input_budget: int, pinned_budget: int) -> HistorySelection:
+                         boundary, fixed_tokens: int, input_budget: int, pinned_budget: int,
+                         summary_id: str | None = None) -> HistorySelection:
     """相对身份只计本轮开销；分页选择连续近期后缀和预算内的置顶来源。"""
     prefix = case(((Entry.sender_type == 'role') & (Entry.sender_id == role_id), 0),
         (Entry.sender_id.is_(None), func.length(Entry.sender_type) + 3),
         else_=func.length(Entry.sender_type) + func.length(cast(Entry.sender_id, String)) + 4)
     tokens = Entry.text_bytes + prefix + 8
     filters = [Entry.conversation_id == conversation_id, Entry.state == 'included', boundary]
+    if summary_id:
+        from ..models import ContextCompressionSource
+        filters.append(~select(ContextCompressionSource.message_id).where(
+            ContextCompressionSource.compression_id == summary_id, ContextCompressionSource.message_id == Entry.message_id).exists())
     count, total = (await session.execute(select(func.count(), func.sum(tokens)).where(*filters))).one()
     picked = {}
     used, pinned_used = 0, 0

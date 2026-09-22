@@ -77,6 +77,7 @@ export function RoleUsagePanel({conversationId,roleId}:{conversationId:number;ro
           <span>整轮耗时 {value.latest.duration_ms===null?'未知':`${(value.latest.duration_ms/1000).toFixed(2)} 秒`}</span>
         </div>}
         {mode==='latest'&&value?.latest?.model_name&&<p className="break-all text-[10px] text-slate-500">执行模型：{value.latest.model_name}</p>}
+        {mode==='latest'&&value?.latest?.execution_kind==='context_compact'&&<p className="text-slate-500">本次为上下文压缩维护，调用计入该角色用量。</p>}
         {mode==='latest'&&value?.latest?.error_code&&<p className="break-all text-red-300">{value.latest.error_code}</p>}
         <p className="text-slate-500">{mode==='cumulative'?`${summary.executions} 次执行 · `:''}已记录模型调用 {summary.recorded_calls} 次</p>
         <div className="grid grid-cols-2 gap-2">

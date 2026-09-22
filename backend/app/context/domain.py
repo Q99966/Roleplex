@@ -10,8 +10,8 @@ from langchain_core.messages import BaseMessage
 if TYPE_CHECKING:
     from ..agent.capabilities import ExecutionCapabilities
 
-# v7 使用持久共享材料及来源版本，估算包括实际工具 Schema。
-CONTEXT_SCHEMA_VERSION = 7
+# v8 增加有来源的压缩段与主动检索能力，工作流精确上游继续独立。
+CONTEXT_SCHEMA_VERSION = 8
 
 
 @dataclass(frozen=True)

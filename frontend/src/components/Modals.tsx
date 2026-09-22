@@ -909,6 +909,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
               <span className="text-slate-400 font-medium">绑定内置运行工具 (Builtin Tools)</span>
               <div className="mt-2 flex flex-wrap gap-2">
                 {([
+                  ['历史检索（只读）', [
+                    ['memory_search', '搜索可共享的会话历史'], ['memory_read', '按引用读取历史原文'],
+                  ]],
                   ['文件操作', [
                     ['workspace_list', '列出工作区'], ['workspace_search', '搜索工作区文件'],
                     ['workspace_read', '读取文件（字节 / 行范围）'], ['workspace_write', '写入工作区文件'], ['workspace_edit', '局部编辑工作区文件'],

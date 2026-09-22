@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall, ToolExecutionDetail
+from ..models import AgentExecution, Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall, ToolExecutionDetail
 from ..config.logging import set_log_context
 from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
 from ..context.domain import ContextBuildError, ContextBuildResult
@@ -461,7 +461,7 @@ async def _persist_text_delta(
 async def run_scheduled_generation(
     generation_id: int,
     conversation_id: int,
-    current_message_id: int,
+    current_message_id: int | None,
     *,
     target_role_id: int,
     triggered_by_user_id: int | None = None,
@@ -477,13 +477,18 @@ async def run_scheduled_generation(
     Args:
         generation_id：生成记录标识，同时用于停止生成。
         conversation_id：所属会话。
-        current_message_id：当前用户消息 ID；不接收旁路文本，避免当前消息与数据库历史漂移。
+        current_message_id：聊天的当前用户消息 ID；独立上下文维护为 None，来源取自维护请求。
         target_role_id：本次 generation 唯一允许回复的角色 ID。
         triggered_by_user_id：触发者，写入工具审计。
         allow_dangerous：触发者是否可以执行 dangerous 工具。
         execution_id：本次角色执行标识；群聊各角色独立，chain ID 仍共享。
-        execution_kind：ContextBuilder 运行类型，单聊为 single、群聊为 group_role。
+        execution_kind：single/group_role 是聊天；context_compact 交给受约束的无工具维护 runner。
     """
+    if execution_kind == 'context_compact':
+        from ..context.compaction_runner import run
+        await run(generation_id=generation_id, conversation_id=conversation_id, execution_id=execution_id,
+            triggered_by_user_id=triggered_by_user_id, target_role_id=target_role_id)
+        return
     set_log_context(
         user_id=triggered_by_user_id,
         conversation_id=conversation_id,
@@ -648,7 +653,8 @@ async def run_scheduled_generation(
             from ..agent.capabilities import create_execution_tools
             if context.capabilities is None:
                 raise ContextBuildError('AGENT_CAPABILITIES_CHANGED')
-            tools.extend(await create_execution_tools(session, context.capabilities, role=role, allow_dangerous=allow_dangerous))
+            tools.extend(await create_execution_tools(session, context.capabilities, role=role, allow_dangerous=allow_dangerous,
+                material=context.material_snapshot))
             # 实际调用开始后才记录采用来源；预检或预算拒绝不能伪装成模型已使用。
             prompt_receipt = {**context.prompt_snapshot, 'capabilities': context.capabilities.receipt(),
                 'material': context.material_snapshot, 'request': context.request_estimate}
@@ -672,6 +678,8 @@ async def run_scheduled_generation(
             async with SessionLocal() as session:
                 await require_context_access(session, conversation_id=conversation_id, role_id=role_id,
                     user_id=triggered_by_user_id)
+                from ..memory.service import revalidate_execution
+                await revalidate_execution(session, execution_id, conversation_id, role_id, triggered_by_user_id, context.material_snapshot)
             return await consume(execution_id, index)
 
         # 消费者在事件处理期间取消，也必须先关闭图与工具任务，不能依赖垃圾回收。
@@ -976,7 +984,9 @@ async def build_snapshot(session, conversation_id: int) -> dict:
     )).all()
     active_ids = list((await session.scalars(
         select(Generation.id)
-        .where(Generation.conversation_id == conversation_id, Generation.status.in_(["queued", "running"]))
+        .where(Generation.conversation_id == conversation_id, Generation.status.in_(["queued", "running"]),
+            ~select(AgentExecution.id).where(AgentExecution.generation_id == Generation.id,
+                AgentExecution.execution_kind == 'context_compact').exists())
         .order_by(Generation.id.asc())
     )).all())
     return {

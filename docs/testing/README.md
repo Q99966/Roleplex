@@ -526,3 +526,14 @@ frontend：`npm run test:e2e:commands -- workflow-workbench.spec.ts workflow-fee
 - `npm run test:e2e:worlds -- conversation-context-worlds.spec.ts`：实际 World 切换/后端重启、重新认证和材料隔离。
 
 UI 继续通过既有消息 WS 和调用级轮询读取业务状态；没有需要在浏览器中单独维护的上下文副本。日志、截图和数据库采用本指南既有隔离与清理入口，正文只用受控样例。实际结果见[上下文验收](conversation-context.md)，估算不能当作厂商精确 Token 或摘要质量验证。
+
+### 主动压缩与历史检索（总体计划 C）
+
+后端在 `backend/`：`python -m pytest tests/test_memory.py tests/test_memory_permissions.py tests/test_context_compaction.py tests/test_compaction_boundaries.py tests/test_compaction_budget_recovery.py tests/test_conversation_context.py tests/test_context_execution.py tests/test_context_access.py tests/test_context_builder.py tests/test_chat_flow.py tests/test_interruption_context.py tests/test_execution_usage.py tests/test_agent_loop.py tests/test_prompt_settings.py tests/test_group_chat.py tests/test_orchestrator.py tests/test_delete_semantics.py tests/test_graph_control.py -q --tb=short --show-capture=no`。覆盖分段/合并预算、来源/回退/取消竞争、幂等、恢复、原文检索、目的地共享权限、实际工具链和原工作流。迁移检查 `python scripts/check_migrations.py` 包含 0026。
+
+前端在 `frontend/`，按套件串行运行，避免共享产物目录相互覆盖：
+
+- `npm run test:e2e:commands -- context-compaction-memory.spec.ts conversation-context.spec.ts prompt-settings.spec.ts graph-control.spec.ts orchestration.spec.ts`：发布摘要、丢失响应找回、取消/回退、Agent 实际搜索回读、权限失效、窄屏焦点及原能力回归。
+- `npm run test:e2e:worlds -- compaction-memory-worlds.spec.ts`：实际 World 切换/重启，摘要与引用保留、跨 World 引用拒绝。
+
+普通回归使用 fake Provider；`[MEMORY_PROBE]` 从真实工具结果回读受控原文，`[COMPACT_SLOW]` 只在压缩 fake 中延迟以验证取消，不是产品权限入口。真实模型的摘要质量和语义检索效果另行验证，不由 fake 通过代替。结果与截图见[C 批验收](context-compaction-memory.md)。

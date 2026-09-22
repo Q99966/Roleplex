@@ -181,7 +181,7 @@ async def attempt(session, run, activation, upstream=(), instruction='', source=
 
 async def dispatch(session, run, activation, row):
     """与激活同事务保存精确分配和子执行；只在提交后唤醒 Provider worker。"""
-    from ..workspaces.tools import workspace_tool_policy
+    from ..agent.capabilities import role_tool_policy
     conv = await check_run(session, run)
     parent_execution_id = run.state_json.get('plan_execution_id')
     node = row.node_snapshot_json or node_for(run, activation.node_id)
@@ -193,7 +193,7 @@ async def dispatch(session, run, activation, row):
         role_id, tools = grant['role_id'], grant['tools']
     await service.validate_roles(session, conv, [{'kind': 'role', 'role_id': role_id}], run.owner_id)
     role = await session.get(Role, role_id)
-    policy = await workspace_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=run.owner_id)
+    policy = await role_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=run.owner_id)
     if not set(tools).issubset({tool['name'] for tool in policy['exposed_tools']}):
         service.reject('WORKFLOW_ALLOCATION_REVOKED')
     if row.phase == 'plan':

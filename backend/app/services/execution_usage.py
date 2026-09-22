@@ -148,20 +148,20 @@ async def role_usage(session,conversation_id:int,role_id:int):
         conversation_id：当前会话。
         role_id：当前角色。
     """
-    row=(await session.execute(select(AgentExecution.execution_id,Generation,Message.meta_json)
+    row=(await session.execute(select(AgentExecution.execution_id,AgentExecution.execution_kind,Generation,Message.meta_json)
         .join(Generation,Generation.id==AgentExecution.generation_id)
         .outerjoin(Message,Message.id==Generation.assistant_message_id)
         .where(AgentExecution.conversation_id==conversation_id,AgentExecution.role_id==role_id)
         .order_by(AgentExecution.id.desc()).limit(1))).first()
     latest=None
     if row:
-        current_execution_id,generation,message_meta=row
+        current_execution_id,execution_kind,generation,message_meta=row
         model=await session.scalar(select(ModelCallUsage.model_name).where(ModelCallUsage.execution_id==current_execution_id).order_by(ModelCallUsage.call_index.desc()).limit(1))
         duration=None
         if generation.started_at and generation.ended_at:
             elapsed=(generation.ended_at-generation.started_at).total_seconds()*1000
             duration=int(elapsed) if elapsed>=0 else None
-        latest={'execution_id':current_execution_id,'message_id':generation.assistant_message_id,
+        latest={'execution_id':current_execution_id,'execution_kind':execution_kind,'message_id':generation.assistant_message_id,
             'status':generation.status,'error_code':generation.error_code,'stop_reason':(message_meta or {}).get('stop_reason'),
             'model_name':model,'duration_ms':duration,
             'summary':await summary(session,conversation_id,role_id,current_execution_id)}

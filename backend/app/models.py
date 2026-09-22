@@ -231,7 +231,8 @@ class WorkflowBudget(Base):
     __tablename__ = 'workflow_budgets'
     chain_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
-    trigger_message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, unique=True)
+    # 独立上下文维护请求没有聊天消息；它仍使用唯一 chain 和世界预算快照。
+    trigger_message_id: Mapped[int | None] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=True, unique=True)
     decision_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     used_decisions: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     configuration_revision: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -316,6 +317,7 @@ class ConversationContext(Base):
     __tablename__ = 'conversation_contexts'
     conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), primary_key=True)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    summary_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default='0')
     projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -339,8 +341,86 @@ class ConversationContextEntry(Base):
     reason: Mapped[str | None] = mapped_column(String(32))
     text: Mapped[str] = mapped_column(Text, nullable=False)
     text_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    search_text: Mapped[str | None] = mapped_column(Text)
+    execution_facts_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False, default='', server_default='')
+    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2, server_default='0')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     __table_args__ = (Index('ix_context_entries_conversation_message', 'conversation_id', 'message_id'),)
+
+
+class ContextCompression(Base):
+    """一次幂等的上下文维护请求；复用 execution/generation/chain，不伪造聊天消息。"""
+    __tablename__ = 'context_compressions'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
+    owner_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    role_id: Mapped[int | None] = mapped_column(ForeignKey('roles.id', ondelete='SET NULL'))
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False, unique=True)
+    request_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 可空唯一值确保同一会话只有一个在途维护请求；终态释放，历史记录不删除。
+    active_conversation_id: Mapped[int | None] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), unique=True)
+    source_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    base_summary_id: Mapped[str | None] = mapped_column(String(64))
+    base_summary_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    through_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    keep_recent: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    model_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_tokens_estimate: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    output_tokens_estimate: Mapped[int | None] = mapped_column(BigInteger)
+    completed_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default='queued')
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='queued')
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint('conversation_id', 'owner_id', 'request_key', name='uq_context_compression_request'),
+        Index('ix_context_compressions_conversation_created', 'conversation_id', 'created_at'))
+
+
+class ContextCompressionSource(Base):
+    """冻结的来源身份；消息删除后仍保留 ID，以便明确判定旧摘要失效。"""
+    __tablename__ = 'context_compression_sources'
+    compression_id: Mapped[str] = mapped_column(ForeignKey('context_compressions.id', ondelete='CASCADE'), primary_key=True)
+    message_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ContextSummary(Base):
+    """校验后发布的不可变摘要；活动指针可回退，原消息及后来追加的尾部保持原样。"""
+    __tablename__ = 'context_summaries'
+    id: Mapped[str] = mapped_column(ForeignKey('context_compressions.id', ondelete='CASCADE'), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
+    active_conversation_id: Mapped[int | None] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), unique=True)
+    content_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MemoryReference(Base):
+    """工具已读取的来源凭据；不保存查询词、原文或另一套 Trace。"""
+    __tablename__ = 'memory_references'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    execution_id: Mapped[str] = mapped_column(ForeignKey('agent_executions.execution_id', ondelete='CASCADE'), nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    reference: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    characters: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (Index('ix_memory_references_execution', 'execution_id', 'created_at'),)
 
 
 class WorkspaceBinding(Base):

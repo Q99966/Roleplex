@@ -25,7 +25,7 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import agent_budget, approvals, artifacts, auth, conversation_context, conversations, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, workflows
+from .routers import agent_budget, approvals, artifacts, auth, context_compaction, conversation_context, conversations, memory, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, workflows
 from .runtime.manager import manager as runtime_manager
 from .runtime.registry import RuntimeRejected
 from .runtime.wrapper import watch_wrapper
@@ -100,6 +100,8 @@ async def lifespan(_app: FastAPI):
         initialize_current_pool()
         runtime_started = True
         await conversation_scheduler.start(chat.run_scheduled_generation)
+        from .context.compaction import recover as recover_compactions
+        await recover_compactions()
         from .workflows import service as workflow_service
         await workflow_service.initialize()
         await retention.purge_expired_on_startup()
@@ -231,6 +233,8 @@ app.include_router(runtime.router)
 app.include_router(agent_budget.router)
 app.include_router(prompt_settings.router)
 app.include_router(conversation_context.router)
+app.include_router(memory.router)
+app.include_router(context_compaction.router)
 app.include_router(workflows.router)
 app.include_router(ws_router)
 

@@ -1,10 +1,11 @@
 import { request } from './client'
 
 export type ContextSource = { message_id: number; revision: number; status: string }
-export type MaterialReceipt = { scope: string; revision: number | null; visible_through_message_id: number; current_message_id: number | null; current_message_revision: number | null; sources: ContextSource[] }
+export type MaterialReceipt = { scope: string; revision: number | null; visible_through_message_id: number; current_message_id: number | null; current_message_revision: number | null; sources: ContextSource[]; summary_id?: string | null; summary_omitted_reason?: string | null }
 export type InputEstimate = { estimated_tokens: number; safety_margin_tokens: number; estimator_kind: string; estimator_version: number; is_provider_exact: false }
 export type RequestEstimate = InputEstimate & { effective_context_window: number; output_reserved_tokens: number; input_budget_tokens: number; before_truncation_tokens: number; before_truncation_safety_margin_tokens: number; included_message_count: number; truncated_message_count: number; blocked: boolean; recovery_omitted: boolean; breakdown: Record<string, number> }
-export type ContextSummary = { conversation_id: number; revision: number; projection_version: number; updated_at: string; counts: { included: number; pending: number; excluded: number }; excluded_reasons: Record<string, number>; text_bytes: number; through_message_id: number }
+export type ActiveSummary = { id: string; source_count: number; through_message_id: number; text: string; text_bytes: number; created_at: string }
+export type ContextSummary = { conversation_id: number; revision: number; projection_version: number; updated_at: string; counts: { included: number; pending: number; excluded: number }; excluded_reasons: Record<string, number>; text_bytes: number; through_message_id: number; active_summary?: ActiveSummary | null; summary_unavailable?: string | null; material_text_bytes?: number }
 export type ContextEntry = ContextSource & { sender_type: string; sender_id: number | null; state: string; reason: string | null; text: string; text_truncated: boolean; text_bytes: number; created_at: string }
 export type ContextPage = ContextSummary & { entries: ContextEntry[]; next_before: number | null }
 export type ContextPreview = { role_id: number; role_name: string; model_name: string; shared: ContextSummary; material: MaterialReceipt; request: RequestEstimate;

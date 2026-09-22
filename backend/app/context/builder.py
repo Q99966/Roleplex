@@ -250,10 +250,22 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest, *, 
         else:
             recovery_omitted = True
 
+    summary, summary_reason, summary_tokens, summary_message = None, None, 0, None
     if workflow_attempt is None and not coordination_instruction:
+        from .summaries import current_summary, input_text
+        summary, summary_reason = await current_summary(session, conversation.id, boundary=history_boundary)
+        if summary is not None:
+            summary_message = HumanMessage(content=await input_text(session, summary, conversation_id=conversation.id,
+                role_id=role.id, user_id=request.triggered_by_user_id))
+            summary_tokens = estimate_messages_tokens([summary_message])
+            candidate = token_estimate(fixed_tokens + summary_tokens)
+            if candidate.estimated_tokens + candidate.safety_margin_tokens > input_budget:
+                summary, summary_message, summary_tokens, summary_reason = None, None, 0, 'does_not_fit'
+            else:
+                fixed_tokens += summary_tokens
         selection = await select_history(session, conversation_id=conversation.id, role_id=role.id,
             boundary=history_boundary, fixed_tokens=fixed_tokens, input_budget=input_budget,
-            pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)))
+            pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)), summary_id=summary.id if summary else None)
         history, history_tokens, history_total = selection.messages, selection.selected_tokens, selection.total_tokens
         sources, truncated = selection.sources, selection.total_count - len(selection.messages)
         scope = 'conversation'
@@ -262,6 +274,8 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest, *, 
             input_budget=input_budget, pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)))
         history_total = sum(item.estimated_tokens for item in projected)
         scope = 'workflow_upstream' if workflow_attempt else 'workflow_coordination'
+    if summary_message is not None:
+        history = (summary_message, *history)
     if workflow_attempt is not None and len(history) != len(projected):
         # 显式要求的上游结果不能静默裁掉；让 Owner 缩小节点输入后创建新尝试。
         required = token_estimate(fixed_tokens + sum(item.estimated_tokens for item in projected))
@@ -295,15 +309,16 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest, *, 
         raise ContextBuildError('CONTEXT_SOURCE_CHANGED')
     material = {'scope': scope, 'revision': shared_revision if scope == 'conversation' else None,
         'visible_through_message_id': visible_through, 'current_message_id': None if preview else current.id,
-        'current_message_revision': None if preview else current.revision, 'sources': sources}
+        'current_message_revision': None if preview else current.revision, 'sources': sources,
+        'summary_id': summary.id if summary else None, 'summary_omitted_reason': summary_reason}
     request_estimate = {**asdict(total_estimate), 'effective_context_window': effective_window,
         'output_reserved_tokens': output_reserved, 'input_budget_tokens': input_budget,
         'before_truncation_tokens': before_estimate.estimated_tokens,
         'before_truncation_safety_margin_tokens': before_estimate.safety_margin_tokens,
-        'included_message_count': len(sources), 'truncated_message_count': truncated,
+        'included_message_count': len(sources) + int(summary is not None), 'truncated_message_count': truncated,
         'blocked': blocked, 'recovery_omitted': recovery_omitted,
         'breakdown': {'system': system_tokens, 'tools': tool_tokens, 'current': current_tokens,
-            'history': history_tokens, 'interruption': recovery_tokens}}
+            'history': history_tokens, 'interruption': recovery_tokens, 'summary': summary_tokens}}
     return ContextBuildResult(
         system_prompt=system_prompt,
         history=history,

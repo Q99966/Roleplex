@@ -433,7 +433,7 @@ class ConversationScheduler:
                 self._runner(
                     generation_id=int(job.generation_id),
                     conversation_id=conversation_id,
-                    current_message_id=int(payload["current_message_id"]),
+                    current_message_id=None if execution.execution_kind == 'context_compact' else int(payload["current_message_id"]),
                     target_role_id=int(execution.role_id),
                     triggered_by_user_id=int(payload["triggered_by_user_id"]),
                     allow_dangerous=bool(payload["allow_dangerous"]),
