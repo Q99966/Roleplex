@@ -10,8 +10,8 @@ from langchain_core.messages import BaseMessage
 if TYPE_CHECKING:
     from ..agent.capabilities import ExecutionCapabilities
 
-# v6 增加 World/会话提示词与统一能力快照；动态事实仍不进入稳定前缀。
-CONTEXT_SCHEMA_VERSION = 6
+# v7 使用持久共享材料及来源版本，估算包括实际工具 Schema。
+CONTEXT_SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True)
@@ -20,10 +20,11 @@ class ContextBuildRequest:
 
     role_id: int
     conversation_id: int
-    current_message_id: int
+    current_message_id: int | None
     triggered_by_user_id: int | None
     execution_kind: str = "single"
     execution_id: str | None = None
+    draft_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,8 @@ class ContextBuildResult:
     context_schema_version: int = CONTEXT_SCHEMA_VERSION
     prompt_snapshot: dict = field(default_factory=dict)
     capabilities: ExecutionCapabilities | None = None
+    material_snapshot: dict = field(default_factory=dict)
+    request_estimate: dict = field(default_factory=dict)
 
 
 class ContextBuildError(ValueError):

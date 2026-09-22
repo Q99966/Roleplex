@@ -379,6 +379,10 @@ async def run_agent(
     graph_limit = recursion_limit if recursion_limit is not None else (2 * decision_limit + 2 if decision_limit is not None else float('inf'))
     decisions = 0
     remaining_steps: int | float | None = None
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+    from ..context.budget import estimate_request
+    from ..context.domain import ContextBuildError
+    definitions = [convert_to_openai_tool(tool) for tool in tools]
 
     async def graph_prompt(state: dict) -> list:
         """在防腐层观察锁定图版本的派发预算，不把框架状态暴露给业务层。
@@ -434,7 +438,12 @@ async def run_agent(
                     next_provider_call_index += 1
                     provider_call_index[run_id] = next_provider_call_index
                     provider_started_at[run_id] = clock()
-                    yield ProviderCallStarted(call_index=next_provider_call_index)
+                    # 估算绑定当前框架事件，不能读取可能已推进到下一轮的共享图状态。
+                    batches = event.get('data', {}).get('input', {}).get('messages')
+                    observed = batches[0] if isinstance(batches, list) and len(batches) == 1 else None
+                    estimate = estimate_request(observed, definitions) if isinstance(observed, list) and all(
+                        isinstance(message, BaseMessage) for message in observed) else None
+                    yield ProviderCallStarted(call_index=next_provider_call_index, input_estimate=estimate)
                 elif kind == _EVENT_MODEL_STREAM:
                     chunk = event["data"].get("chunk")
                     if run_id in provider_started_at and run_id not in provider_ttft_ms:
@@ -522,6 +531,10 @@ async def run_agent(
                         command_summary=command_result_summary(event.get('name', ''), output),
                         private_output=private_output,
                     )
+    except ContextBuildError as exc:
+        code = str(exc) if str(exc) in {'CONVERSATION_NOT_FOUND', 'ROLE_NOT_AVAILABLE', 'CONTEXT_SOURCE_CHANGED'} else 'AGENT_RUNTIME_ERROR'
+        yield ProviderError(code=code, message=code, stop_reason='context_rejected')
+        return
     except _DecisionBudgetReached:
         if response_error or protocol_broken or pending_ids or started_at or provider_call_index:
             code = response_error or ('AGENT_TOOL_RESULT_MISMATCH' if protocol_broken else 'AGENT_TOOL_RESULT_MISSING')

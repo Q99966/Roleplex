@@ -7,7 +7,7 @@ import { Bot, Info, UsersRound, LockKeyhole, GitBranch, Layers3 } from 'lucide-r
 import type { Conversation, Role } from '../api/client'
 import { useAppStore } from '../store/app'
 
-const ConversationPromptSettings = lazy(() => import('./prompts/PromptSettings').then(module => ({ default: module.ConversationPromptSettings })))
+const ConversationContextPanel = lazy(() => import('./context/ConversationContext').then(module => ({ default: module.ConversationContextPanel })))
 type Module = 'overview' | 'members' | 'workflows' | 'context'
 const MODULES = [{ id: 'overview', name: '会话概览', Icon: Info }, { id: 'members', name: '会话成员', Icon: UsersRound }, { id: 'workflows', name: '工作流', Icon: GitBranch }, { id: 'context', name: '上下文', Icon: Layers3 }] as const
 
@@ -251,7 +251,7 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
           {!conversation.role_ids.length && <p className="py-6 text-center text-xs text-slate-500">会话内暂未绑定任何角色</p>}
         </div>
         <div hidden={module !== 'workflows'}><WorkflowModule drawer={drawer} onExpand={() => { if (drawer) close() }} /></div>
-        {module === 'context' && <Suspense fallback={<p role="status" className="text-xs">正在读取上下文设置…</p>}><ConversationPromptSettings conversation={conversation} /></Suspense>}
+        {module === 'context' && <Suspense fallback={<p role="status" className="text-xs">正在读取上下文设置…</p>}><ConversationContextPanel conversation={conversation} /></Suspense>}
       </div>
     </aside>
   </>

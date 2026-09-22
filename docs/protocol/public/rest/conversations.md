@@ -16,6 +16,8 @@
 [消息发送与生成控制](../messaging/messages.md)，事件订阅见
 [WebSocket 会话事件流](../websocket/conversation-stream.md)。
 
+全部单聊/群聊的持久共享材料及按角色输入占用见[会话上下文](conversation-context.md)。材料随业务消息事务更新；会话回收站保留来源，恢复后重新鉴权读取，不复制成另一个会话。
+
 ## 鉴权与资源归属
 
 全部接口要求 `Authorization: Bearer <访问令牌>`。读取与偏好接口要求请求者是该会话的

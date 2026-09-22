@@ -112,13 +112,19 @@ read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后�
 
 ### 提示词分层与共同能力快照
 
-Context schema 6 通过 `context/prompts.py` 共用平台固定规则、平台默认/世界覆盖、世界提示词、角色/inline 技能及会话提示词的序列化，配置接口见[提示词配置](../public/rest/prompt-settings.md)。每次执行先固定本次来源，配置更新不重写已发出的调用。
+Context schema 7 延续 schema 6，通过 `context/prompts.py` 共用平台固定规则、平台默认/世界覆盖、世界提示词、角色/inline 技能及会话提示词的序列化，配置接口见[提示词配置](../public/rest/prompt-settings.md)。每次执行先固定本次来源，配置更新不重写已发出的调用。
 
 `agent/capabilities.py` 统一解析本次能力；普通角色可用集合由资源类别解析，工作流再以已有 allocation 限制。预览、ContextBuilder 预算/指纹和实际工具工厂使用同一快照，`agent/tool_definitions.py` 规范化参数 Schema。实际工具名称或参数定义不一致时以 `AGENT_CAPABILITIES_CHANGED` 在调用模型前封闭，不静默换成另一套工具。实际调用仍沿用原生/工作流逐次授权和资源准入，解析快照不替代撤权检查。
 
 角色配置、群成员能力和任务分配共用角色能力入口，避免在各处用工作区工具名硬编码所有未来能力的前置。当前接入类别仍为原生工作区与工作流控制；没有虚构 Memory、Skills 加载或 MCP 工具。已有 Skills JSON 继续作为角色说明，MCP 配置只保留、不连接。
 
 实际调用的采用来源与用量记录共享短事务和有限重试，正文不进入来源记录；同一 execution 后续调用不覆盖既有来源。预算拒绝或仅预览不创建已采用记录。来源元数据和状态缺失保持未知，原消息和工具事实仍是其各自领域的事实来源。
+
+### 共享会话材料与每次请求
+
+schema 7 从持久共享材料选取普通会话历史，按 SQL 聚合计算裁剪前压力，再分页选择 pinned/近期来源，只加载被选正文。来源事务通过 `context/store.py` 同步创建、终态和修订，startup 分批回填旧消息；不将页面加载范围作为模型边界。工作流仍按精确上游选择，普通 @ 链后续角色能读取前序角色已提交终态。
+
+`ProviderCallStarted.input_estimate` 是防腐层从该事件实际消息和绑定工具 Schema 提取的无正文估算，包含工具轮参数和结果；写入 model_call_usage，与厂商 usage 分离。每次决策前复核会话及角色/触发者当前成员资格，撤权封闭后续请求，保留已有工具事实。请求来源快照、前端预览、版本竞争与恢复以[上下文协议](../public/rest/conversation-context.md)为准。
 
 ## 防腐层边界与实测结论
 
@@ -199,7 +205,7 @@ trace/video，具体运行与留存约定见 README。
 
 - 只在 Owner 触发的 single 或 group 会话、角色显式启用、会话绑定 active/available 工作区且 execution lease ready
   时暴露 `workspace_list/read/search/write/edit`；Guest、未绑定和能力关闭时连工具 schema 都不可见。
-- ContextBuilder 在 Provider 调用前按实际暴露集合把 W1a 工具策略计入预算和 `tool_policy_hash`；随机
+- ContextBuilder 在 Provider 调用前按实际暴露集合把实际 W1a 工具 Schema 计入预算、完整策略计入 `tool_policy_hash`；随机
   execution ID 不进入稳定 hash。
 - 每次实际调用重新读取 execution、Owner、角色、会话、binding 和 lease，重新 canonicalize Workspace 绝对根；
   注册时通过不能替代执行时授权。

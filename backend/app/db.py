@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from .config import settings
 
@@ -37,7 +37,11 @@ if settings.database_url.startswith("sqlite"):
         cursor.close()
 
 
-SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+class ApplicationSession(Session):
+    """本应用的 ORM 事件边界，避免投影监听污染其他 Session 或隔离测试实例。"""
+
+
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, sync_session_class=ApplicationSession, expire_on_commit=False)
 
 
 def now_utc() -> datetime:
@@ -78,8 +82,11 @@ async def init_db() -> None:
     from . import models  # noqa: F401
 
     await run_migrations()
+    from .context.store import install_projection_hooks, backfill_contexts
+    install_projection_hooks()
     await ensure_instance_settings()
     await recover_interrupted_messages()
+    await backfill_contexts()
     from .workspaces.approvals import recover_approvals
     await recover_approvals()
     from .services.tool_details import recover_details

@@ -515,3 +515,14 @@ frontend：`npm run test:e2e:commands -- workflow-workbench.spec.ts workflow-fee
 - `npm run build`：类型检查与生产构建。
 
 验收使用受控提示词和 fake Provider；`PROMPT_LAYERS_PROBE` 固件仅回报特定受控标记，避免直接回显完整系统输入。预览本身不触发模型；本批未运行收费 Provider 验证。结果与边界见[提示词配置验收](prompt-settings.md)。
+
+### 持久会话上下文与占用（总体计划 B）
+
+后端在 `backend/`：`python -m pytest tests/test_conversation_context.py tests/test_context_execution.py tests/test_context_access.py tests/test_context_builder.py tests/test_chat_flow.py tests/test_interruption_context.py tests/test_execution_usage.py tests/test_agent_loop.py tests/test_prompt_settings.py tests/test_group_chat.py tests/test_orchestrator.py -q --tb=short --show-capture=no`。覆盖事务投影/回滚、并发版本、回填/重启、预览/真实输入一致、同 chain 交接、工具轮增长、在途撤权及部分文件事实；使用 fake Provider 和受控隔离目录。`python scripts/check_migrations.py` 包含 0025。
+
+前端在 `frontend/`：
+
+- `npm run test:e2e:commands -- conversation-context.spec.ts prompt-settings.spec.ts`：共享材料和窗口压力、当前草稿、调用统计、刷新与窄屏、失败重试和原提示词流程。
+- `npm run test:e2e:worlds -- conversation-context-worlds.spec.ts`：实际 World 切换/后端重启、重新认证和材料隔离。
+
+UI 继续通过既有消息 WS 和调用级轮询读取业务状态；没有需要在浏览器中单独维护的上下文副本。日志、截图和数据库采用本指南既有隔离与清理入口，正文只用受控样例。实际结果见[上下文验收](conversation-context.md)，估算不能当作厂商精确 Token 或摘要质量验证。

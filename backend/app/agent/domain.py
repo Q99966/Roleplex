@@ -81,6 +81,7 @@ class ProviderCallStarted:
     """一次框架模型调用开始；SDK 内部 HTTP 重试不另产生此事件。"""
 
     call_index: int
+    input_estimate: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -43,6 +43,8 @@ async def record(execution_id:str,event,provider_mode:str,model_name:str,*,compl
                 session.add(row)
             if event.call_index==1 and execution.decision_count<=1:
                 execution.usage_tracked=True
+            if not completed and row.input_estimate_json is None:
+                row.input_estimate_json = getattr(event, 'input_estimate', None)
             if completed and row.status!='completed':
                 row.status='completed'
                 row.duration_ms=_number(event.duration_ms)

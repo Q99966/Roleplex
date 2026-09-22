@@ -2,7 +2,7 @@
 
 | 元数据 | 值 |
 |---|---|
-| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；持久会话上下文和压缩仍待后续批次 |
+| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；共享材料和完整输入占用见[上下文协议](conversation-context.md)，压缩待后续批次 |
 | 协议版本 | 1；ContextBuilder 序列化版本 6 |
 | 复核日期 | 2026-09-22 |
 | 事实来源 | `routers/prompt_settings.py`、`context/prompts.py`、`agent/capabilities.py`、`services/chat.py`、`services/execution_usage.py` |
@@ -55,7 +55,7 @@
 - `capabilities`：`{fingerprint, tools}`。每个工具含 `name/description/parameters/source/danger`。这是普通角色在当前会话的可用定义，不授予工作流图管理权，不表示资源已执行或已通过 Shell 审批。工作流使用它自己的 execution allocation。
 - `latest_execution`：最近有实际来源记录的该角色执行，或 null；包含 `execution_id/status/snapshot`。snapshot 是调用时的来源版本、无正文的层摘要和工具指纹，不从最新配置反推旧请求内容。
 
-本入口不返回聊天历史，也不是完整请求的上下文占用预览。旧 inline Skills 仍按原规则注入，Skills/MCP 管理模块尚未开放；配置字段存在不表示对应工具可用。
+本入口只返回指令与能力来源；聊天历史和完整请求占用使用[上下文预览](conversation-context.md)。旧 inline Skills 仍按原规则注入，Skills/MCP 管理模块尚未开放；配置字段存在不表示对应工具可用。
 
 ## 实际生效与采用记录
 

@@ -19,9 +19,11 @@ Roleplex 是运行在本机的多 Agent 聊天与开发协作应用。Owner 在�
 
 原型或尚未形成产品功能的内容：MCP 生命周期与工具安全已有内部验证，尚无产品配置/调用闭环；Artifact 仅有原始内容读取与隔离原型，创建、更新、附件和前端预览尚未接入。Repository/Git/worktree、世界 Orchestrator/桌宠协调入口、Checkpoint、长期记忆、会话导出/导入、重新生成和单条超长消息分块尚未实现。规划中的能力不表示已排定下一项任务。
 
-Owner 可在“系统与环境设置 → 提示词与规则”配置当前世界的平台规则覆盖与世界提示词，在单聊/群聊右侧“上下文”配置会话提示词，按角色查看生效来源、可用工具及最近实际采用版本。角色编辑保留未编辑的 Skills/MCP 配置并检查 revision 冲突；详情见[提示词协议](docs/protocol/public/rest/prompt-settings.md)。
+Owner 可在“系统与环境设置 → 提示词与规则”配置当前世界的平台规则覆盖与世界提示词，在单聊/群聊右侧“上下文 → 提示词”配置会话提示词，按角色查看生效来源、可用工具及最近实际采用版本。角色编辑保留未编辑的 Skills/MCP 配置并检查 revision 冲突；详情见[提示词协议](docs/protocol/public/rest/prompt-settings.md)。
 
-[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A 已实现；持久会话上下文、按角色占用、主动/自动压缩、Agent 主动历史检索及 Skills/MCP 完整模块仍待 B–F，不把现有字段或预算估算当作这些功能已经完成。
+所有单聊和群聊都有随消息同步保存的共享上下文。“上下文”面板可按角色查看裁剪前占用、实际准备发送的输入、来源版本及最近一次模型调用；生成中、失败和中断内容明确标出未纳入原因，原消息保留。估算与厂商用量分开，见[上下文协议](docs/protocol/public/rest/conversation-context.md)。
+
+[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A/B 已实现；主动/自动压缩、Agent 主动历史检索及 Skills/MCP 完整模块继续按 C–F 实施。
 
 会话内工作流从右侧“工作流”模块打开；画布覆盖主消息和输入区域，返回对话保留草稿与阅读位置，不停止运行。画布采用 React Flow，可编辑保存分支和环路，连线支持节点避障与循环外侧绕行；新图支持并行分支、汇合与显式条件循环，旧串行图保持兼容；编辑草稿自动保存在当前浏览器，刷新或重开会话后恢复，仍需明确“保存模板”或“提交本次运行调整”提交对应服务端版本；操作与恢复规则见[工作流协议](docs/protocol/public/rest/workflows.md)。
 

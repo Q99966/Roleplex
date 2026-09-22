@@ -307,7 +307,40 @@ class ModelCallUsage(Base):
     cache_write_tokens: Mapped[int | None] = mapped_column(BigInteger)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_estimate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     __table_args__ = (UniqueConstraint('execution_id','call_index',name='uq_model_call_usage_execution_index'),)
+
+
+class ConversationContext(Base):
+    """每个会话唯一的持久材料版本；不按角色复制，也不保存 Provider 用量。"""
+    __tablename__ = 'conversation_contexts'
+    conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ConversationContextEntry(Base):
+    """原消息的共享投影及来源版本；正文仅在终态或来源修订时更新。
+
+    pending/excluded 保留原因和来源，不将未完成回复伪装成稳定历史。
+    ORM 消息所有者的事务同时维护本表；原消息仍是来源事实。
+    """
+    __tablename__ = 'conversation_context_entries'
+    message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey('conversation_contexts.conversation_id', ondelete='CASCADE'), nullable=False)
+    source_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    sender_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    sender_id: Mapped[int | None] = mapped_column(Integer)
+    chain_id: Mapped[str | None] = mapped_column(String(64))
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(32))
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (Index('ix_context_entries_conversation_message', 'conversation_id', 'message_id'),)
 
 
 class WorkspaceBinding(Base):

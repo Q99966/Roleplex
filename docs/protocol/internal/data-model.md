@@ -576,3 +576,19 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 `context_snapshot_json` 包含 `context_schema_version`、`revisions`（template/world/role/conversation）、无正文的 `layers`（key/source/revision/fingerprint/characters）以及 capabilities（统一工具策略 fingerprint、逐工具 name/fingerprint）。在 Provider 调用开始的既有用量短事务中写入；完成事件允许补齐未成功保存的来源，同 execution 已有记录不覆盖。未发生模型调用的上下文预检拒绝不伪造记录，采集缺失不从当前配置或日志回填。
 
 该列不是持久会话上下文、消息副本或完整 Prompt 存档。配置/来源接口及前端恢复边界见[提示词配置协议](../public/rest/prompt-settings.md)。迁移检查覆盖 SQLite 升级、降级、模型一致性和 PostgreSQL 离线 SQL；后者不代表 PostgreSQL 实例验证。
+
+### 持久会话上下文与调用输入估算（0025）
+
+| 表 | 新增字段与约束 |
+|---|---|
+| `conversation_contexts` | conversation_id 为 conversations.id 外键及主键，级联删除；revision BigInteger、projection_version Integer、updated_at 带时区 DateTime，均非空 |
+| `conversation_context_entries` | message_id 为 messages.id 外键及主键，级联删除；conversation_id 引用 conversation_contexts.conversation_id，级联删除；按 conversation_id/message_id 建索引 |
+| 材料来源字段 | source_revision Integer，source_status/sender_type String32，sender_id 可空 Integer，chain_id 可空 String64，pinned Boolean，created_at 带时区 DateTime；除标记可空项外均非空 |
+| 材料投影字段 | state String16（included/pending/excluded），reason 可空 String32，text 非空 Text，text_bytes 非空 BigInteger；不含原始私有工具输入输出 |
+| `model_call_usage` | 可空 JSON input_estimate_json；该次模型调用开始时的估算器信息、输入/消息/工具 Schema Token 估算与消息数量，不回填厂商 usage |
+
+同一会话只有一个共享版本，每个来源只有一个当前投影；不是每个角色一份消息副本。ORM 消息事务同时更新条目并原子递增材料 revision，新增空会话也建立材料身份；流式正文变化不反复更新 pending 条目。原消息物理删除时条目级联删除，回收站保留材料，读取另行鉴权。
+
+迁移先建立旧会话身份，启动用有界批次补齐缺失或版本/状态失配的消息，每批独立提交。差异查询是可恢复进度，不使用浏览器分页游标或运行时建表。未来压缩段/发布版本有独立迁移与采用语义，本批没有创建空的压缩任务表。
+
+`agent_executions.context_snapshot_json` 的 schema 7 兼容增加 `material`（范围、版本、可见边界、当前来源和已选消息 revision/status）与 `request`（首次组装的预算/裁剪前压力/组成）；同执行不覆盖首份采用来源。逐次工具轮增长来自 model_call_usage.input_estimate_json，不复制 Prompt 或工具内容。接口、正文投影及预算详细语义见[上下文协议](../public/rest/conversation-context.md)。

@@ -40,25 +40,31 @@ def parts_text(parts: list[dict[str, Any]]) -> str:
     return text if text.strip() else ""
 
 
-def project_message(message: Message, *, target_role_id: int) -> BaseMessage | None:
-    """按目标角色把一条终态消息投影为 assistant 或带稳定身份的 user 消息。
-
-    Args:
-        message：按 ID 读取的数据库消息。
-        target_role_id：本轮执行角色，用于识别其自身历史回复。
-    """
+def stable_message_text(message: Message) -> str:
+    """提取共享的稳定正文；失败片段与工具证据仍由原消息及中断事实保留。"""
     from ..services.execution_evidence import message_stop_reason
     if message.status not in {'done', 'stopped'}:
-        return None
+        return ''
     text = parts_text(message.parts_json or [])
     if not text:
-        return None
+        return ''
     if message.status == 'stopped':
         reason = message_stop_reason(message)
         marker = '[该回复因决策上限停止]' if reason == 'decision_budget' else '[该回复因执行步数上限停止]' if reason == 'graph_budget' else (
             _STOPPED_MARKER if reason == 'user_cancelled' else '[该回复已停止]')
         text = f'{text}\n{marker}'
-    if message.sender_type == "role" and message.sender_id == target_role_id:
+    return text
+
+
+def project_text(text: str, sender_type: str, sender_id: int | None, target_role_id: int) -> BaseMessage:
+    """只在组装时加入相对角色身份，共享材料不因选择角色复制正文。"""
+    if sender_type == "role" and sender_id == target_role_id:
         return AIMessage(content=text)
-    identity = f"[{message.sender_type}:{message.sender_id}]" if message.sender_id is not None else f"[{message.sender_type}]"
+    identity = f"[{sender_type}:{sender_id}]" if sender_id is not None else f"[{sender_type}]"
     return HumanMessage(content=f"{identity} {text}")
+
+
+def project_message(message: Message, *, target_role_id: int) -> BaseMessage | None:
+    """按目标角色投影一条终态来源；供工作流精确上游复用。"""
+    text = stable_message_text(message)
+    return project_text(text, message.sender_type, message.sender_id, target_role_id) if text else None

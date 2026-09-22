@@ -179,7 +179,7 @@ async def test_single_chat_streams_and_persists():
     assert provider_call.base_url_source == "fake"
 
     loaded = next(record for record in records if record.getMessage() == "context.loaded")
-    assert loaded.context_schema_version == 6
+    assert loaded.context_schema_version == 7
     assert len(loaded.runtime_prefix_hash) == 64
     assert len(loaded.role_prefix_hash) == 64
     assert len(loaded.conversation_prefix_hash) == 64
@@ -187,7 +187,7 @@ async def test_single_chat_streams_and_persists():
     assert loaded.context_message_count == 0
     assert loaded.context_truncated_message_count == 0
     assert loaded.estimated_context_tokens > 0
-    assert loaded.estimator_kind == "conservative_utf8_v1"
+    assert loaded.estimator_kind == "conservative_utf8_v2"
     assert not hasattr(loaded, "checkpoint_hash")
 
     for field in (
@@ -433,5 +433,5 @@ async def test_untrimmable_context_budget_fails_before_provider(monkeypatch: pyt
         and getattr(record, "error_code", None) == "CONTEXT_BUDGET_EXCEEDED"
     )
     assert failed.estimated_context_tokens + failed.safety_margin_tokens > failed.input_budget_tokens
-    assert failed.estimator_kind == "conservative_utf8_v1"
+    assert failed.estimator_kind == "conservative_utf8_v2"
     await engine.dispose()

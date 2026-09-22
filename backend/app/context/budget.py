@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from math import ceil
+import json
+from dataclasses import asdict
 from typing import Sequence
 
 from langchain_core.messages import BaseMessage
 
 from .domain import TokenEstimate
 
-ESTIMATOR_KIND = "conservative_utf8_v1"
-ESTIMATOR_VERSION = 1
+ESTIMATOR_KIND = "conservative_utf8_v2"
+ESTIMATOR_VERSION = 2
 _MESSAGE_WRAPPER_TOKENS = 8
 
 
@@ -22,7 +24,7 @@ def message_content_text(message: BaseMessage) -> str:
     content = message.content
     if isinstance(content, str):
         return content
-    return str(content)
+    return json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
 def estimate_text_tokens(text: str, *, structural_tokens: int = 0) -> int:
@@ -41,10 +43,28 @@ def estimate_messages_tokens(messages: Sequence[BaseMessage]) -> int:
     Args:
         messages：按最终发送顺序排列的模型消息。
     """
-    return sum(
-        estimate_text_tokens(message_content_text(message), structural_tokens=_MESSAGE_WRAPPER_TOKENS)
-        for message in messages
-    )
+    total = 0
+    for message in messages:
+        total += estimate_text_tokens(message_content_text(message), structural_tokens=_MESSAGE_WRAPPER_TOKENS)
+        # 工具轮不只有正文：模型的调用参数、名称和结果关联 ID 同样占据输入。
+        extra = {key: getattr(message, key) for key in ['tool_calls', 'name', 'tool_call_id'] if getattr(message, key, None)}
+        if extra:
+            total += estimate_text_tokens(json.dumps(extra, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
+    return total
+
+
+def estimate_tools_tokens(definitions: Sequence[dict]) -> int:
+    """只计算实际发送的工具 Schema；权限配置等服务端元数据不冒充模型输入。"""
+    return estimate_text_tokens(json.dumps(list(definitions), ensure_ascii=False, sort_keys=True,
+        separators=(',', ':')), structural_tokens=8) if definitions else 0
+
+
+def estimate_request(messages: Sequence[BaseMessage], definitions: Sequence[dict]) -> dict:
+    """返回每次真实组装的无正文数字摘要，厂商 usage 另行记录。"""
+    message_tokens, tool_tokens = estimate_messages_tokens(messages), estimate_tools_tokens(definitions)
+    return {**asdict(token_estimate(message_tokens + tool_tokens)), 'message_tokens': message_tokens,
+        'tool_schema_tokens': tool_tokens, 'message_count': len(messages),
+        'tool_message_count': sum(message.type == 'tool' for message in messages)}
 
 
 def token_estimate(estimated_tokens: int) -> TokenEstimate:

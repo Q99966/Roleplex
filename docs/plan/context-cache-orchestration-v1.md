@@ -1,6 +1,6 @@
 # 上下文、缓存观测与编排阶段记录
 
-状态：C0–C2、M4a、工作流及固定图协调/并行循环已有实现；协调者图管理与版本化重规划已接入，具体范围和验证见图管理阶段记录。[新总体计划](conversation-context-memory-capabilities-v1.md)的 A 提示词分层与能力配置已实现；持久会话上下文、压缩、主动检索和 Skills/MCP 仍待 B–F；世界 Orchestrator 与导出/导入独立安排。复核日期：2026-09-22。
+状态：C0–C2、M4a、工作流及固定图协调/并行循环已有实现；协调者图管理与版本化重规划已接入，具体范围和验证见图管理阶段记录。[新总体计划](conversation-context-memory-capabilities-v1.md)的 A 提示词分层与能力配置、B 持久会话上下文与占用已实现；压缩、主动检索和 Skills/MCP 仍待 C–F；世界 Orchestrator 与导出/导入独立安排。复核日期：2026-09-22。
 
 [历史原文](../archive/plan/context-cache-orchestration-v1.md)保留阶段设计与取舍；[外部缓存参考](../design/cache-v1.md)用于理解来源。旧排期不自动成为新需求的前置条件。
 
@@ -18,7 +18,7 @@
 
 [会话上下文、提示词、主动检索与 Skills/MCP 总体计划](conversation-context-memory-capabilities-v1.md)替代旧 C3/Memory 候选排期，明确所有单聊/群聊区分完整消息与长期保存的会话上下文；前端提供各层提示词配置、占用、主动/自动压缩，Agent 通过工具检索和回读相关会话信息。Skills 与 MCP 按真实管理、加载/连接、调用及撤销闭环实施。
 
-旧 C3 的来源边界、原消息保留和失败回退继续适用，但不再仅在超阈值时生成摘要；旧 Memory v0 的“仅检索 Owner 逐条确认记忆”和自动注入方式不作为本轮历史检索的限制。必要缓存一致性验证随各批完成，具体修改与实施顺序以新计划为准。A 已新增配置/来源 API 与 0024 迁移，见[协议](../protocol/public/rest/prompt-settings.md)和[验收](../testing/prompt-settings.md)；这不代表持久会话上下文、压缩或 Memory 检索已实现。
+旧 C3 的来源边界、原消息保留和失败回退继续适用，但不再仅在超阈值时生成摘要；旧 Memory v0 的“仅检索 Owner 逐条确认记忆”和自动注入方式不作为本轮历史检索的限制。必要缓存一致性验证随各批完成，具体修改与实施顺序以新计划为准。A 已新增配置/来源 API 与 0024 迁移，见[协议](../protocol/public/rest/prompt-settings.md)和[验收](../testing/prompt-settings.md)。B 已新增持久会话材料、按角色占用与调用级输入观测，见[上下文协议](../protocol/public/rest/conversation-context.md)及[验收](../testing/conversation-context.md)；压缩或 Memory 检索仍待后续。
 
 ## 其他待选设计
 

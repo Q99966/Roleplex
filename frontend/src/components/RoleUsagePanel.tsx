@@ -4,7 +4,7 @@ import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
 
 const labels = {cache_miss_tokens:'缓存未命中输入 Token',output_tokens:'输出 Token',cache_hit_tokens:'缓存命中 Token',input_cache_hit_ratio:'输入缓存命中率'} as const
-const stopReasons:Record<string,string>={decision_budget:'决策预算停止',graph_budget:'图保护停止',user_cancelled:'用户停止',provider_failed:'模型请求失败',protocol_error:'执行异常',interrupted:'执行中断',context_rejected:'上下文超限'}
+const stopReasons:Record<string,string>={decision_budget:'决策预算停止',graph_budget:'图保护停止',user_cancelled:'用户停止',provider_failed:'模型请求失败',protocol_error:'执行异常',interrupted:'执行中断',context_rejected:'上下文检查未通过'}
 const statuses:Record<string,string>={queued:'排队中',running:'执行中',completed:'正常结束',stopped:'已停止',failed:'失败'}
 
 /** 显示完整值或明确标注已记录部分，不将未知显示成零。

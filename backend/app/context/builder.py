@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from langchain_core.messages import BaseMessage, HumanMessage
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models import Conversation, ConversationMember, Message, Role
-from .budget import estimate_messages_tokens, estimate_text_tokens, token_estimate
+from ..models import Conversation, ConversationMember, ConversationContext, ConversationContextEntry as Entry, Message, Role
+from .budget import estimate_messages_tokens, estimate_text_tokens, estimate_tools_tokens, token_estimate
+from .history import select_history
 from .domain import (
-    CONTEXT_SCHEMA_VERSION,
     ContextBudget,
     ContextBudgetExceeded,
     ContextBuildError,
@@ -53,7 +53,7 @@ def _select_history(
     fixed_tokens: int,
     input_budget: int,
     pinned_budget: int,
-) -> tuple[tuple[BaseMessage, ...], int, int]:
+) -> tuple[tuple[BaseMessage, ...], int, int, list[dict]]:
     """优先保留预算内 pinned，再从最近历史向前选择并恢复时间顺序。
 
     Args:
@@ -84,15 +84,18 @@ def _select_history(
             # 最近历史必须是连续后缀；跳过一条过大的新消息再塞更旧消息会破坏对话因果。
             break
     selected = tuple(item.projected for item in projected if item.source.id in selected_ids)
-    return selected, used, len(projected) - len(selected)
+    sources = [{'message_id': item.source.id, 'revision': item.source.revision, 'status': item.source.status}
+        for item in projected if item.source.id in selected_ids]
+    return selected, used, len(projected) - len(selected), sources
 
 
-async def build_context(session: AsyncSession, request: ContextBuildRequest) -> ContextBuildResult:
+async def build_context(session: AsyncSession, request: ContextBuildRequest, *, enforce_budget: bool = True) -> ContextBuildResult:
     """从一个短读事务构造本轮唯一、确定且预算受控的模型上下文。
 
     Args:
         session：数据库会话；调用方不得在构建期间并行修改同一会话。
         request：角色、会话和当前消息的稳定边界。
+        enforce_budget：执行必须为 True；Owner 预览可展示不可派发的完整预算原因。
 
     Raises:
         ContextBuildError：资源或消息边界不满足内部契约。
@@ -100,11 +103,21 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     """
     conversation = await session.get(Conversation, request.conversation_id)
     role = await session.get(Role, request.role_id)
-    current = await session.get(Message, request.current_message_id)
+    current = await session.get(Message, request.current_message_id) if request.current_message_id is not None else None
     if conversation is None or conversation.deleted_at is not None:
         raise ContextBuildError("CONVERSATION_NOT_FOUND")
     if role is None or role.deleted_at is not None or not role.active:
         raise ContextBuildError("ROLE_NOT_AVAILABLE")
+    shared = await session.get(ConversationContext, conversation.id)
+    if shared is None:
+        raise ContextBuildError('CONTEXT_SOURCE_CHANGED')
+    shared_revision = shared.revision
+    visible_through = await session.scalar(select(func.max(Message.id)).where(Message.conversation_id == conversation.id)) or 0
+    preview = request.current_message_id is None and request.draft_text is not None and request.execution_id is None
+    if preview:
+        current = Message(id=visible_through + 1, conversation_id=conversation.id, sender_type='user',
+            sender_id=request.triggered_by_user_id, parts_json=[{'type': 'text', 'text': request.draft_text}],
+            status='done', revision=0, pinned=False, chain_id=None, meta_json={})
     if current is None or current.conversation_id != conversation.id or current.sender_type != "user":
         raise ContextBuildError("CONTEXT_CURRENT_MESSAGE_INVALID")
     if request.triggered_by_user_id is not None and current.sender_id != request.triggered_by_user_id:
@@ -122,7 +135,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     if role_membership is None or user_membership is None:
         raise ContextBuildError("CONVERSATION_NOT_FOUND")
     current_text = parts_text(current.parts_json or [])
-    if not current_text:
+    if not current_text and not preview:
         raise ContextBuildError("TEXT_PART_REQUIRED")
 
     prompts = await resolve_prompt_layers(session, conversation, role)
@@ -131,19 +144,16 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         triggered_by_user_id=request.triggered_by_user_id, execution_id=request.execution_id)
     tool_policy = capabilities.policy
 
-    history_boundary = Message.id < current.id
+    history_boundary = Entry.message_id < current.id
     if request.execution_kind == "group_role" and current.chain_id:
         # 群聊后续角色还要读取当前真人消息之后、同一 chain 已提交的前序角色终态。
-        # project_message 会继续过滤 generating/error 等非稳定状态，因此不会看见未来或半成品输出。
+        # 共享投影已过滤 generating/error 等非稳定状态，因此不会看见未来或半成品输出。
         history_boundary = or_(
             history_boundary,
-            and_(Message.id > current.id, Message.chain_id == current.chain_id),
+            and_(Entry.message_id > current.id, Entry.chain_id == current.chain_id),
         )
-    history_rows = (await session.scalars(
-        select(Message)
-        .where(Message.conversation_id == conversation.id, history_boundary)
-        .order_by(Message.id.asc())
-    )).all()
+    history_boundary = and_(history_boundary, Entry.message_id <= visible_through)
+    history_rows = []
     # 节点只交接明确选择的上游尝试；旧运行/旧尝试不能从普通历史混入本轮结果。
     from ..workflows.planning import context as coordination_context
     coordination_instruction=await coordination_context(session,request.execution_id)
@@ -196,16 +206,13 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     effective_window = min(role.context_window_tokens, settings.max_context_tokens)
     output_reserved = _output_reserve(role)
     input_budget = effective_window - output_reserved
-    fixed_tokens = estimate_text_tokens(system_prompt, structural_tokens=8) + estimate_text_tokens(
-        current_text, structural_tokens=8,
-    )
-    if tool_policy["exposed_tools"]:
-        fixed_tokens += estimate_text_tokens(
-            json.dumps(tool_policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-            structural_tokens=8,
-        )
+    system_tokens = estimate_text_tokens(system_prompt, structural_tokens=8)
+    current_tokens = estimate_text_tokens(current_text, structural_tokens=8)
+    tool_tokens = estimate_tools_tokens([{'type': 'function', 'function': spec} for spec in tool_policy['exposed_tools']])
+    fixed_tokens = system_tokens + current_tokens + tool_tokens
     fixed_estimate = token_estimate(fixed_tokens)
-    if fixed_estimate.estimated_tokens + fixed_estimate.safety_margin_tokens > input_budget:
+    blocked = fixed_estimate.estimated_tokens + fixed_estimate.safety_margin_tokens > input_budget
+    if blocked and enforce_budget:
         raise ContextBudgetExceeded(
             estimated_tokens=fixed_estimate.estimated_tokens,
             safety_margin_tokens=fixed_estimate.safety_margin_tokens,
@@ -226,6 +233,8 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         recovery = await interruption_context(session,conversation=conversation,role=role,current=current,
             triggered_by_user_id=request.triggered_by_user_id)
     recovery_message = None
+    recovery_tokens = 0
+    recovery_omitted = False
     if recovery:
         candidate = HumanMessage(content=recovery)
         extra = estimate_messages_tokens([candidate])
@@ -237,13 +246,22 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         if estimate.estimated_tokens + estimate.safety_margin_tokens <= input_budget:
             recovery_message = candidate
             fixed_tokens += extra
+            recovery_tokens = extra
+        else:
+            recovery_omitted = True
 
-    history, history_tokens, truncated = _select_history(
-        projected,
-        fixed_tokens=fixed_tokens,
-        input_budget=input_budget,
-        pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)),
-    )
+    if workflow_attempt is None and not coordination_instruction:
+        selection = await select_history(session, conversation_id=conversation.id, role_id=role.id,
+            boundary=history_boundary, fixed_tokens=fixed_tokens, input_budget=input_budget,
+            pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)))
+        history, history_tokens, history_total = selection.messages, selection.selected_tokens, selection.total_tokens
+        sources, truncated = selection.sources, selection.total_count - len(selection.messages)
+        scope = 'conversation'
+    else:
+        history, history_tokens, truncated, sources = _select_history(projected, fixed_tokens=fixed_tokens,
+            input_budget=input_budget, pinned_budget=max(0, int(input_budget * settings.pin_budget_ratio)))
+        history_total = sum(item.estimated_tokens for item in projected)
+        scope = 'workflow_upstream' if workflow_attempt else 'workflow_coordination'
     if workflow_attempt is not None and len(history) != len(projected):
         # 显式要求的上游结果不能静默裁掉；让 Owner 缩小节点输入后创建新尝试。
         required = token_estimate(fixed_tokens + sum(item.estimated_tokens for item in projected))
@@ -253,6 +271,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     if recovery_message is not None:
         history = (*history, recovery_message)
     total_estimate = token_estimate(fixed_tokens + history_tokens)
+    before_estimate = token_estimate(fixed_tokens + history_total)
     budget = ContextBudget(
         effective_context_window=effective_window,
         output_reserved_tokens=output_reserved,
@@ -270,6 +289,21 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         conversation_prefix_hash=stable_hash(prompts.conversation_prefix),
         tool_policy_hash=capabilities.fingerprint,
     )
+    # 只在真实采用共享材料时校验其版本；工作流精确上游另有 attempt 授权与状态校验。
+    if scope == 'conversation' and shared_revision != await session.scalar(select(ConversationContext.revision).where(
+        ConversationContext.conversation_id == conversation.id)):
+        raise ContextBuildError('CONTEXT_SOURCE_CHANGED')
+    material = {'scope': scope, 'revision': shared_revision if scope == 'conversation' else None,
+        'visible_through_message_id': visible_through, 'current_message_id': None if preview else current.id,
+        'current_message_revision': None if preview else current.revision, 'sources': sources}
+    request_estimate = {**asdict(total_estimate), 'effective_context_window': effective_window,
+        'output_reserved_tokens': output_reserved, 'input_budget_tokens': input_budget,
+        'before_truncation_tokens': before_estimate.estimated_tokens,
+        'before_truncation_safety_margin_tokens': before_estimate.safety_margin_tokens,
+        'included_message_count': len(sources), 'truncated_message_count': truncated,
+        'blocked': blocked, 'recovery_omitted': recovery_omitted,
+        'breakdown': {'system': system_tokens, 'tools': tool_tokens, 'current': current_tokens,
+            'history': history_tokens, 'interruption': recovery_tokens}}
     return ContextBuildResult(
         system_prompt=system_prompt,
         history=history,
@@ -278,4 +312,6 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         fingerprints=fingerprints,
         prompt_snapshot=prompts.receipt(),
         capabilities=capabilities,
+        material_snapshot=material,
+        request_estimate=request_estimate,
     )

@@ -147,6 +147,9 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `ROLE_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 角色配置 expected_revision 过期；保留输入，核对新配置后操作 |
 | `PROMPT_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 World 或会话提示词版本已变化，整次更新被拒绝 |
 | `PROMPT_STORAGE_UNAVAILABLE` | 已实现 | REST | 503 | failed | conditional | 提示词短事务保存不可用，刷新核对结果；不回显 SQL 参数 |
+| `CONTEXT_SOURCE_CHANGED` | 已实现 | REST/WS/数据库 | 409 / — | rejected | conditional | 共享材料版本变化或来源失效，重新读取/构建；不重放 Provider 或工具操作 |
+| `CONTEXT_PREVIEW_UNAVAILABLE` | 已实现 | REST | 422 | rejected | conditional | 上下文预览无法按当前状态组装；无原始异常正文 |
+| `CONTEXT_STORAGE_UNAVAILABLE` | 已实现 | REST | 503 | failed | conditional | 共享材料/占用读取不可用，不回显 SQL 参数或正文 |
 | `ROLE_NOT_AVAILABLE` | 已实现 | REST | 422 | rejected | conditional | 创建会话引用了不存在、停用、墓碑或非当前 Owner 的角色 |
 | `ROLE_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 创建会话没有提供任何角色 |
 | `SINGLE_CHAT_REQUIRES_ONE_ROLE` | 已实现 | REST | 422 | rejected | conditional | 单聊必须且只能包含一个角色 |

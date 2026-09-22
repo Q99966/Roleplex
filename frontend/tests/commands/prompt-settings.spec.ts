@@ -24,6 +24,11 @@ async function fixture(page: Page, name: string) {
 async function module(page: Page, name = '上下文') {
   await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
   await page.getByRole('menuitemradio', { name, exact: true }).locator('span').last().click()
+  if (name === '上下文') {
+    const tab = page.getByRole('button', { name: '提示词', exact: true })
+    await expect(tab.or(page.getByText('上下文由 Owner 管理。', { exact: true }))).toBeVisible()
+    if (await tab.isVisible()) await tab.click()
+  }
 }
 
 const context = (page: Page) => page.getByRole('region', { name: '会话提示词配置', exact: true })
@@ -121,7 +126,7 @@ test('冲突保留输入，切换模块和窄屏不丢草稿；Guest 不读取�
   }, process.env.ROLEPLEX_COMMAND_E2E_STAMP)
   await page.reload(); await page.getByRole('button', { name: '打开会话详情', exact: true }).click()
   await module(page)
-  await expect(page.getByText('提示词配置由 Owner 管理。', { exact: true })).toBeVisible()
+  await expect(page.getByText('上下文由 Owner 管理。', { exact: true })).toBeVisible()
   await expect(page.getByLabel('会话提示词', { exact: true })).toHaveCount(0)
   await expect(page.getByText('远端会话规则', { exact: true })).toHaveCount(0)
 })

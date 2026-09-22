@@ -613,17 +613,25 @@ async def run_scheduled_generation(
         # ContextBuilder 在用户消息与角色占位消息都已落库后读取，但以 current_message_id 为严格截止点，
         # 因此不会把当前消息重复放进 history，也不会读取正在生成的空 assistant 占位。
         async with SessionLocal() as session:
-            context = await build_context(
-                session,
-                ContextBuildRequest(
-                    role_id=role_id,
-                    conversation_id=conversation_id,
-                    current_message_id=current_message_id,
-                    triggered_by_user_id=triggered_by_user_id,
-                    execution_kind=execution_kind,
-                    execution_id=execution_id,
-                ),
-            )
+            for context_attempt in range(3):
+                try:
+                    context = await build_context(
+                        session,
+                        ContextBuildRequest(
+                            role_id=role_id,
+                            conversation_id=conversation_id,
+                            current_message_id=current_message_id,
+                            triggered_by_user_id=triggered_by_user_id,
+                            execution_kind=execution_kind,
+                            execution_id=execution_id,
+                        ),
+                    )
+                    break
+                except ContextBuildError as exc:
+                    if str(exc) != 'CONTEXT_SOURCE_CHANGED' or context_attempt == 2:
+                        raise
+                    # 来源恰好收口时重新开始短读事务，不能混合两个版本的输入。
+                    await session.rollback()
             context_fields = _context_log_fields(context)
             set_log_context(**context_fields)
             logger.info("context.loaded", extra=context_fields)
@@ -642,7 +650,8 @@ async def run_scheduled_generation(
                 raise ContextBuildError('AGENT_CAPABILITIES_CHANGED')
             tools.extend(await create_execution_tools(session, context.capabilities, role=role, allow_dangerous=allow_dangerous))
             # 实际调用开始后才记录采用来源；预检或预算拒绝不能伪装成模型已使用。
-            prompt_receipt = {**context.prompt_snapshot, 'capabilities': context.capabilities.receipt()}
+            prompt_receipt = {**context.prompt_snapshot, 'capabilities': context.capabilities.receipt(),
+                'material': context.material_snapshot, 'request': context.request_estimate}
         if settings.agent_use_fake_provider:
             logger.info(
                 "provider.built",
@@ -659,6 +668,10 @@ async def run_scheduled_generation(
             """Args:
                 index：本次 execution 的模型决策序号。
             """
+            from ..context.access import require_context_access
+            async with SessionLocal() as session:
+                await require_context_access(session, conversation_id=conversation_id, role_id=role_id,
+                    user_id=triggered_by_user_id)
             return await consume(execution_id, index)
 
         # 消费者在事件处理期间取消，也必须先关闭图与工具任务，不能依赖垃圾回收。
@@ -882,7 +895,7 @@ async def run_scheduled_generation(
         return
     except ContextBuildError as exc:
         reported = str(exc)
-        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED", "AGENT_CAPABILITIES_CHANGED"}
+        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED", "AGENT_CAPABILITIES_CHANGED", "CONTEXT_SOURCE_CHANGED"}
         error_code = reported if reported in expected_codes else "REQUEST_FAILED"
         terminal = await _finalize(generation_id, "failed", "", error_code=error_code, stop_reason="context_rejected")
         log_method = logger.warning if error_code in expected_codes else logger.exception

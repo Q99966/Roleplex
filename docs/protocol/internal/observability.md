@@ -72,6 +72,8 @@ ContextBuilder 成功后写 `context.loaded`，并把同一快照的 schema vers
 checkpoint hash；完整 Prompt、层内容、用户输入和模型输出仍不落盘。Context schema 6 兼容新增平台/世界提示词 hash 与各配置来源 revision，字段见[日志设计](../../design/logging-v2.md)；不是新增一条业务 Trace。缓存 token 和命中比只使用厂商数据，
 本地估算字段保持 `estimated_*`/`estimator_*` 命名，不进入 Provider usage 汇总。
 
+Context schema 7 的来源材料快照和逐次请求估算写入业务表，不另建 Trace 或从日志反推。估算器 conservative_utf8_v2 纳入实际工具 Schema 与执行内工具调用参数/结果；首次 ContextBuilder 的预算日志仍表示首次组装，后续调用增长读取 model_call_usage.input_estimate_json。材料正文、预览响应和输入框草稿不进入正式日志；接口语义见[会话上下文](../public/rest/conversation-context.md)。
+
 ## 测试报告
 
 pytest summary 区分 full/partial，并记录 Git HEAD、dirty 指纹、数据库和通过/失败/跳过统计。失败文件不

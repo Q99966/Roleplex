@@ -4,6 +4,7 @@ import type { Role } from '../api/client'
 import { useChatStore } from '../store/chat'
 import { useWorkflow } from './workflows/WorkflowContext'
 import { useAppStore } from '../store/app'
+import { useContextDraft } from '../store/contextDraft'
 
 type Mention = number | 'all'
 type Props = {
@@ -24,6 +25,8 @@ export function ChatComposer({ conversationId, group, memberRoles, hasReplyRole,
   const [commandError, setCommandError] = useState('')
   const { loading, sending, generating, activeGenerationIds, subscription, sendMessage, stopGeneration } = useChatStore()
   const [draft, setDraft] = useState('')
+  useEffect(() => { useContextDraft.getState().set(conversationId, draft) }, [conversationId, draft])
+  useEffect(() => () => { useContextDraft.getState().set(conversationId, '') }, [conversationId])
   const [mentions, setMentions] = useState<Mention[]>([])
   const [cursor, setCursor] = useState({ start: 0, end: 0 })
   const [dismissed, setDismissed] = useState(false)

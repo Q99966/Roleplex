@@ -79,7 +79,7 @@ def test_utf8_fallback_is_conservative_and_separate_from_provider_usage():
     result = token_estimate(estimated)
 
     assert estimated == len(raw.encode("utf-8"))
-    assert result.estimator_kind == "conservative_utf8_v1"
+    assert result.estimator_kind == "conservative_utf8_v2"
     assert result.is_provider_exact is False
     assert result.safety_margin_tokens >= 128
 
