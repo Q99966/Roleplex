@@ -405,6 +405,9 @@ ContextBuilder 成功后记录一次 `context.loaded`，并把同一组诊断字
 |---|---|---|
 | `context_schema_version` | integer | 确定性上下文序列化版本 |
 | `runtime_prefix_hash` | string | L0 最终规范化内容的 SHA-256 |
+| `platform_prefix_hash` | string（Context schema 6） | 有效平台协作规则文本的 SHA-256 |
+| `world_prefix_hash` | string（Context schema 6） | 当前世界提示词文本的 SHA-256 |
+| `prompt_template_revision` / `prompt_world_revision` / `prompt_role_revision` / `prompt_conversation_revision` | integer（Context schema 6） | 本次 ContextBuilder 固定的配置来源版本，不是日志 schema 或消息 revision |
 | `role_prefix_hash` | string | L1 最终规范化内容的 SHA-256 |
 | `conversation_prefix_hash` | string | L2 最终规范化内容的 SHA-256 |
 | `checkpoint_hash` | string（可选） | C3 后实际注入 checkpoint 的内容 SHA-256；C3 前省略 |

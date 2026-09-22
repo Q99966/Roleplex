@@ -373,6 +373,18 @@ class WorkflowV2Model(ScriptedChatModel):
             yield chunk
 
 
+class PromptLayersProbeModel(ScriptedChatModel):
+    """只回报受控验收标记，证明界面保存的规则确实到达实际模型输入。"""
+
+    async def _astream(self, messages, **kwargs):
+        import re
+        system = next((str(message.content) for message in messages if message.type == 'system'), '')
+        markers = list(dict.fromkeys(re.findall(r'PROMPT_TEST_(?:PLATFORM|WORLD|ROLE|CONVERSATION)_[A-Z0-9]+', system)))
+        for chunk in self._chunks(ScriptedTurn(text='提示词验证：' + ','.join(markers))):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
 def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
     """构造只产出固定回复文案的 fake 模型。
 
@@ -380,6 +392,8 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[PROMPT_LAYERS_PROBE]' in prompt:
+        return PromptLayersProbeModel(delay=0)
     if '本次图管理授权：' in prompt:
         meta = json.loads(prompt.split('本次图管理授权：', 1)[1].split('\n', 1)[0])
         if meta.get('feedback_ids'):

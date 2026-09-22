@@ -1,6 +1,12 @@
 # 计划与阶段记录
 
-复核日期：2026-09-22。工作流、群任命、并行循环、协调图管理及版本化重规划已接入。[三批改进计划](workflow-feedback-usability-v1.md)的反馈处置、图可读性和操作面板三批已实现；世界 Orchestrator 与桌宠 API 留待后续。旧阶段原文保留在[历史资料](../archive/README.md)。
+复核日期：2026-09-22。工作流、群任命、并行循环、协调图管理及版本化重规划已接入。[三批改进计划](workflow-feedback-usability-v1.md)的反馈处置、图可读性和操作面板三批已实现。当前[会话上下文与能力总体计划](conversation-context-memory-capabilities-v1.md)的 A 提示词与能力配置已实现，B–F 待实施；世界 Orchestrator 与桌宠 API 留待后续。旧阶段原文保留在[历史资料](../archive/README.md)。
+
+## 当前总体计划
+
+[会话上下文、提示词、主动检索与 Skills/MCP](conversation-context-memory-capabilities-v1.md)承接用户本轮要求：全部单聊/群聊持久保存会话上下文，提供占用、主动/自动压缩和分别配置的提示词；Agent 主动检索关联会话；补齐平台/世界/角色/会话提示词入口，以及 Skills 和 MCP 的真实管理与调用。
+
+推荐顺序为提示词与能力配置 → 持久上下文与占用 → 主动压缩与检索回读 → 自动压缩 → Skills → MCP。Skills/MCP 可在共同配置与授权基础完成后独立推进，不要求等待整个上下文主线。具体交付与依赖只在[总体计划第 9 节](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)维护。A 已完成，见[验收记录](../testing/prompt-settings.md)；下一步是 B 持久会话上下文与占用。
 
 ## 最近完成的改进
 
@@ -13,11 +19,12 @@
 | 主题 | 已完成记录 | 未实施方向 | 入口 |
 |---|---|---|---|
 | 总体架构 | 基础账号、单聊、群聊、World、日志等早期阶段 | 旧 P/M 编号保留为历史分类，不固定新任务顺序 | [总体阶段记录](nested-watching-crown.md) |
-| 上下文与编排 | C0–C2、串行群聊、v2 工作流、图管理及反馈交接 | Checkpoint、Memory、导出/导入独立安排 | [上下文与编排](context-cache-orchestration-v1.md) |
+| 上下文与编排 | C0–C2、串行群聊、v2 工作流、图管理及反馈交接 | 持久会话上下文、占用、压缩与主动检索已纳入总体计划，导出/导入独立安排 | [历史阶段](context-cache-orchestration-v1.md)、[总体计划](conversation-context-memory-capabilities-v1.md) |
+| 提示词与能力配置 | 平台/世界/角色/会话提示词、来源预览、角色配置保留和共同工具能力快照 | Skills 与 MCP 完整产品模块 | [总体计划](conversation-context-memory-capabilities-v1.md) |
 | 工作区与仓库 | E0 execution、文件、命令、Shell、会话换绑入口和群聊串行文件工具 | Repository、Git、worktree | [工作区与仓库](agent-repository-workspaces-v1.md) |
-| 可操作工作流图 | 人工/模型共享图编辑、运行修订与历史、阶段总览、拓扑整理、循环展开与聚焦、统一操作面板 | 后续按实际使用反馈确定 | [工作流阶段记录](conversation-workflows-v1.md)、[当前计划](workflow-feedback-usability-v1.md) |
-| 群 Orchestrator 与后台调度 | 群任命、图管理授权、并行循环、反馈分类/处置/复核 | 世界协调者之后安排 | [图管理记录](orchestrator-graph-control-v1.md)、[当前计划](workflow-feedback-usability-v1.md) |
-| 工作流反馈与易用性 | 反馈与局部处置、图可读性、主工具栏与唯一上下文面板 | 后续按实际使用反馈确定 | [当前计划](workflow-feedback-usability-v1.md) |
+| 可操作工作流图 | 人工/模型共享图编辑、运行修订与历史、阶段总览、拓扑整理、循环展开与聚焦、统一操作面板 | 后续按实际使用反馈确定 | [工作流阶段记录](conversation-workflows-v1.md)、[三批记录](workflow-feedback-usability-v1.md) |
+| 群 Orchestrator 与后台调度 | 群任命、图管理授权、并行循环、反馈分类/处置/复核 | 世界协调者之后安排 | [图管理记录](orchestrator-graph-control-v1.md)、[三批记录](workflow-feedback-usability-v1.md) |
+| 工作流反馈与易用性 | 反馈与局部处置、图可读性、主工具栏与唯一上下文面板 | 后续按实际使用反馈确定 | [三批记录](workflow-feedback-usability-v1.md) |
 | 工具时间线 | 有序文本/工具与 Owner 私有详情 | 后续扩展按需求确定 | [时间线与详情](tool-timeline-details-v1.md) |
 | 会话加载 | A 连接解耦、B 历史窗口/缓存/阅读位置 | 单条超长消息分块 | [会话加载](conversation-loading-v1.md) |
 | 后台服务 | Linux 服务生命周期、进程面板与协调回收 | Windows 服务运行器 | [后台服务](conversation-services-v1.md) |
@@ -30,7 +37,7 @@
 
 ## 后续执行顺序建议
 
-[三批界面与反馈改进](workflow-feedback-usability-v1.md)已完成。后续从实际协作反馈或用户明确选择的方向确定范围，继续保留图管理、运行和草稿恢复回归；下表未实施方向不自动进入开发。
+[三批界面与反馈改进](workflow-feedback-usability-v1.md)已完成。当前优先范围为[会话上下文与能力总体计划](conversation-context-memory-capabilities-v1.md)，按该计划组织提示词、持久上下文、压缩、主动检索、Skills 和 MCP；图管理、运行和草稿恢复继续回归。下表其他未实施方向不自动进入开发。
 
 | 建议顺序 | 工作 | 相比旧排期的调整 |
 |---|---|---|
@@ -40,10 +47,11 @@
 | 第一批已实现 | 反馈与局部处置 | 区分实现缺陷、契约冲突、能力缺口和未知结果，关联处置、局部修改及复核。 |
 | 第二批已实现 | 图可读性 | 阶段总览、拓扑布局、业务分支标签、循环范围及相关路径突出，展示调整不改变执行语义。 |
 | 第三批已实现 | 操作面板整理 | 一条主工具栏、一个画布、一个上下文面板；记录与高级配置按需打开，作用对象明确。 |
+| 当前计划，A 已实现 | 提示词、会话上下文、主动检索、Skills/MCP | 按[总体计划](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)的 A–F 交付；不再仅有自动 Checkpoint 或配置占位。 |
 | 后续方向，本轮不展开 | 世界 Orchestrator → 群 Orchestrator | 世界级可复用桌宠接入 API；世界配置、桌宠调用与跨群委派之后再考虑。 |
 | 有独立修改/合并需求时 | Repository/Git/worktree 或其他隔离方案 | 用于独立分支同时修改及结果合并，不作为并行任务或循环执行的通用前置。 |
-| 可独立安排 | 会话导出/导入、Guest 邀请、MCP 接入及现有流程维护 | 不等待工作流、编排或 Checkpoint 全部完成，也不把这些能力捆成一个任务。 |
-| 按实际瓶颈插入 | Checkpoint、缓存优化、运行中原生编辑、长期记忆与其他能力库 | Checkpoint 可在长会话容量成为问题时提前；Memory 不作为聊天/导出的前置。运行中编辑单独处理并发与服务生命周期，不与搜索/批量修改绑定。 |
+| 可独立安排 | 会话导出/导入、Guest 邀请及现有流程维护 | 不等待总体计划全部完成，也不把这些能力捆成一个任务。MCP 产品接入已纳入当前总体计划。 |
+| 按实际瓶颈插入 | 缓存专项优化、运行中原生编辑、自动长期记忆提取与其他能力库 | 必要缓存一致性验证、上下文压缩和主动历史检索已进入主线；长期记忆自动提取不作为检索或导出的前置。运行中原生编辑仍单独处理并发与服务生命周期。 |
 
 ## 保留的实际依赖
 
@@ -60,7 +68,8 @@
 | 条件循环与图修订衔接 | 复用已有条件/迭代/尝试及共享预算，新增未来轮次适用的明确图版本 | 不用失败重试代替正常循环，不新增固定轮数或费用门槛，不暗中扩大循环支持范围。 |
 | Git/worktree | Owner 授权的 Repository、路径/版本校验、工作区创建/回收与冲突处理 | 不依赖导出、MCP、Memory；原生搜索已经实现，可直接复用。 |
 | 独立分支同时修改 | 明确写入隔离、版本冲突、结果交接与合并/取消语义 | 与本阶段共享工作区修改互斥分开；worktree 是可选方案，选用后才形成相应依赖。 |
-| Checkpoint/Memory | 上下文边界、来源/版本、失效与权限隔离，失败回退 | 不要求先完成全部代码协作能力；二者也不必绑定交付。 |
+| 会话上下文/压缩/Memory 检索 | 持久同步、来源/版本、按角色的实际输入预算、来源及目标会话可见性、失败回退 | 压缩与最小检索回读同批形成闭环，不要求先有自动长期记忆、向量库或世界 Orchestrator。 |
+| 提示词/Skills/MCP | 配置归属与保留、共同能力解析、实际加载/调用、版本和撤销；MCP 另含凭据与宿主回收 | 技能说明不授予工具权限，知识工具不依赖文件工作区；Skills/MCP 可在共同基础后独立推进。 |
 
 具体任务采用其中一项时，再补齐该项设计与验收；无需为调整普通任务顺序重审全部历史计划。现有 Owner/Guest、Shell 审批、凭据和未知副作用处理边界继续适用。
 

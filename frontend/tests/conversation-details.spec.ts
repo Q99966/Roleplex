@@ -30,7 +30,7 @@ test('右侧模块扇形切换、键盘关闭和窄屏抽屉保留会话草稿',
   await expect(trigger).toHaveCount(0)
   const menu = page.getByRole('menu', { name: '详情模块' })
   await expect(menu.getByRole('menuitemradio')).toHaveCount(5)
-  await expect(menu.getByRole('menuitemradio', { name: '未开放' })).toHaveCount(2)
+  await expect(menu.getByRole('menuitemradio', { name: '未开放' })).toHaveCount(1)
   for (const item of await menu.getByRole('menuitemradio', { name: '未开放' }).all()) await expect(item).toBeDisabled()
   await expect(panel.getByRole('button', { name: '收起会话详情' })).toHaveCount(0)
   await expect(menu).toHaveCSS('opacity', '1')

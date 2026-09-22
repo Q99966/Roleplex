@@ -30,6 +30,10 @@ class InstanceSettings(Base):
     process_limit_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     decision_limit: Mapped[int | None] = mapped_column(BigInteger().evaluates_none(), nullable=True, default=8)
     budget_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    platform_prompt_override: Mapped[str | None] = mapped_column(Text)
+    world_prompt: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
+    prompt_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
+    prompt_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class User(Base):
@@ -78,6 +82,7 @@ class Role(Base):
     description: Mapped[str | None] = mapped_column(Text)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=json_list, nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
     # 墓碑需要清除模型绑定，因此允许为空；仍在使用的角色由服务层保证非空。
     model_config_id: Mapped[int | None] = mapped_column(ForeignKey("model_configs.id", ondelete="RESTRICT"))
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -117,6 +122,9 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(16), nullable=False, default="single")
     title: Mapped[str] = mapped_column(String(256), nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
+    prompt_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
+    prompt_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     orchestrator_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     orchestrator_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     orchestrator_role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
@@ -259,6 +267,8 @@ class AgentExecution(Base):
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_text: Mapped[str | None] = mapped_column(Text)
     context_hint_text: Mapped[str | None] = mapped_column(Text)
+    # 只存本次采用的配置版本、指纹和工具身份，正文仍由其业务配置持有。
+    context_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

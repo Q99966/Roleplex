@@ -16,7 +16,7 @@ def _number(value):
     return value if type(value) is int and 0<=value<=2**63-1 else None
 
 
-async def record(execution_id:str,event,provider_mode:str,model_name:str,*,completed:bool=False):
+async def record(execution_id:str,event,provider_mode:str,model_name:str,*,completed:bool=False,context_snapshot:dict|None=None):
     """开始/完成更新同一记录；采集失败不终止已授权任务。
 
     Args:
@@ -25,6 +25,7 @@ async def record(execution_id:str,event,provider_mode:str,model_name:str,*,compl
         provider_mode：宿主明确的 real/fake，不来自模型参数。
         model_name：本次实际配置模型名快照。
         completed：是否收到了完整调用结束事件。
+        context_snapshot：ContextBuilder 生成的版本/指纹白名单记录，不包含 Prompt 正文。
     """
     from ..db import SessionLocal,with_locked_retry
     from ..agent.argument_errors import safe_exception_type
@@ -33,6 +34,8 @@ async def record(execution_id:str,event,provider_mode:str,model_name:str,*,compl
         async with SessionLocal() as session:
             execution=await session.scalar(select(AgentExecution).where(AgentExecution.execution_id==execution_id))
             if execution is None:return
+            if context_snapshot is not None and execution.context_snapshot_json is None:
+                execution.context_snapshot_json=context_snapshot
             row=await session.scalar(select(ModelCallUsage).where(ModelCallUsage.execution_id==execution_id,ModelCallUsage.call_index==event.call_index))
             if row is None:
                 row=ModelCallUsage(execution_id=execution_id,call_index=event.call_index,

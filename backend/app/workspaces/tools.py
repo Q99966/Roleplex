@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
-from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -251,8 +250,8 @@ def _tool_parameters(name: str) -> dict:
     Args:
         name：已登记的工作区工具名。
     """
-    definition = StructuredTool(name=name, description=_tool_description(name), args_schema=WORKSPACE_TOOL_SCHEMAS[name])
-    return convert_to_openai_tool(definition)['function']['parameters']
+    from ..agent.tool_definitions import tool_definition
+    return tool_definition(name, _tool_description(name), WORKSPACE_TOOL_SCHEMAS[name])['parameters']
 
 
 def _mutation_mode(value: dict, fields: tuple, required: tuple) -> None:

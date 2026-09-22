@@ -144,6 +144,9 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `MODEL_CONFIG_NOT_FOUND` | 已实现 | REST | 404/422 | rejected | conditional | 模型配置不存在、不可见，或不属于当前 Owner；具体 HTTP 由调用接口决定 |
 | `MODEL_CONFIG_IN_USE` | 已实现 | REST | 409 | rejected | conditional | 模型配置仍被角色引用，删除被外键约束拒绝 |
 | `ROLE_NOT_FOUND` | 已实现 | REST | 404 | rejected | conditional | 角色不存在、已墓碑或不属于请求 Owner |
+| `ROLE_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 角色配置 expected_revision 过期；保留输入，核对新配置后操作 |
+| `PROMPT_REVISION_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 当前 World 或会话提示词版本已变化，整次更新被拒绝 |
+| `PROMPT_STORAGE_UNAVAILABLE` | 已实现 | REST | 503 | failed | conditional | 提示词短事务保存不可用，刷新核对结果；不回显 SQL 参数 |
 | `ROLE_NOT_AVAILABLE` | 已实现 | REST | 422 | rejected | conditional | 创建会话引用了不存在、停用、墓碑或非当前 Owner 的角色 |
 | `ROLE_REQUIRED` | 已实现 | REST | 422 | rejected | conditional | 创建会话没有提供任何角色 |
 | `SINGLE_CHAT_REQUIRES_ONE_ROLE` | 已实现 | REST | 422 | rejected | conditional | 单聊必须且只能包含一个角色 |
@@ -256,6 +259,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
 | `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
 | `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 可裁剪历史全部移除后，必要规则、当前可见工具、当前消息与输出预留仍超过角色有效窗口；不调用 Provider |
+| `AGENT_CAPABILITIES_CHANGED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 工具身份/权限或规范化定义与构建快照不一致，尚未调用模型；核对配置后重试 |
 | `EXECUTION_INTERRUPTED` | 已实现（内部） | 数据库/日志 | — | cancelled | conditional | 服务重启前 execution 未到终态；不自动重放 Provider，用户可重新发起任务 |
 | `TOOL_EXECUTION_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 工具主动报告执行失败，结果可能未知，核对后再调整，不自动重放 |
 | `TOOL_ARGUMENT_INVALID` | 已实现 | Agent/WS/数据库/日志 | — | rejected | conditional | 工具参数未通过 schema 校验，未执行，可修正 |

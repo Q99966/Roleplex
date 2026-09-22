@@ -47,7 +47,9 @@ def names_for(phase):
 
 def control_specs(phase, *, names=None, result_fields=None):
     from .results import schema
-    return [{'name':name,'description':DESCRIPTIONS[name],'parameters':(schema(result_fields) if name=='workflow_result' and result_fields is not None else SCHEMAS[name]).model_json_schema()} for name in names_for(phase) if names is None or name in names]
+    from ..agent.tool_definitions import tool_definition
+    return [tool_definition(name, DESCRIPTIONS[name], schema(result_fields) if name == 'workflow_result' and result_fields is not None else SCHEMAS[name])
+        for name in names_for(phase) if names is None or name in names]
 
 
 async def coordinator(session, conv, *, expected_id=None, expected_revision=None):
@@ -64,13 +66,13 @@ async def coordinator(session, conv, *, expected_id=None, expected_revision=None
 async def capabilities(session, conv, owner_id):
     """提供可分配工具名，不读取 Key、完整模型配置或宿主绝对路径。"""
     from ..models import ConversationMember
-    from ..workspaces.tools import workspace_tool_policy
+    from ..agent.capabilities import role_tool_policy
     roles = (await session.scalars(select(Role).join(ConversationMember,
         (ConversationMember.member_type == 'role') & (ConversationMember.member_id == Role.id)).where(
         ConversationMember.conversation_id == conv.id, Role.created_by == owner_id, Role.active.is_(True), Role.deleted_at.is_(None)))).all()
     result = []
     for role in roles:
-        policy = await workspace_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=owner_id)
+        policy = await role_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=owner_id)
         result.append({'role_id': role.id, 'name': role.name, 'tools': [t['name'] for t in policy['exposed_tools']]})
     return result
 

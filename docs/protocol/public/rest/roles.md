@@ -4,11 +4,11 @@
 |---|---|
 | 受众 | 公开 |
 | 状态 | 已实现 |
-| 协议版本 | 2（兼容新增上下文窗口字段） |
+| 协议版本 | 3（配置 revision、可选并发检查与隐藏配置保留） |
 | 维护者 | Roleplex 后端 |
 | 事实来源 | `backend/app/routers/roles.py`、`backend/app/schemas.py`、`backend/app/models.py` |
 | 关联测试 | `backend/tests/test_delete_semantics.py`、`frontend/tests/recycle-and-tombstone.spec.ts` |
-| 复核日期 | 2026-08-29 |
+| 复核日期 | 2026-09-22 |
 
 ## 范围
 
@@ -31,6 +31,7 @@ Agent 角色的增删改查，以及删除后的墓碑语义。角色在会话�
   "description": null,
   "tags": [],
   "system_prompt": "占位提示词",
+  "revision": 0,
   "model_config_id": 1,
   "model_name": "占位模型名",
   "context_window_tokens": 200000,
@@ -47,7 +48,7 @@ Agent 角色的增删改查，以及删除后的墓碑语义。角色在会话�
 }
 ```
 
-写入请求体（创建与修改）只接受配置字段，不接受 `active`、`deleted_at` 等由服务端管理的状态。
+写入请求体（创建与修改）接受配置字段及可选 `active`，`deleted_at` 等墓碑状态不由客户端直接写入。
 `context_window_tokens` 是 Owner 配置的模型输入+输出总窗口，默认 200K，允许 4K～2M；
 `context_window_ceiling_tokens` 是服务端部署安全上限，`effective_context_window_tokens` 是两者较小值，
 均只读。`params.max_tokens` 必须小于配置窗口，否则请求校验失败。设置过大可能仍被实际 Provider 拒绝，
@@ -74,6 +75,12 @@ PUT /api/roles/{role_id}
 ```
 
 `model_config_id` 必须指向同一 Owner 的模型配置，否则返回 `422 MODEL_CONFIG_NOT_FOUND`。
+
+响应兼容新增 `revision`，新建为 0，配置更新和墓碑操作递增。PUT 可携带 0–2,147,483,647 范围内的 `expected_revision`；提供时必须匹配当前版本，否则返回 `409 ROLE_REVISION_CONFLICT` 且不更新任何字段。旧客户端省略时保留原版本无检查的更新方式；现行前端携带读取的 revision，冲突保留输入并可核对/采用服务端配置。
+
+PUT 省略 `skills` 或 `mcp_servers` 时保留对应旧配置，显式 `[]` 才清空；新建省略时仍为空。其余配置字段沿用既有替换语义。前端未提供这两类完整编辑器，因此普通角色编辑不再提交空占位。字段保留不表示已实现技能库、MCP 连接或模型调用入口。
+
+角色提示词及 inline Skills 的实际组装、世界/会话继承与来源版本见[提示词配置](prompt-settings.md)。
 
 同一 Owner 下**未删除**角色的名称唯一。墓碑不占用名称，因此删除一个角色后可以
 立刻创建同名角色。
@@ -107,6 +114,7 @@ DELETE /api/roles/{role_id}
 | `ROLE_NOT_FOUND` | 404 | 角色不存在、不属于请求者，或已被删除（针对写操作） |
 | `MODEL_CONFIG_NOT_FOUND` | 422 | 模型配置不存在或不属于同一 Owner |
 | `OWNER_REQUIRED` | 403 | 写操作要求 Owner |
+| `ROLE_REVISION_CONFLICT` | 409 | 配置已被其他操作更新，需核对新版本 |
 
 ## 兼容性
 

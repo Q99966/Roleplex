@@ -140,7 +140,7 @@ Agent 角色定义，是"联系人"的数据来源。
 | `params_json` | 采样参数（temperature、max_tokens 等）。运行时按模型能力剔除不兼容项；墓碑清空 |
 | `skills_json` | 追加到 System Prompt 的技能片段；墓碑清空 |
 | `builtin_tools_json` | 启用的内置工具名列表；墓碑清空 |
-| `mcp_servers_json` | MCP server 配置列表（预留，M5 接入）；墓碑清空 |
+| `mcp_servers_json` | 兼容保留的 MCP server 配置列表，产品连接入口尚未接入；墓碑清空 |
 | `mcp_tools_cache_json` | 测试连接时缓存的 MCP 工具清单，兼作能力标签来源（预留）；墓碑清空 |
 | `active` | 是否可用；停用的角色不参与回复。墓碑一律为 `false` |
 | `deleted_at` | 墓碑时间；非空表示该角色已删除，只保留身份信息 |
@@ -559,3 +559,20 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 ### 图的展示信息（兼容 JSON 扩展）
 
 定义 graph、图版本 graph 和运行 snapshot 可保存可空 `presentation`，包含展示阶段及边文案；坐标、颜色继续使用既有节点字段。旧 JSON 缺省空展示，不改表、列、索引或迁移版本，字段与引用校验见[工作流协议](../public/rest/workflows.md)。纯展示修订保存版本而不重建激活、改分工或转换执行阶段；activation_selection 保留有效的旧汇总引用。已有激活继续引用原 graph_revision，尝试从该设计版本取节点快照，不能把新显示位置倒填成过去的执行事实。折叠、关系图层及运行视图临时整理不落库。
+
+### 提示词配置与采用来源（0024）
+
+复用每个物理 World 的数据库，不新增跨世界配置表：
+
+| 表 | 新增字段与默认值 |
+|---|---|
+| `instance_settings` | `platform_prompt_override` 可空 Text，null 继承软件默认、空串显式省略；`world_prompt` 非空 Text 默认空串；`prompt_revision` Integer 默认 0；`prompt_updated_at` 可空带时区 DateTime |
+| `conversations` | `system_prompt` 非空 Text 默认空串；独立的 `prompt_revision` Integer 默认 0；`prompt_updated_at` 可空带时区 DateTime |
+| `roles` | `revision` 非空 Integer 默认 0，配置更新及墓碑操作递增 |
+| `agent_executions` | `context_snapshot_json` 可空 JSON，记录实际调用采用的配置版本与指纹，旧执行保持 null |
+
+世界与会话提示词使用独立 CAS 版本，不复用决策预算、消息流或工作流图版本。单例仍由既有启动流程初始化，schema 只由迁移创建。旧角色、消息、Skills/MCP 配置和运行数据不重写；角色更新省略 Skills/MCP 字段时保留，显式空列表才清除。
+
+`context_snapshot_json` 包含 `context_schema_version`、`revisions`（template/world/role/conversation）、无正文的 `layers`（key/source/revision/fingerprint/characters）以及 capabilities（统一工具策略 fingerprint、逐工具 name/fingerprint）。在 Provider 调用开始的既有用量短事务中写入；完成事件允许补齐未成功保存的来源，同 execution 已有记录不覆盖。未发生模型调用的上下文预检拒绝不伪造记录，采集缺失不从当前配置或日志回填。
+
+该列不是持久会话上下文、消息副本或完整 Prompt 存档。配置/来源接口及前端恢复边界见[提示词配置协议](../public/rest/prompt-settings.md)。迁移检查覆盖 SQLite 升级、降级、模型一致性和 PostgreSQL 离线 SQL；后者不代表 PostgreSQL 实例验证。

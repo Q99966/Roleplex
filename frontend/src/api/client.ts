@@ -36,12 +36,13 @@ export type RoleInput = {
   model_name: string
   context_window_tokens: number
   params: Record<string, unknown>
-  skills: Record<string, unknown>[]
+  skills?: Record<string, unknown>[]
   builtin_tools: string[]
-  mcp_servers: Record<string, unknown>[]
+  mcp_servers?: Record<string, unknown>[]
+  expected_revision?: number
 }
 /** Agent 角色定义；`deleted_at` 非空表示墓碑，配置已清空，仅保留身份供历史消息展示。 */
-export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
+export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; revision: number; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; orchestrator_revision?: number; workspace_binding_id: number | null; role_ids: number[]; revision: number; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
@@ -309,6 +310,7 @@ export const api = {
 
   // 角色管理 API
   roles: () => request<Role[]>('/api/roles'),
+  role: (id: number) => request<Role>(`/api/roles/${id}`),
   createRole: (body: RoleInput) => request<Role>('/api/roles', { method: 'POST', body: JSON.stringify(body) }),
   updateRole: (id: number, body: RoleInput) => request<Role>(`/api/roles/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteRole: (id: number) => request<void>(`/api/roles/${id}`, { method: 'DELETE' }),

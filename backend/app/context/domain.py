@@ -1,13 +1,17 @@
 """ContextBuilder 的内部请求、结果、预算和错误契约。"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import BaseMessage
 
 
-# v5 仅在中断来源存在时交接核对事实；动态事实不进入稳定system前缀。
-CONTEXT_SCHEMA_VERSION = 5
+if TYPE_CHECKING:
+    from ..agent.capabilities import ExecutionCapabilities
+
+# v6 增加 World/会话提示词与统一能力快照；动态事实仍不进入稳定前缀。
+CONTEXT_SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,8 @@ class ContextFingerprints:
     conversation_prefix_hash: str
     tool_policy_hash: str
     interruption_hash: str | None = None
+    platform_prefix_hash: str | None = None
+    world_prefix_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,8 @@ class ContextBuildResult:
     budget: ContextBudget
     fingerprints: ContextFingerprints
     context_schema_version: int = CONTEXT_SCHEMA_VERSION
+    prompt_snapshot: dict = field(default_factory=dict)
+    capabilities: ExecutionCapabilities | None = None
 
 
 class ContextBuildError(ValueError):

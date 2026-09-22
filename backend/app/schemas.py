@@ -90,6 +90,7 @@ class RoleCreate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=30)
     system_prompt: str = Field(min_length=1, max_length=100_000)
+    expected_revision: int | None = Field(default=None, ge=0, le=2**31 - 1, strict=True)
     model_config_id: int
     model_name: str = Field(min_length=1, max_length=128)
     context_window_tokens: int = Field(default=200_000, ge=4_096, le=2_000_000)
@@ -121,6 +122,7 @@ class RoleResponse(BaseModel):
     description: str | None
     tags: list[str]
     system_prompt: str
+    revision: int
     model_config_id: int | None
     model_name: str
     context_window_tokens: int

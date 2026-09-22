@@ -2,7 +2,7 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-复核日期：2026-09-21。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
+复核日期：2026-09-22。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
 
 > API 已实现表示存在对应服务端处理与验证；完整产品能力还需对应客户端行为。仅有 schema、数据表或风险验证的内容单独标为原型/预留。
 
@@ -31,6 +31,7 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
+| 平台/世界/会话提示词与来源预览 | 已实现，仅 Owner 配置和查看 | [public/rest/prompt-settings.md](protocol/public/rest/prompt-settings.md) |
 | REST 会话工作流 | 已实现独立规划、图读写/编辑、并行循环、运行修订与节点控制 | [public/rest/workflows.md](protocol/public/rest/workflows.md) |
 | REST 会话管理与回收站 | 已实现（单聊与串行群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |

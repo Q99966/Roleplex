@@ -25,7 +25,7 @@ from ..agent.fake_provider import fake_reply_model
 from ..agent.loop import run_agent
 from ..agent.tools import guard_tools
 from ..realtime import store as event_store
-from ..workspaces.tools import create_workspace_tools, retain_execution_workspace
+from ..workspaces.tools import retain_execution_workspace
 from .tool_details import update_detail
 from ..workspaces.catalog import WORKSPACE_CAPTURE_TOOLS
 from .execution_evidence import message_stop_reason, tool_evidence
@@ -51,6 +51,8 @@ def _context_log_fields(context: ContextBuildResult) -> dict[str, object]:
         "context_schema_version": context.context_schema_version,
         "runtime_prefix_hash": fingerprints.runtime_prefix_hash,
         "role_prefix_hash": fingerprints.role_prefix_hash,
+        "platform_prefix_hash": fingerprints.platform_prefix_hash,
+        "world_prefix_hash": fingerprints.world_prefix_hash,
         "conversation_prefix_hash": fingerprints.conversation_prefix_hash,
         # Checkpoint 在 C3 前不存在；无值字段必须省略，不能用空串伪造一个版本。
         "tool_policy_hash": fingerprints.tool_policy_hash,
@@ -63,6 +65,7 @@ def _context_log_fields(context: ContextBuildResult) -> dict[str, object]:
         "estimator_version": estimate.estimator_version,
         "estimator_is_provider_exact": estimate.is_provider_exact,
         "safety_margin_tokens": estimate.safety_margin_tokens,
+        **{f'prompt_{key}_revision': value for key, value in context.prompt_snapshot.get('revisions', {}).items()},
     }
 
 
@@ -134,7 +137,7 @@ async def build_agent_inputs(session, role: Role, prompt: str, *, allow_dangerou
         if model_config is None:
             raise ValueError("角色引用的模型配置不存在")
         model = providers.build_chat_model(role, model_config)
-    # 当前里程碑没有已实现的内置工具；包装层保持在链路上，工具接入见后续里程碑。
+    # 文件和流程工具由统一能力快照在生成入口物化；本工厂只建立模型与静态附加工具。
     tools = guard_tools([], allow_dangerous=allow_dangerous)
     return model, tools
 
@@ -634,16 +637,12 @@ async def run_scheduled_generation(
             model, tools = await build_agent_inputs(
                 session, role, context.current_message, allow_dangerous=allow_dangerous,
             )
-            tools.extend(await create_workspace_tools(
-                session,
-                execution_id=execution_id,
-                conversation_id=conversation_id,
-                role=role,
-                triggered_by_user_id=triggered_by_user_id,
-                allow_dangerous=allow_dangerous,
-            ))
-            from ..workflows.coordination import create_control_tools
-            tools.extend(await create_control_tools(session, execution_id=execution_id))
+            from ..agent.capabilities import create_execution_tools
+            if context.capabilities is None:
+                raise ContextBuildError('AGENT_CAPABILITIES_CHANGED')
+            tools.extend(await create_execution_tools(session, context.capabilities, role=role, allow_dangerous=allow_dangerous))
+            # 实际调用开始后才记录采用来源；预检或预算拒绝不能伪装成模型已使用。
+            prompt_receipt = {**context.prompt_snapshot, 'capabilities': context.capabilities.receipt()}
         if settings.agent_use_fake_provider:
             logger.info(
                 "provider.built",
@@ -676,7 +675,7 @@ async def run_scheduled_generation(
                 if isinstance(event, ProviderCallCompleted):
                     from .execution_usage import record as record_usage
                     # 先于其他持久化 await 交接已返回用量；取消不能让已知统计变成缺失。
-                    recording=asyncio.create_task(record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name,completed=True),context=copy_context())
+                    recording=asyncio.create_task(record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name,completed=True,context_snapshot=prompt_receipt),context=copy_context())
                     while not recording.done():
                         try:await asyncio.shield(recording)
                         except asyncio.CancelledError:usage_cancelled=True
@@ -800,7 +799,7 @@ async def run_scheduled_generation(
                     if usage_cancelled:raise asyncio.CancelledError
                 elif isinstance(event, ProviderCallStarted):
                     from .execution_usage import record as record_usage
-                    await record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name)
+                    await record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name,context_snapshot=prompt_receipt)
                     logger.info(
                         "provider.call_started",
                         extra={
@@ -883,7 +882,7 @@ async def run_scheduled_generation(
         return
     except ContextBuildError as exc:
         reported = str(exc)
-        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED"}
+        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED", "AGENT_CAPABILITIES_CHANGED"}
         error_code = reported if reported in expected_codes else "REQUEST_FAILED"
         terminal = await _finalize(generation_id, "failed", "", error_code=error_code, stop_reason="context_rejected")
         log_method = logger.warning if error_code in expected_codes else logger.exception

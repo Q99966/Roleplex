@@ -25,7 +25,8 @@ SCHEMAS={'workflow_read_graph':schemas.ReadGraph,'workflow_write_graph':schemas.
 
 
 def specs(names):
-    return [{'name':name,'description':DESCRIPTIONS[name],'parameters':SCHEMAS[name].model_json_schema()} for name in names if name in SCHEMAS]
+    from ..agent.tool_definitions import tool_definition
+    return [tool_definition(name, DESCRIPTIONS[name], SCHEMAS[name]) for name in names if name in SCHEMAS]
 
 
 async def invoke(execution_id,name,body):

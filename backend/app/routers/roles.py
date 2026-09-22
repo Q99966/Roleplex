@@ -25,7 +25,7 @@ def to_response(role: Role) -> RoleResponse:
     """
     return RoleResponse(
         id=role.id, name=role.name, avatar=role.avatar, description=role.description,
-        tags=role.tags_json or [], system_prompt=role.system_prompt,
+        tags=role.tags_json or [], system_prompt=role.system_prompt, revision=role.revision,
         model_config_id=role.model_config_id, model_name=role.model_name,
         context_window_tokens=role.context_window_tokens,
         context_window_ceiling_tokens=settings.max_context_tokens,
@@ -116,6 +116,8 @@ async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, D
     # 撤权与派发共用短控制边界，防止旧状态覆盖撤销标记。
     async with service.control_lock:
         role = await editable_role(session, role_id, user.id)
+        if payload.expected_revision is not None and payload.expected_revision != role.revision:
+            raise HTTPException(409, 'ROLE_REVISION_CONFLICT')
         await owned_model_config(session, user.id, payload.model_config_id)
         if payload.active is not None: role.active = payload.active
         role.name = payload.name
@@ -127,9 +129,13 @@ async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, D
         role.model_name = payload.model_name
         role.context_window_tokens = payload.context_window_tokens
         role.params_json = payload.params
-        role.skills_json = payload.skills
+        # 兼容没有这些编辑器的客户端；只有显式字段（包括 []）才替换现有配置。
+        if 'skills' in payload.model_fields_set:
+            role.skills_json = payload.skills
         role.builtin_tools_json = payload.builtin_tools
-        role.mcp_servers_json = payload.mcp_servers
+        if 'mcp_servers' in payload.model_fields_set:
+            role.mcp_servers_json = payload.mcp_servers
+        role.revision += 1
         role.updated_at = datetime.now(timezone.utc)
         await flush_role(session)
         pending = []
@@ -173,6 +179,7 @@ async def delete_role(role_id: int, user: Annotated[User, Depends(require_owner)
         role.builtin_tools_json = []
         role.mcp_servers_json = []
         role.mcp_tools_cache_json = []
+        role.revision += 1
         from ..workflows.coordination import revoke_role_runs
         pending = await revoke_role_runs(session, role_id)
         await session.commit()

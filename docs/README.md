@@ -1,6 +1,6 @@
 # Roleplex 文档导航
 
-复核日期：2026-09-21。本入口帮助区分当前说明、接口契约、设计和历史记录。
+复核日期：2026-09-22。本入口帮助区分当前说明、接口契约、设计和历史记录。
 
 | 要了解的内容 | 权威入口 |
 |---|---|
@@ -8,12 +8,14 @@
 | 开发工作方式、安全与验证要求 | [AGENTS.md](../AGENTS.md) |
 | API、消息、WebSocket、错误码与内部数据/执行契约 | [协议索引](protocol.md) |
 | 测试命令、端口、隔离数据、账号与排障 | [测试指南](testing/README.md) |
+| 平台/世界/角色/会话提示词配置与生效来源 | [提示词协议](protocol/public/rest/prompt-settings.md)、[A 批验收](testing/prompt-settings.md) |
 | 当前日志结构与持久化设计 | [日志 v2](design/logging-v2.md) |
 | 当前工作台侧栏、配色与详情交互设计 | [工作台设计](design/frontend-navigation-theme.md) |
 | 会话工作流的范围与验收记录 | [可操作工作流图](plan/conversation-workflows-v1.md)、[接口契约](protocol/public/rest/workflows.md) |
 | 群协调基础实现与当前缺口 | [基础范围与记录](plan/orchestrator-parallel-loops-v1.md) |
 | 图管理、工具授权与运行重规划的实施范围及验收 | [实施范围](plan/orchestrator-graph-control-v1.md)、[本次验收](testing/orchestrator-graph-control.md) |
 | 节点反馈、图可读性与操作面板 | [分批记录](plan/workflow-feedback-usability-v1.md)、[反馈验收](testing/workflow-feedback.md)、[可读性验收](testing/workflow-readability.md)、[操作面板验收](testing/workflow-workbench.md) |
+| 会话上下文、提示词、检索及 Skills/MCP 总体计划（A 已实现，B–F 待实施） | [总体计划与实施顺序](plan/conversation-context-memory-capabilities-v1.md)、[既有上下文阶段](plan/context-cache-orchestration-v1.md) |
 | 旧里程碑的结果、未实施方向与历史原文 | [计划索引](plan/README.md)、[归档说明](archive/README.md) |
 
 ## 阅读与维护

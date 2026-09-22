@@ -1,15 +1,18 @@
 import { AgentBudgetSettings } from './AgentBudgetSettings'
 import { ToolCategory } from './ToolCategory'
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { type FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server, FolderKanban,
+  Settings2, X, Shield, Cpu, Trash2, Plus, Check, AlertCircle, Bot, Users, Globe2, ChevronDown, Database, Server, FolderKanban, Layers3,
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
-import { type Conversation, type Role } from '../api/client'
+import { api, getAuthEpoch, type Conversation, type Role } from '../api/client'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 import { RuntimeLimit } from './RuntimeLimit'
 import { WorldBackup } from './WorldBackup'
 import { WorldCreate } from './WorldCreate'
+const WorldPromptSettingsPanel = lazy(() => import('./prompts/PromptSettings').then(module => ({ default: module.WorldPromptSettingsPanel })))
+const RolePromptInheritance = lazy(() => import('./prompts/PromptSettings').then(module => ({ default: module.RolePromptInheritance })))
+export type SettingsTab = 'models' | 'worlds' | 'workspaces' | 'prompts' | 'account'
 
 export interface ModalProps {
   onClose: () => void
@@ -17,12 +20,18 @@ export interface ModalProps {
 
 export interface SettingsModalProps {
   onClose: () => void
-  initialTab?: 'models' | 'worlds' | 'workspaces' | 'account'
+  initialTab?: SettingsTab
 }
 
 /** 综合系统与环境配置管理弹窗 (SettingsModal)。 */
 export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'models' | 'worlds' | 'workspaces' | 'account'>(initialTab)
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
+  const modal = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    modal.current?.focus()
+    return () => { if (previous?.isConnected) previous.focus() }
+  }, [])
   const { 
     modelConfigs, createModelConfig, deleteModelConfig,
     worldName, worlds, worldSwitchingSupported, switchingWorld, switchWorld,
@@ -67,8 +76,19 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div
         role="dialog"
+        ref={modal}
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="settings-title"
+        onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); onClose() }
+          if (event.key === 'Tab') {
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary,a[href]')).filter(element => element.getClientRects().length)
+            const first = items[0], last = items.at(-1)
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === modal.current)) { event.preventDefault(); last?.focus() }
+            else if (!event.shiftKey && (document.activeElement === last || document.activeElement === modal.current)) { event.preventDefault(); first?.focus() }
+          }
+        }}
         className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh] shadow-2xl"
       >
         {/* 标题栏 */}
@@ -152,6 +172,9 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
             </button>
           )}
 
+          {user?.is_owner && <button type="button" id="settings-tab-prompts" role="tab" aria-selected={activeTab === 'prompts'} aria-controls="settings-panel-prompts"
+            onClick={() => setActiveTab('prompts')} className={`flex shrink-0 items-center gap-2 rounded-t-xl border-b-2 px-4 py-2.5 text-xs font-semibold ${activeTab === 'prompts' ? 'border-indigo-500 bg-slate-900/80 text-indigo-400' : 'border-transparent text-slate-400'}`}>
+            <Layers3 size={14} />提示词与规则</button>}
           <button
             type="button"
             id="settings-tab-account"
@@ -175,6 +198,9 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
 
         {/* 选项卡内容区 */}
         <div className="flex-1 overflow-y-auto p-6">
+          {activeTab === 'prompts' && user?.is_owner && <div id="settings-panel-prompts" role="tabpanel" aria-labelledby="settings-tab-prompts">
+            <Suspense fallback={<p role="status">正在读取提示词配置…</p>}><WorldPromptSettingsPanel /></Suspense>
+          </div>}
           {activeTab === 'models' && (
             <div
               id="settings-panel-models"
@@ -494,6 +520,12 @@ interface RoleModalProps {
   onOpenSettings?: () => void
 }
 
+function roleFormValues(role: Role) {
+  return { name: role.name, avatar: role.avatar || '', description: role.description || '', tags: role.tags.join(', '),
+    system_prompt: role.system_prompt, model_config_id: role.model_config_id ?? 0, model_name: role.model_name,
+    context_window_tokens: role.context_window_tokens, params: JSON.stringify(role.params || {}, null, 2), builtin_tools: role.builtin_tools || [] }
+}
+
 /** 创建或编辑角色，保存可视化输出设置并保留已有其他参数。
  * @param role 待编辑角色；为空时创建新角色。
  * @param onClose 保存成功或取消时关闭弹窗。
@@ -501,6 +533,15 @@ interface RoleModalProps {
  */
 export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
   const { modelConfigs, createRole, updateRole, deleteRole } = useAppStore()
+  const [roleRevision, setRoleRevision] = useState(role?.revision)
+  const [remoteRole, setRemoteRole] = useState<Role | null>(null)
+  const promptInput = useRef<HTMLTextAreaElement>(null)
+  const dialog = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    dialog.current?.focus()
+    return () => { if (previous?.isConnected) previous.focus() }
+  }, [])
   
   const [form, setForm] = useState({
     name: '',
@@ -548,23 +589,11 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
 
   useEffect(() => {
     if (role) {
-      setForm({
-        name: role.name,
-        avatar: role.avatar || '',
-        description: role.description || '',
-        tags: role.tags.join(', '),
-        system_prompt: role.system_prompt,
-        // 墓碑角色不会进入编辑弹窗（列表已过滤），这里回退到 0 只是为了让
-        // 表单状态保持非空数字，提交前仍会校验必须选中一个模型配置。
-        model_config_id: role.model_config_id ?? 0,
-        model_name: role.model_name,
-        context_window_tokens: role.context_window_tokens,
-        params: JSON.stringify(role.params || {}, null, 2),
-        builtin_tools: role.builtin_tools || []
-      })
-    } else if (modelConfigs.length > 0) {
-      setForm(f => ({ ...f, model_config_id: modelConfigs[0].id }))
+      setForm(roleFormValues(role)); setRoleRevision(role.revision); setRemoteRole(null)
     }
+  }, [role])
+  useEffect(() => {
+    if (!role && modelConfigs.length > 0) setForm(value => value.model_config_id ? value : { ...value, model_config_id: modelConfigs[0].id })
   }, [role, modelConfigs])
 
   /** 校验可视化设置并保留已有参数后保存角色。
@@ -627,11 +656,11 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       model_name: form.model_name || 'gpt-4o',
       context_window_tokens: form.context_window_tokens,
       params: parsedParams,
-      skills: [],
       builtin_tools: form.builtin_tools,
-      mcp_servers: []
+      expected_revision: roleRevision,
     }
 
+    const epoch = getAuthEpoch()
     try {
       if (role) {
         await updateRole(role.id, payload)
@@ -640,7 +669,10 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
       }
       onClose()
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '角色存储失败，请检查参数')
+      if ((err as { code?: string }).code === 'ROLE_REVISION_CONFLICT' && role) {
+        setErrorMsg('角色配置已更新，当前输入仍保留。请核对最新版本后处理。')
+        try { const latest = await api.role(role.id); if (epoch === getAuthEpoch()) setRemoteRole(latest) } catch { /* 保留输入和原冲突，不用空配置替换。 */ }
+      } else setErrorMsg(err instanceof Error ? err.message : '角色存储失败，请检查参数')
     } finally {
       setBusy(false)
     }
@@ -673,7 +705,16 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] shadow-2xl relative z-10">
+      <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="角色配置" className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] shadow-2xl relative z-10 outline-none"
+        onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); onClose() }
+          if (event.key === 'Tab') {
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary')).filter(element => element.getClientRects().length)
+            const first = items[0], last = items.at(-1)
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus() }
+            else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus() }
+          }
+        }}>
         
         {/* 头部 */}
         <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
@@ -785,6 +826,9 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
           <label className="block">
             <span className="text-slate-400 font-medium">核心系统指令 System Prompt (必填)</span>
             <textarea 
+              ref={promptInput}
+              aria-label="角色系统提示词"
+              disabled={busy}
               required
               rows={5}
               value={form.system_prompt} 
@@ -793,6 +837,8 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
               className="mt-1.5 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-200 focus:border-indigo-500 outline-none font-mono text-[11px] leading-relaxed" 
             />
           </label>
+
+          <Suspense fallback={<p className="text-xs text-slate-500">正在读取规则入口…</p>}><RolePromptInheritance /></Suspense>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -887,11 +933,20 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
           </div>
 
           {errorMsg && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-start gap-1.5">
+            <div role="alert" className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-start gap-1.5">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
+
+          {remoteRole && <section aria-label="角色配置冲突" className="rounded-xl border border-amber-400 p-3 text-xs">
+            <p>服务端角色版本 {remoteRole.revision}</p>
+            <details className="mt-2"><summary className="cursor-pointer">查看最新角色配置</summary><p className="mt-2">{remoteRole.name} · {remoteRole.model_name}</p>
+              <p className="mt-2 whitespace-pre-wrap break-words">{remoteRole.system_prompt}</p><p className="mt-2 break-words">工具：{remoteRole.builtin_tools.join('、') || '无'}</p></details>
+            <button type="button" className="mt-3 rounded-lg border border-slate-700 px-3 py-2" disabled={busy} onClick={() => {
+              setForm(roleFormValues(remoteRole)); setRoleRevision(remoteRole.revision); setRemoteRole(null); setErrorMsg(null); promptInput.current?.focus()
+            }}>采用最新角色配置</button>
+          </section>}
 
           {/* 按钮控制 */}
           <div className="flex items-center justify-between border-t border-slate-800 pt-4 mt-2">

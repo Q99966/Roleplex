@@ -502,3 +502,16 @@ frontend：`npm run test:e2e:commands -- workflow-workbench.spec.ts workflow-fee
 相邻右栏回归：`npm run test:e2e -- conversation-details.spec.ts`；布局算法：`npm run test:workflow-logic`；编译构建：`npm run build`。与浏览器相关的配置使用各自隔离测试库；依次运行，避免测试产物目录互相覆盖。取消协调的固件只在 fake Provider 的指定标记下停留于真实图提交之后，取消通过产品控制路径触发，不直接改写运行状态。
 
 本批维护现有真实 Provider 脚本的 UI 入口，但不因界面调整重复调用收费模型。实际结果、截图与覆盖缺口见[操作面板验收](workflow-workbench.md)。
+
+### 提示词与能力配置（总体计划 A）
+
+后端在 `backend/`：`python -m pytest tests/test_prompt_settings.py tests/test_context_builder.py tests/test_chat_flow.py tests/test_orchestrator.py tests/test_graph_control.py tests/test_tool_execution_policy.py tests/test_agent_pipeline.py tests/test_execution_usage.py tests/test_service_discovery.py tests/test_group_workspaces.py tests/test_workflow_feedback.py tests/test_delete_semantics.py -q --tb=short --show-capture=no`。覆盖配置默认/空覆盖/CAS、Owner/Guest/成员、角色配置保留及版本、实际输入与采用记录、存储异常隐私，以及原生成、工具和工作流路径。迁移检查 `python scripts/check_migrations.py` 包含 0024。
+
+浏览器在 `frontend/` 依次运行，避免测试产物目录互相覆盖：
+
+- `npm run test:e2e:commands -- prompt-settings.spec.ts graph-control.spec.ts orchestration.spec.ts workflow-workbench.spec.ts group-workspace.spec.ts`：实际配置进入 fake 模型、响应丢失后核对、版本冲突/草稿、窄屏/Guest 与群聊、工作流回归。
+- `npm run test:e2e -- conversation-details.spec.ts role-output-settings.spec.ts`：原详情模块与角色参数/工具操作。
+- `npm run test:e2e:worlds -- prompt-worlds.spec.ts`：物理 World 切换、重新认证、配置隔离和重启后保留。
+- `npm run build`：类型检查与生产构建。
+
+验收使用受控提示词和 fake Provider；`PROMPT_LAYERS_PROBE` 固件仅回报特定受控标记，避免直接回显完整系统输入。预览本身不触发模型；本批未运行收费 Provider 验证。结果与边界见[提示词配置验收](prompt-settings.md)。

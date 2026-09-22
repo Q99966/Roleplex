@@ -1,6 +1,6 @@
 """任务分配与执行时权限复核，普通执行没有分配记录时维持原契约。"""
 from sqlalchemy import select
-from ..models import ExecutionAllocation, WorkflowAttempt, WorkflowActivation, WorkflowRun, Conversation, Role, User, ConversationMember, Generation, WorkspaceBinding, AgentExecution
+from ..models import ExecutionAllocation, WorkflowAttempt, WorkflowActivation, WorkflowRun, Conversation, Role, User, ConversationMember, Generation, AgentExecution
 
 
 async def tools_for(session, execution_id):
@@ -58,10 +58,10 @@ async def allowed(session, execution_id, tool_name=None, *, check_generation=Tru
             return False
     if not set(allocation.tools_json).issubset(set(role.builtin_tools_json or [])):
         return False
-    binding = await session.get(WorkspaceBinding, allocation.workspace_binding_id) if allocation.workspace_binding_id else None
-    from ..workspaces.tools import _enabled_tools
-    available = set(_enabled_tools(role, binding, conv.type)) if binding and binding.active and binding.created_by == run.owner_id else set()
-    if conv.type == 'single' and 'workspace_service_status' in (role.builtin_tools_json or []): available.add('workspace_service_status')
+    # 工具类别负责自身资源前置；任务分配复用同一能力解析，不把文件根作为所有工具的前置。
+    from ..agent.capabilities import role_tool_policy
+    policy = await role_tool_policy(session, conversation=conv, role=role, triggered_by_user_id=run.owner_id)
+    available = {tool['name'] for tool in policy['exposed_tools']}
     if not set(allocation.tools_json).issubset(available): return False
     if not check_generation: return True
     generation = await session.get(Generation, attempt.generation_id) if attempt.generation_id else None

@@ -110,6 +110,16 @@ read 的字节/行/批次与 search 共用有界扫描准入；取得槽位后�
 角色上下文窗口默认 200K，并受部署 ceiling 约束。未知 tokenizer 使用明确标记的保守 UTF-8 估算，不能
 冒充 Provider usage。预算不足时产生 `CONTEXT_BUDGET_EXCEEDED`，在调用模型前失败。
 
+### 提示词分层与共同能力快照
+
+Context schema 6 通过 `context/prompts.py` 共用平台固定规则、平台默认/世界覆盖、世界提示词、角色/inline 技能及会话提示词的序列化，配置接口见[提示词配置](../public/rest/prompt-settings.md)。每次执行先固定本次来源，配置更新不重写已发出的调用。
+
+`agent/capabilities.py` 统一解析本次能力；普通角色可用集合由资源类别解析，工作流再以已有 allocation 限制。预览、ContextBuilder 预算/指纹和实际工具工厂使用同一快照，`agent/tool_definitions.py` 规范化参数 Schema。实际工具名称或参数定义不一致时以 `AGENT_CAPABILITIES_CHANGED` 在调用模型前封闭，不静默换成另一套工具。实际调用仍沿用原生/工作流逐次授权和资源准入，解析快照不替代撤权检查。
+
+角色配置、群成员能力和任务分配共用角色能力入口，避免在各处用工作区工具名硬编码所有未来能力的前置。当前接入类别仍为原生工作区与工作流控制；没有虚构 Memory、Skills 加载或 MCP 工具。已有 Skills JSON 继续作为角色说明，MCP 配置只保留、不连接。
+
+实际调用的采用来源与用量记录共享短事务和有限重试，正文不进入来源记录；同一 execution 后续调用不覆盖既有来源。预算拒绝或仅预览不创建已采用记录。来源元数据和状态缺失保持未知，原消息和工具事实仍是其各自领域的事实来源。
+
 ## 防腐层边界与实测结论
 
 框架事件到领域事件的转换全部收敛在 `app/agent/loop.py`，测试用源码扫描保证其他模块

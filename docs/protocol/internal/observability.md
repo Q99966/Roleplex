@@ -69,7 +69,7 @@ WebSocket/流式事件继续关联 stream epoch、event seq、message revision�
 
 ContextBuilder 成功后写 `context.loaded`，并把同一快照的 schema version、L0/L1/L2/tool policy SHA-256、
 实际历史消息数、裁剪数、本地估算器身份与预算绑定到本轮 Provider 和 generation 事件。C3 前不伪造
-checkpoint hash；完整 Prompt、层内容、用户输入和模型输出仍不落盘。缓存 token 和命中比只使用厂商数据，
+checkpoint hash；完整 Prompt、层内容、用户输入和模型输出仍不落盘。Context schema 6 兼容新增平台/世界提示词 hash 与各配置来源 revision，字段见[日志设计](../../design/logging-v2.md)；不是新增一条业务 Trace。缓存 token 和命中比只使用厂商数据，
 本地估算字段保持 `estimated_*`/`estimator_*` 命名，不进入 Provider usage 汇总。
 
 ## 测试报告

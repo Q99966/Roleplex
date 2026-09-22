@@ -9,7 +9,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models import Conversation, ConversationMember, Message, Role, User
+from ..models import Conversation, ConversationMember, Message, Role
 from .budget import estimate_messages_tokens, estimate_text_tokens, token_estimate
 from .domain import (
     CONTEXT_SCHEMA_VERSION,
@@ -22,9 +22,9 @@ from .domain import (
 )
 from .fingerprint import stable_hash
 from .projection import parts_text, project_message
-from ..workspaces.tools import workspace_tool_policy
+from .prompts import resolve_prompt_layers
+from ..agent.capabilities import resolve_capabilities
 
-_RUNTIME_POLICY = "你正在 Roleplex 会话中以指定角色身份回复。只以自己的身份发言，不伪造其他成员或系统消息。"
 _DEFAULT_OUTPUT_RESERVE = 1024
 
 
@@ -35,48 +35,6 @@ class _ProjectedHistory:
     source: Message
     projected: BaseMessage
     estimated_tokens: int
-
-
-def _role_prefix(role: Role) -> str:
-    """构造只包含角色稳定定义的 L1 文本。
-
-    Args:
-        role：本轮执行角色。
-    """
-    skills = json.dumps(role.skills_json or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"<role>\n{role.system_prompt}\n<skills>{skills}</skills>\n</role>"
-
-
-async def _conversation_prefix(session: AsyncSession, conversation: Conversation) -> str:
-    """按稳定类型和 ID 顺序构造成员名称映射。
-
-    Args:
-        session：ContextBuilder 的短读事务会话。
-        conversation：当前会话记录。
-    """
-    members = (await session.scalars(
-        select(ConversationMember)
-        .where(ConversationMember.conversation_id == conversation.id)
-        .order_by(ConversationMember.member_type.asc(), ConversationMember.member_id.asc())
-    )).all()
-    user_ids = [member.member_id for member in members if member.member_type == "user"]
-    role_ids = [member.member_id for member in members if member.member_type == "role"]
-    users = {
-        user.id: user.nickname
-        for user in (await session.scalars(select(User).where(User.id.in_(user_ids)))).all()
-    } if user_ids else {}
-    roles = {
-        role.id: role.name
-        for role in (await session.scalars(select(Role).where(Role.id.in_(role_ids)))).all()
-    } if role_ids else {}
-    lines = [f"type={conversation.type}", f"title={conversation.title}", "members:"]
-    for member in members:
-        if member.member_type == "user":
-            display = users.get(member.member_id, "已删除用户")
-        else:
-            display = roles.get(member.member_id, "已删除角色")
-        lines.append(f"- [{member.member_type}:{member.member_id}] {display}")
-    return "<conversation>\n" + "\n".join(lines) + "\n</conversation>"
 
 
 def _output_reserve(role: Role) -> int:
@@ -167,19 +125,11 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     if not current_text:
         raise ContextBuildError("TEXT_PART_REQUIRED")
 
-    runtime_prefix = f"<runtime schema=\"{CONTEXT_SCHEMA_VERSION}\">{_RUNTIME_POLICY}</runtime>"
-    role_prefix = _role_prefix(role)
-    conversation_prefix = await _conversation_prefix(session, conversation)
-    system_prompt = "\n".join((runtime_prefix, role_prefix, conversation_prefix))
-    tool_policy = await workspace_tool_policy(
-        session,
-        conversation=conversation,
-        role=role,
-        triggered_by_user_id=request.triggered_by_user_id,
-    )
-
-    from ..workflows.allocations import policy as allocation_policy
-    tool_policy = await allocation_policy(session, request.execution_id, tool_policy)
+    prompts = await resolve_prompt_layers(session, conversation, role)
+    system_prompt = prompts.system_prompt
+    capabilities = await resolve_capabilities(session, conversation=conversation, role=role,
+        triggered_by_user_id=request.triggered_by_user_id, execution_id=request.execution_id)
+    tool_policy = capabilities.policy
 
     history_boundary = Message.id < current.id
     if request.execution_kind == "group_role" and current.chain_id:
@@ -313,13 +263,12 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
     )
     fingerprints = ContextFingerprints(
         interruption_hash=stable_hash(recovery_message.content) if recovery_message is not None else None,
-        runtime_prefix_hash=stable_hash(runtime_prefix),
-        role_prefix_hash=stable_hash(role_prefix),
-        conversation_prefix_hash=stable_hash(conversation_prefix),
-        tool_policy_hash=stable_hash({
-            "policy": tool_policy,
-            "triggered_by_owner": request.triggered_by_user_id == role.created_by,
-        }),
+        runtime_prefix_hash=stable_hash(prompts.runtime_prefix),
+        platform_prefix_hash=prompts.layers[1]["fingerprint"],
+        world_prefix_hash=prompts.layers[2]["fingerprint"],
+        role_prefix_hash=stable_hash(prompts.role_prefix),
+        conversation_prefix_hash=stable_hash(prompts.conversation_prefix),
+        tool_policy_hash=capabilities.fingerprint,
     )
     return ContextBuildResult(
         system_prompt=system_prompt,
@@ -327,4 +276,6 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest) -> 
         current_message=current_text,
         budget=budget,
         fingerprints=fingerprints,
+        prompt_snapshot=prompts.receipt(),
+        capabilities=capabilities,
     )

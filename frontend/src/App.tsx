@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Globe2, PanelLeftOpen } from 'lucide-react'
 import { useAppStore } from './store/app'
-import { type Conversation, type Role } from './api/client'
+import { getAuthEpoch, type Conversation, type Role } from './api/client'
 import { AuthScreen } from './components/AuthScreen'
 import { PasswordResetScreen } from './components/PasswordResetScreen'
 import { RecycleBinModal } from './components/RecycleBinModal'
 import { Sidebar } from './components/Sidebar'
 import { EmptyWorkspace } from './components/EmptyWorkspace'
 import { ActiveWorkspace } from './components/ActiveWorkspace'
-import { ConversationMembersModal, SettingsModal, RoleModal, ConversationModal } from './components/Modals'
+import { ConversationMembersModal, SettingsModal, RoleModal, ConversationModal, type SettingsTab } from './components/Modals'
 import { LandingPage } from './components/LandingPage'
 import { WebPet } from './components/WebPet/WebPet'
 
@@ -24,18 +24,33 @@ export function App() {
   const [view, setView] = useState<'landing' | 'auth'>('landing')
   const [currentHash, setCurrentHash] = useState(typeof window !== 'undefined' ? window.location.hash || '#/' : '#/')
   const [showSettings, setShowSettings] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<'models' | 'worlds' | 'workspaces' | 'account'>('models')
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('models')
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null)
   const [showConvModal, setShowConvModal] = useState(false)
   const [membersConversation, setMembersConversation] = useState<Conversation | null>(null)
   const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const authEpoch = getAuthEpoch(), modalEpoch = useRef(authEpoch)
+  /** 认证/World 切换后旧弹窗不能带着上一身份的表单重新出现。 */
+  function ensureModalScope() {
+    if (modalEpoch.current === getAuthEpoch()) return
+    modalEpoch.current = getAuthEpoch()
+    setShowSettings(false); setShowRoleModal(false); setRoleToEdit(null)
+    setShowConvModal(false); setMembersConversation(null); setShowRecycleBin(false)
+  }
+  useEffect(() => { ensureModalScope() }, [authEpoch])
 
-  const handleOpenSettings = (tab: 'models' | 'worlds' | 'workspaces' | 'account' = 'models') => {
+  const handleOpenSettings = (tab: SettingsTab = 'models') => {
+    ensureModalScope()
     setSettingsTab(tab)
     setShowSettings(true)
   }
+  useEffect(() => {
+    const openPrompts = () => { if (useAppStore.getState().user?.is_owner) { ensureModalScope(); setSettingsTab('prompts'); setShowSettings(true) } }
+    window.addEventListener('roleplex:open-prompt-settings', openPrompts)
+    return () => window.removeEventListener('roleplex:open-prompt-settings', openPrompts)
+  }, [])
 
   // 页面初始化加载状态
   useEffect(() => { 
@@ -118,30 +133,33 @@ export function App() {
         onToggleCollapse={() => setIsSidebarCollapsed(true)}
         onOpenSettings={handleOpenSettings}
         onOpenRoleModal={(role?: Role) => {
+          ensureModalScope()
           setRoleToEdit(role || null)
           setShowRoleModal(true)
         }}
-        onOpenConvModal={() => setShowConvModal(true)}
-        onOpenRecycleBin={() => setShowRecycleBin(true)}
+        onOpenConvModal={() => { ensureModalScope(); setShowConvModal(true) }}
+        onOpenRecycleBin={() => { ensureModalScope(); setShowRecycleBin(true) }}
       />
       {activeConversationId ? (
         <ActiveWorkspace 
           key={activeConversationId}
           isSidebarCollapsed={isSidebarCollapsed}
           onOpenRoleModal={(role?: Role) => {
+          ensureModalScope()
             setRoleToEdit(role || null)
             setShowRoleModal(true)
           }}
-          onManageMembers={(conversation) => setMembersConversation(conversation)}
+          onManageMembers={(conversation) => { ensureModalScope(); setMembersConversation(conversation) }}
         />
       ) : (
         <EmptyWorkspace 
           onOpenSettings={handleOpenSettings}
           onOpenRoleModal={() => {
+            ensureModalScope()
             setRoleToEdit(null)
             setShowRoleModal(true)
           }}
-          onOpenConvModal={() => setShowConvModal(true)}
+          onOpenConvModal={() => { ensureModalScope(); setShowConvModal(true) }}
         />
       )}
       
@@ -158,14 +176,14 @@ export function App() {
       )}
       
       {/* 模态浮层 */}
-      {showSettings && (
+      {showSettings && modalEpoch.current === authEpoch && (
         <SettingsModal 
           initialTab={settingsTab}
           onClose={() => setShowSettings(false)} 
         />
       )}
       
-      {showRoleModal && (
+      {showRoleModal && user.is_owner && modalEpoch.current === authEpoch && (
         <RoleModal 
           role={roleToEdit}
           onOpenSettings={handleOpenSettings}
@@ -176,16 +194,16 @@ export function App() {
         />
       )}
       
-      {showConvModal && <ConversationModal onClose={() => setShowConvModal(false)} />}
+      {showConvModal && modalEpoch.current === authEpoch && <ConversationModal onClose={() => setShowConvModal(false)} />}
 
-      {membersConversation && (
+      {membersConversation && modalEpoch.current === authEpoch && (
         <ConversationMembersModal
           conversation={membersConversation}
           onClose={() => setMembersConversation(null)}
         />
       )}
 
-      {showRecycleBin && <RecycleBinModal onClose={() => setShowRecycleBin(false)} />}
+      {showRecycleBin && modalEpoch.current === authEpoch && <RecycleBinModal onClose={() => setShowRecycleBin(false)} />}
       
       {/* 桌面宠物悬浮层 */}
       <WebPet />
