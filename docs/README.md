@@ -13,7 +13,7 @@
 | 会话工作流的范围与验收记录 | [可操作工作流图](plan/conversation-workflows-v1.md)、[接口契约](protocol/public/rest/workflows.md) |
 | 群协调基础实现与当前缺口 | [基础范围与记录](plan/orchestrator-parallel-loops-v1.md) |
 | 图管理、工具授权与运行重规划的实施范围及验收 | [实施范围](plan/orchestrator-graph-control-v1.md)、[本次验收](testing/orchestrator-graph-control.md) |
-| 节点反馈、图可读性；后续操作面板整理 | [分批改进计划](plan/workflow-feedback-usability-v1.md)、[反馈验收](testing/workflow-feedback.md)、[可读性验收](testing/workflow-readability.md) |
+| 节点反馈、图可读性与操作面板 | [分批记录](plan/workflow-feedback-usability-v1.md)、[反馈验收](testing/workflow-feedback.md)、[可读性验收](testing/workflow-readability.md)、[操作面板验收](testing/workflow-workbench.md) |
 | 旧里程碑的结果、未实施方向与历史原文 | [计划索引](plan/README.md)、[归档说明](archive/README.md) |
 
 ## 阅读与维护

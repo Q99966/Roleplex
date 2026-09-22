@@ -50,8 +50,10 @@ export function ConversationDetails({ conversation, open, drawer, onClose, onEdi
   const [module, setModule] = useState<Module>('overview')
   useEffect(() => {
     const show = (event: Event) => { if ((event as CustomEvent).detail === conversation.id) { setModule('workflows'); setMenuOpen(false) } }
+    const inspect = (event: Event) => { if ((event as CustomEvent).detail?.conversationId === conversation.id) { setModule('workflows'); setMenuOpen(false) } }
     window.addEventListener('roleplex:workflow-show', show)
-    return () => window.removeEventListener('roleplex:workflow-show', show)
+    window.addEventListener('roleplex:workflow-inspector', inspect)
+    return () => { window.removeEventListener('roleplex:workflow-show', show); window.removeEventListener('roleplex:workflow-inspector', inspect) }
   }, [conversation.id])
   const [menuOpen, setMenuOpen] = useState(false)
   const [order, setOrder] = useState<WheelId[]>(['overview', 'members', 'workflows', 'reserved-1', 'reserved-2'])

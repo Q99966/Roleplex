@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { ensureOwnerSession } from '../owner'
+import { openWorkflowTemplate, saveWorkflow, workflowToolbar } from '../workflow-ui'
 
 test('连线避开节点、循环外侧返回、自环、拖动与保存恢复', async ({ page }, info) => {
   page.setDefaultTimeout(12_000)
@@ -24,15 +25,7 @@ test('连线避开节点、循环外侧返回、自环、拖动与保存恢复',
   await page.reload()
   await page.getByRole('button',{name:'打开会话：连线避障验收',exact:true}).click()
   async function open(restored = false) {
-    if (restored) await expect(page.getByRole('region', { name: '本地草稿', exact: true })).toBeVisible()
-    else {
-      await page.getByRole('button',{name:'切换详情模块',exact:true}).click()
-      await page.getByRole('menuitemradio',{name:'工作流',exact:true}).locator('span').last().click()
-    }
-    const list = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^已保存流程/ }) }).first()
-    await expect(list.locator('summary')).toContainText('1')
-    if (!await list.evaluate(element => (element as HTMLDetailsElement).open)) await list.locator('summary').click()
-    await page.getByRole('button',{name:/连线避障 v/}).click()
+    await openWorkflowTemplate(page, '连线避障', restored)
     await page.getByRole('region', { name: '工作流画布', exact: true }).getByRole('button', { name: '节点细节', exact: true }).click()
   }
   await open()
@@ -67,8 +60,8 @@ test('连线避开节点、循环外侧返回、自环、拖动与保存恢复',
   await routed()
   await expect(edge.locator('.react-flow__edge-path')).not.toHaveAttribute('d',oldPath!)
   await expect.poll(collisions).toEqual([])
-  await page.getByRole('button',{name:'保存流程',exact:true}).click()
-  await expect(page.getByText('已保存版本 2',{exact:true})).toBeVisible()
+  await saveWorkflow(page)
+  await expect(workflowToolbar(page).getByText('版本 2', { exact: true })).toBeVisible()
   await page.reload(); await open(true); await routed()
   await expect.poll(collisions).toEqual([])
   const shot=info.outputPath('workflow-routing.png')

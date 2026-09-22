@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { openWorkflowTemplate, startWorkflow, workflowInspector, workflowToolbar } from '../workflow-ui'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -53,12 +54,10 @@ test('真实 World 节点反馈、协调局部修正和文件验证后关闭', a
     })).json(), { cid, base })
     stage = '授权自动反馈处置并启动'
     await page.reload(); await page.getByRole('button', { name: '打开会话：真实反馈处置验收', exact: true }).click()
-    await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-    await page.getByRole('button', { name: '真实反馈闭环 v1', exact: true }).click()
+    await openWorkflowTemplate(page, '真实反馈闭环')
     await page.getByLabel('协调执行时自动处理节点反馈').check()
     await page.getByLabel('本次运行补充要求').fill('保留现有图和角色任务，读图后直接启动。在节点正式反馈后再按反馈局部补图处置，不提前替换原审查。反馈处置只需追加一个契约裁定者任务，以原审查为上游并连接交付；该任务读写并再次读取 release.txt 核对 beta，result_schema 包含 feedback_resolved:boolean。完成后再复核关闭，继续交付。')
-    await page.getByRole('button', { name: '协调执行', exact: true }).click()
+    await startWorkflow(page, true)
     stage = '真实模型反馈、补图、处理、复核'
     await expect.poll(async () => (await snapshot()).runs[0]?.status, { timeout: 300_000, intervals: [1000, 2000, 3000] }).toBe('completed')
     const data = await snapshot(), run = data.runs[0], feedback = run.feedback[0]
@@ -76,7 +75,9 @@ test('真实 World 节点反馈、协调局部修正和文件验证后关闭', a
     expect(feedback.history.some((event: { action: string; actor_kind: string }) => event.action === 'resolve' && event.actor_kind === 'role')).toBe(true)
     expect(run.attempts.filter((attempt: { execution_id: string | null }) => attempt.execution_id).every((attempt: { usage: { output_tokens: number | null } }) => (attempt.usage.output_tokens ?? 0) > 0)).toBe(true)
     stage = '浏览器查看来源与处置记录'
+    await workflowToolbar(page).getByRole('button', { name: /^反馈( \d+)?$/ }).click()
     await page.getByLabel('显示已处置').check()
+    await workflowInspector(page).getByRole('button', { name: '打开反馈：发布约定冲突', exact: true }).click()
     await expect(page.getByRole('article', { name: '反馈：发布约定冲突' })).toContainText('已解决')
   } catch {
     await page.goto('about:blank')

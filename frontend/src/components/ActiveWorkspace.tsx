@@ -2,7 +2,7 @@ import { WorkflowProvider } from './workflows/WorkflowContext'
 import { WorkflowSurface } from './workflows/WorkflowCanvas'
 import { getAuthEpoch } from '../api/client'
 import { ConversationDetails } from './ConversationDetails'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Pin, Archive, Trash2, Loader2, WifiOff, AlertCircle, PanelRightOpen, Activity
 } from 'lucide-react'
@@ -66,10 +66,19 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   const [processPanel, setProcessPanel] = useState(false)
   const [wideDetails, setWideDetails] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
   const [detailsOpen, setDetailsOpen] = useState(wideDetails)
+  const workspaceMain = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => { if (workspaceMain.current) workspaceMain.current.inert = detailsOpen && !wideDetails }, [detailsOpen, wideDetails])
   useEffect(() => {
     const show = (event: Event) => { if ((event as CustomEvent).detail === activeConversationId && wideDetails) setDetailsOpen(true) }
+    const inspect = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail?.conversationId === activeConversationId && (wideDetails || detail.force)) setDetailsOpen(true)
+    }
+    const closeInspector = (event: Event) => { if ((event as CustomEvent).detail === activeConversationId) setDetailsOpen(false) }
     window.addEventListener('roleplex:workflow-show', show)
-    return () => window.removeEventListener('roleplex:workflow-show', show)
+    window.addEventListener('roleplex:workflow-inspector', inspect)
+    window.addEventListener('roleplex:workflow-inspector-close', closeInspector)
+    return () => { window.removeEventListener('roleplex:workflow-show', show); window.removeEventListener('roleplex:workflow-inspector', inspect); window.removeEventListener('roleplex:workflow-inspector-close', closeInspector) }
   }, [activeConversationId, wideDetails])
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1280px)')
@@ -100,7 +109,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
   return (
     <WorkflowProvider key={`workflow:${getAuthEpoch()}:${worldName}:${user?.id}:${activeConv.id}`} conversation={activeConv}>
     <section className="flex flex-1 min-w-0 h-full overflow-hidden bg-slate-950 text-slate-300">
-      <div className="flex-1 flex flex-col h-full min-w-0">
+      <div ref={workspaceMain} aria-hidden={detailsOpen && !wideDetails || undefined} className="flex-1 flex flex-col h-full min-w-0">
         {processPanel && user?.is_owner && <ProcessPanel key={`process:${worldName}:${user.id}:${activeConv.id}`} conversationId={activeConv.id} onClose={() => setProcessPanel(false)} />}
         <div className="h-16 shrink-0 border-b border-slate-800 bg-slate-900 px-3 sm:px-6 flex items-center justify-between gap-2">
           <div className={`min-w-0 transition-all duration-300 ${isSidebarCollapsed ? 'pl-10' : ''}`}>

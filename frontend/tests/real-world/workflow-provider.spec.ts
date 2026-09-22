@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { workflowInspector, workflowToolbar } from '../workflow-ui'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -50,11 +51,11 @@ test('真实 World 工作流开发、人工确认和审查文件交接', async (
   await page.getByRole('button', { name: new RegExp(`真实开发审查 ${stamp}`) }).click()
   const canvas = page.getByRole('region', { name: '工作流画布', exact: true })
   await page.getByRole('button', { name: '启动流程', exact: true }).click()
-  await expect(page.getByText(/等待人工确认 · 定义快照/)).toBeVisible({ timeout: 60_000 })
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认', { timeout: 60_000 })
   expect((await readFile(path.join(root, 'workflow-proof.txt'), 'utf8')) === first).toBe(true)
   await canvas.getByRole('button', { name: '节点 2：人工确认文件', exact: true }).click()
-  await canvas.getByRole('button', { name: '确认继续', exact: true }).click()
-  await expect(page.getByText(/本次执行结束 · 定义快照/)).toBeVisible({ timeout: 60_000 })
+  await workflowInspector(page).getByRole('button', { name: '确认继续', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 60_000 })
   expect((await readFile(path.join(root, 'workflow-proof.txt'), 'utf8')) === final).toBe(true)
   const facts = await page.evaluate(async ({ base, cid }) => {
     const response = await fetch(`${base}/api/conversations/${cid}/workflows`, { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })

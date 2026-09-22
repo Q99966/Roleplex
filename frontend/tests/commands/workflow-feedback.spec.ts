@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { ensureOwnerSession } from '../owner'
+import { openWorkflowTemplate, startWorkflow, workflowFeedback, workflowInspector, workflowOverview, workflowRecords, workflowToolbar } from '../workflow-ui'
 
 async function fixture(page: Page, name: string) {
   return page.evaluate(async ({ name, base }) => {
@@ -31,9 +32,7 @@ async function fixture(page: Page, name: string) {
 async function openDefinition(page: Page, name: string) {
   await page.reload()
   await page.getByRole('button', { name: `打开会话：${name}`, exact: true }).click()
-  await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-  await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-  await page.getByRole('button', { name: '反馈闭环 v1', exact: true }).click()
+  await openWorkflowTemplate(page, '反馈闭环')
 }
 
 async function snapshot(page: Page, cid: number) {
@@ -47,16 +46,14 @@ test('人工交给协调者局部修正、来源补充反馈和处置版本冲�
   await page.setViewportSize({ width: 1600, height: 1000 }); await ensureOwnerSession(page)
   const name = '反馈人工交接验收', cid = await fixture(page, name)
   await openDefinition(page, name)
-  await page.getByRole('button', { name: '启动流程', exact: true }).click()
-  const panel = page.getByRole('region', { name: '节点反馈', exact: true })
-  const issue = panel.getByRole('article', { name: '反馈：两个验收数字冲突', exact: true })
+  await startWorkflow(page)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待反馈处置', { timeout: 20_000 })
+  const issue = await workflowFeedback(page, '两个验收数字冲突')
   await expect(issue).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText('等待反馈处置 · 定义快照 v1', { exact: true })).toBeVisible()
   await issue.getByText('处理这条反馈', { exact: true }).click()
   await issue.getByRole('textbox', { name: '处置依据', exact: true }).fill('请安排责任角色裁定冲突，再核对验证结果。')
   await issue.getByRole('button', { name: '交给协调者处理', exact: true }).click()
-  await expect(page.getByText('本次执行结束 · 定义快照 v1', { exact: true })).toBeVisible({ timeout: 45_000 })
-  await panel.getByLabel('显示已处置').check()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 45_000 })
   await expect(issue.getByText('已解决', { exact: true }).first()).toBeVisible()
   const run = (await snapshot(page, cid)).runs[0]
   expect(run.graph_revision).toBe(2)
@@ -72,7 +69,7 @@ test('人工交给协调者局部修正、来源补充反馈和处置版本冲�
   await dialog.getByRole('button', { name: '提交反馈', exact: true }).click()
   await expect(dialog.getByText('反馈已登记，可在“节点反馈”中查看和处置。', { exact: true })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭尝试详情' }).click()
-  const capability = panel.getByRole('article', { name: '反馈：需要运行验证能力' })
+  const capability = await workflowFeedback(page, '需要运行验证能力')
   await expect(capability.getByText('当前未授权：workspace_run_shell', { exact: true })).toBeVisible()
   await capability.getByText('处理这条反馈', { exact: true }).click()
   await capability.getByRole('textbox', { name: '处置依据', exact: true }).fill('等待 Owner 配置验证能力。')
@@ -105,13 +102,28 @@ test('协调执行显式授权自动反馈处置并完成实际局部补图', as
   await page.setViewportSize({ width: 1600, height: 1000 }); await ensureOwnerSession(page)
   const name = '反馈自动处置验收', cid = await fixture(page, name)
   await openDefinition(page, name)
+  await workflowOverview(page)
   await page.getByLabel('协调执行时自动处理节点反馈').check()
-  await page.getByRole('button', { name: '协调执行', exact: true }).click()
-  await expect(page.getByText('本次执行结束 · 定义快照 v2', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await startWorkflow(page, true)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 60_000 })
   const run = (await snapshot(page, cid)).runs[0]
   expect(run.feedback_mode).toBe('automatic')
   expect(run.feedback[0].status).toBe('resolved')
   expect(run.attempts.find((attempt: { id: string }) => attempt.id === run.feedback[0].verification_attempt_id).status).toBe('completed')
+  await workflowToolbar(page).getByRole('button', { name: /^反馈( \d+)?$/ }).click()
   await page.getByLabel('显示已处置').check()
+  await workflowInspector(page).getByRole('button', { name: '打开反馈：两个验收数字冲突' }).click()
   await expect(page.getByRole('article', { name: '反馈：两个验收数字冲突' })).toContainText('已解决')
+  await workflowRecords(page)
+  await page.getByLabel('查看运行图版本').selectOption(String(run.feedback[0].graph_revision))
+  const historical = await workflowFeedback(page, '两个验收数字冲突')
+  await historical.getByRole('button', { name: '定位处理路径', exact: true }).click()
+  await expect(workflowToolbar(page)).toContainText('历史只读')
+  await expect(historical.getByText('重新处理', { exact: true })).toHaveCount(0)
+  await historical.getByRole('button', { name: '查看反馈来源', exact: true }).click()
+  const source = page.getByRole('dialog', { name: '节点尝试详情' })
+  await expect(source).toBeVisible()
+  await expect(source.getByText('提交节点反馈', { exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(workflowToolbar(page)).toContainText('历史只读')
 })

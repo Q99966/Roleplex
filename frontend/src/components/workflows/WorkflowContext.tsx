@@ -3,10 +3,13 @@ import { getAuthEpoch, type Conversation } from '../../api/client'
 import { workflows, type WorkflowDefinition, type WorkflowList, type WorkflowRun, type WorkflowGraph, type Coordination, type CoordinateRequest } from '../../api/workflows'
 import { defaultPosition, displayPositions, serialOrder } from './workflow-layout'
 import { cleanPresentation } from './workflow-projection'
+import { workflowTarget, type InspectorPage } from './workflow-target'
 import { useAppStore } from '../../store/app'
 
 import { DraftWriter, readLocalDrafts, deleteLocalDraft, type Draft, type LocalDraft, type DraftStatus } from './local-drafts'
 const errorText: Record<string, string> = {
+  WORKFLOW_DRAFT_PRESERVE_FAILED: '当前草稿尚未安全保留，请先下载备份或重试本地保存。',
+  WORKFLOW_HISTORY_READ_ONLY: '当前正在查看历史版本，请先明确返回当前运行或编辑模板。',
   WORKFLOW_FEEDBACK_REVISION_CONFLICT: '反馈已被其他操作更新，请查看最新处置记录后再提交。',
   WORKFLOW_FEEDBACK_REQUEST_CONFLICT: '这次提交与原请求不一致，请核对已经保存的反馈。',
   WORKFLOW_FEEDBACK_EVIDENCE_REQUIRED: '解决反馈需要实际完成的验证尝试，或 Owner 明确记录人工核验。',
@@ -67,11 +70,17 @@ function useController(conversation: Conversation) {
   const historyRequest = useRef(0)
   const [detailAttempt, setDetailAttempt] = useState<string | null>(null)
   const [feedbackFocusId, setFeedbackFocusId] = useState<string | null>(null)
+  const [inspectorPage, setInspectorPage] = useState<InspectorPage>('context')
+  const [coordinationNodeId, setCoordinationNodeId] = useState<string | null>(null)
+  const [coordinationInputs, setCoordinationInputs] = useState<Record<string, string>>({})
+  const [startMode, setStartMode] = useState<'manual' | 'coordinated'>('manual')
   const alive = useRef(true)
   const fetching = useRef(false)
   const pending = useRef(false)
   const current = () => alive.current && epoch === getAuthEpoch()
   const run = data.runs.find(row => row.id === runId) ?? null
+  const target = workflowTarget(mode, draft, run, runId, historyGraph)
+  const coordinationInputKey = `${target.kind === 'template' ? 'template' : 'run'}:${target.id}:${coordinationNodeId ?? ''}`
   const graph = mode === 'run' && run ? historyGraph?.runId === run.id ? historyGraph.graph : run.graph : draft.definition.graph
   const remoteDefinition = data.definitions.find(d => d.id === draft.definition.id && d.revision > draft.definition.revision)
   const remoteRun = draft.runTarget ? data.runs.find(r => r.id === draft.runTarget && (r.latest_graph_revision ?? 0) > draft.definition.revision) : undefined
@@ -85,17 +94,37 @@ function useController(conversation: Conversation) {
   const writer = useRef<DraftWriter | null>(null)
   const hydrated = useRef(false)
   const restoreSelection = useRef<string | null>(null)
-  async function restoreLocal(record: LocalDraft) {
+  async function preserveDraft(manualOnly = false) {
+    if (writer.current && !await writer.current.preserve(manualOnly)) throw { code: 'WORKFLOW_DRAFT_PRESERVE_FAILED' }
+  }
+  function revealInspector(page: InspectorPage = 'context', force = true) {
+    setInspectorPage(page)
+    if (page === 'drafts') void reloadLocalCopies()
+    if (current()) window.dispatchEvent(new CustomEvent('roleplex:workflow-inspector', { detail: { conversationId: conversation.id, force } }))
+  }
+  async function restoreLocal(record: LocalDraft, restoreView = false) {
     if (localReady && writer.current && !await writer.current.preserve()) {
       setLocalNotice('当前编辑尚未安全保留，请先下载草稿备份或重试本地保存。'); return
     }
     if (!current()) return
-    setDraft(structuredClone(record.draft)); setMode('edit'); setRunId(record.draft.runTarget ?? null)
-    setOpen(record.view.open); setProtectedNodesState(record.view.protectedNodes); setProtectionEdited(record.view.protectionEdited)
-    restoreSelection.current = mode !== 'edit' || runId !== (record.draft.runTarget ?? null) || draft.definition.id !== record.draft.definition.id ? record.view.selected : null
-    setSelected(record.view.selected); setHistoryGraph(null); setCoordinationId(null)
-    setLocalNotice('已恢复本地草稿；尚未提交的编辑仍需点击“保存流程”。')
-    if (record.view.open && current()) window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
+    const view = restoreView ? record.view.target : undefined
+    const nextMode = view?.mode ?? 'edit', nextRun = view?.mode === 'run' ? view.runId : record.draft.runTarget ?? null
+    const history = view?.mode === 'run' ? view.historyRevision : null
+    const ticket = ++historyRequest.current
+    setDraft(structuredClone(record.draft)); setMode(nextMode); setRunId(nextRun)
+    setOpen(restoreView ? record.view.open : true); setProtectedNodesState(record.view.protectedNodes); setProtectionEdited(record.view.protectionEdited)
+    restoreSelection.current = mode !== nextMode || runId !== nextRun || draft.definition.id !== record.draft.definition.id ? record.view.selected : null
+    setSelected(record.view.selected); setSelectedEdge(''); setFeedbackFocusId(null); setInspectorPage('context'); setHistoryGraph(null); setCoordinationId(null)
+    setLocalNotice(record.draft.dirty ? '已恢复本地未提交的编辑。' : '')
+    if (nextRun && history != null) {
+      // 恢复失败也保留历史只读对象，不能悄悄进入当前运行的编辑模式。
+      setHistoryGraph({ runId: nextRun, revision: history, graph: { nodes: [], edges: [], runtime_version: 2 } })
+      try {
+        const value = await workflows.readGraph(conversation.id, 'run', nextRun, history)
+        if (current() && ticket === historyRequest.current) setHistoryGraph({ runId: nextRun, revision: value.graph_revision, graph: value.graph })
+      } catch { if (current()) setError('历史版本未能恢复，可重试或明确返回当前运行。') }
+    }
+    if ((!restoreView || record.view.open) && current()) window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
   }
   useEffect(() => {
     let cancelled = false
@@ -106,7 +135,7 @@ function useController(conversation: Conversation) {
         const result = await readLocalDrafts(scope)
         if (cancelled || !current()) return
         setLocalCopies(result.items)
-        if (!hydrated.current && result.preferred) await restoreLocal(result.preferred)
+        if (!hydrated.current && result.preferred) await restoreLocal(result.preferred, true)
         hydrated.current = true
         writer.current = new DraftWriter(scope, status => { if (!cancelled && current()) setLocalStatus(status) })
         setLocalGeneration(value => value + 1)
@@ -121,14 +150,16 @@ function useController(conversation: Conversation) {
   }, [key, localRetry])
   // 在浏览器处理离开事件前交接最新已提交的 React 状态，避免防抖窗口丢失末次输入。
   useLayoutEffect(() => {
-    if (localReady) writer.current?.schedule(draft, { open, selected, protectedNodes, protectionEdited })
-  }, [localReady, localGeneration, draft, open, selected, protectedNodes, protectionEdited])
+    if (localReady) writer.current?.schedule(draft, { open, selected, protectedNodes, protectionEdited,
+      target: { mode, runId, historyRevision: mode === 'run' ? historyGraph?.revision ?? null : null } })
+  }, [localReady, localGeneration, draft, open, selected, protectedNodes, protectionEdited, mode, runId, historyGraph?.revision])
   function retryLocal() {
     if (writer.current) void writer.current.flush()
     else { setLocalNotice(''); setLocalRetry(value => value + 1) }
   }
   function exportLocal() {
-    const url = URL.createObjectURL(new Blob([JSON.stringify({ format: 1, draft, view: { open, selected, protectedNodes, protectionEdited } }, null, 2)], { type: 'application/json' }))
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ format: 1, draft, view: { open, selected, protectedNodes, protectionEdited,
+      target: { mode, runId, historyRevision: historyGraph?.revision ?? null } } }, null, 2)], { type: 'application/json' }))
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'workflow-draft.json'; anchor.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
@@ -136,8 +167,15 @@ function useController(conversation: Conversation) {
     try { await deleteLocalDraft(record); setLocalCopies(values => values.filter(value => value.id !== record.id)) }
     catch { setLocalNotice('副本删除失败或已被其他页面更新，请稍后重新打开会话核对。') }
   }
+  async function reloadLocalCopies() {
+    const controller = writer.current
+    if (!controller) return
+    controller.emergency(); await controller.flush()
+    const records = await readLocalDrafts(controller.scope)
+    if (current()) setLocalCopies(records.items)
+  }
 
-  useEffect(() => { setSelected(restoreSelection.current); restoreSelection.current = null; setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null); setFeedbackFocusId(null) }, [mode, runId, draft.definition.id])
+  useEffect(() => { setSelected(restoreSelection.current); restoreSelection.current = null; setSelectedEdge(''); setGraphNotice(''); setDetailAttempt(null); setFeedbackFocusId(null); setInspectorPage('context'); setCoordinationNodeId(null) }, [mode, runId, draft.definition.id])
 
   async function refresh() {
     if (fetching.current || !user?.is_owner) return
@@ -178,7 +216,7 @@ function useController(conversation: Conversation) {
   }, [data.coordinations, data.runs, coordinationId, draft.dirty])
 
   async function perform(action: () => Promise<void>) {
-    if (pending.current || !localReady) return false
+    if (pending.current || !localReady || !user?.is_owner) return false
     pending.current = true; setBusy(true); setError('')
     let succeeded = false
     try { await action(); succeeded = true }
@@ -186,15 +224,33 @@ function useController(conversation: Conversation) {
     finally { pending.current = false; if (current()) { setBusy(false); void refresh() } }
     return succeeded && current()
   }
-  function update(definition: WorkflowDefinition) { setDraft(value => ({ ...value, definition, dirty: true, requestKey: crypto.randomUUID() })) }
-  function choose(definition?: WorkflowDefinition) {
-    if (!localReady) return false
-    if (draft.dirty && !confirm('当前流程有未保存的编辑，放弃这些编辑并切换吗？')) return false
-    setDraft(definition ? { definition: structuredClone(definition), dirty: false, input: '', requestKey: crypto.randomUUID() } : blank())
-    setMode('edit'); setError(''); setOpen(true); setHistoryGraph(null); setCoordinationId(null); setProtectionEdited(false); setProtectedNodesState(Object.keys(data.coordinations?.find(c => c.definition_id === definition?.id)?.constraints?.nodes ?? {}))
-    return true
+  function update(definition: WorkflowDefinition) {
+    if (!target.editable || pending.current || !user?.is_owner) return
+    setDraft(value => ({ ...value, definition, dirty: true, requestKey: crypto.randomUUID() }))
+  }
+  async function choose(definition?: WorkflowDefinition) {
+    return perform(async () => {
+      await preserveDraft()
+      const records = writer.current ? await readLocalDrafts(writer.current.scope) : null
+      if (!current()) return
+      if (records) setLocalCopies(records.items)
+      // 按目标取最新副本，再判断 dirty；不能捡起比已提交版本更早的脏恢复点。
+      const cached = definition ? records?.items.find(row => row.draft.definition.id === definition.id && !row.draft.runTarget) : undefined
+      const keepProtection = definition?.id === draft.definition.id && !draft.runTarget && mode === 'edit'
+      historyRequest.current++
+      if (definition?.id === draft.definition.id && !draft.runTarget) { /* 当前模板草稿原样保留。 */ }
+      else setDraft(cached?.draft.dirty && cached.autoRestore !== false ? structuredClone(cached.draft) : definition ? { definition: structuredClone(definition), dirty: false, input: '', requestKey: crypto.randomUUID() } : blank())
+      setRunId(null); setMode('edit'); setError(''); setOpen(true); setHistoryGraph(null); setCoordinationId(null)
+      if (!keepProtection) {
+        const view = cached?.autoRestore !== false && cached?.view.target?.mode !== 'run' ? cached?.view : undefined
+        setProtectionEdited(view?.protectionEdited ?? false)
+        setProtectedNodesState(view?.protectedNodes ?? Object.keys(data.coordinations?.find(c => c.definition_id === definition?.id)?.constraints?.nodes ?? {}))
+      }
+      window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
+    })
   }
   async function save() {
+    if (!target.editable || historyGraph) { setError(errorText.WORKFLOW_HISTORY_READ_ONLY); return false }
     const invalid = draft.definition.graph.nodes.find(node => !node.title.trim() || (draft.definition.graph.runtime_version !== 2 && ['role', 'judge'].includes(node.kind) && (!node.role_id || !node.task.trim())))
     if (invalid) { setError(`请补齐节点“${invalid.title || '未命名'}”的名称、执行角色和任务。`); return }
     return await perform(async () => {
@@ -211,6 +267,7 @@ function useController(conversation: Conversation) {
     })
   }
   async function start(mode: 'manual' | 'coordinated' = 'manual') {
+    if (target.kind !== 'template') { setError(errorText.WORKFLOW_HISTORY_READ_ONLY); return false }
     if (mode === 'coordinated') return coordinate(draft.input || `完成流程：${draft.definition.name}`, conversation.orchestrator_role_id ?? 0, 'execute')
     if (draft.runTarget) { setError('请保存运行图修订；不要把运行图作为模板重新启动。'); return }
     if (draft.dirty || !draft.definition.revision) { setError('请先保存流程，再启动冻结版本。'); return }
@@ -220,17 +277,19 @@ function useController(conversation: Conversation) {
     })
   }
   async function control(body: Parameters<typeof workflows.control>[2]) {
-    if (!run) return
+    if (!run || target.kind !== 'run') { setError(errorText.WORKFLOW_HISTORY_READ_ONLY); return false }
     return await perform(async () => {
       const result = await workflows.control(conversation.id, run, body)
       if (current()) setData(value => ({ ...value, runs: value.runs.map(r => r.id === result.id ? result : r) }))
     })
   }
   async function coordinate(goal: string, roleId: number, intent: Coordination['mode'], targetId?: string) {
+    if (historyGraph && intent === 'replan') { setError(errorText.WORKFLOW_HISTORY_READ_ONLY); return false }
     if (!user?.is_owner || conversation.type !== 'group' || !conversation.orchestrator_enabled || roleId !== conversation.orchestrator_role_id || !(conversation.orchestrator_revision ?? 0)) { setError('请通过 @ 选择本群当前任命的协调者。'); return false }
     if (!goal.trim()) { setError('请输入规划或调整要求。'); return false }
     if (intent === 'design' && (mode === 'run' || draft.runTarget) && targetId === undefined) { setError('当前查看的是运行，请明确选择流程定义或新草稿；调整运行使用对应入口。'); return false }
-    if (conflict) { setError('请先核对服务端新版本与本地草稿的冲突。'); return false }
+    if (conflict && target.editable) { setError('请先核对服务端新版本与本地草稿的冲突。'); return false }
+    if (intent === 'replan' && mode === 'edit' && draft.runTarget && draft.dirty) { setError('请先提交本次运行调整，再发送协调要求。'); return false }
     let chosen = targetId === '' ? undefined : targetId ? data.definitions.find(d => d.id === targetId) : draft.definition
     if (intent !== 'replan' && chosen?.id === draft.definition.id && draft.dirty) {
       if (!await save()) return false
@@ -238,7 +297,8 @@ function useController(conversation: Conversation) {
       chosen = { ...draft.definition, revision: draft.definition.revision + 1 }
     }
     return perform(async () => {
-      const targetRun = intent === 'replan' ? run ?? data.runs.find(r => r.id === draft.runTarget) : null
+      const targetRun = intent === 'replan' ? mode === 'edit' && draft.runTarget ? data.runs.find(r => r.id === draft.runTarget) : run : null
+      if (intent !== 'replan' && chosen?.id !== draft.definition.id) await preserveDraft()
       if (intent === 'replan' && !targetRun) throw new Error('missing run')
       const body: Omit<CoordinateRequest, 'request_key'> = { role_id: roleId, mode: intent, goal,
         feedback_mode: intent === 'execute' && automaticFeedback ? 'automatic' : 'manual',
@@ -272,14 +332,15 @@ function useController(conversation: Conversation) {
     })
   }
   async function cancelCoordination(value: Coordination) {
+    if (historyGraph) { setError(errorText.WORKFLOW_HISTORY_READ_ONLY); return false }
     return perform(async () => { await workflows.cancelCoordination(conversation.id, value) })
   }
   async function reportFeedback(body: Parameters<typeof workflows.reportFeedback>[2]) {
-    if (!run) return false
+    if (!run || historyGraph || mode !== 'run') return false
     return perform(async () => { await workflows.reportFeedback(conversation.id, run.id, body) })
   }
   async function updateFeedback(fid: string, body: Parameters<typeof workflows.updateFeedback>[3]) {
-    if (!run) return false
+    if (!run || historyGraph || mode !== 'run') return false
     return perform(async () => { await workflows.updateFeedback(conversation.id, run.id, fid, body) })
   }
   async function selectHistory(revision: string) {
@@ -292,20 +353,29 @@ function useController(conversation: Conversation) {
     })
   }
   async function editRun() {
-    if (!run || (draft.dirty && !confirm('保留运行记录，放弃当前未保存草稿并编辑运行图？'))) return
+    if (!run || historyGraph) return false
     return perform(async () => {
+      await preserveDraft()
+      const records = writer.current ? await readLocalDrafts(writer.current.scope) : null
+      const cached = records?.items.find(row => row.draft.runTarget === run.id)
       const value = await workflows.readGraph(conversation.id, 'run', run.id)
-      if (current()) { setDraft({ runTarget: run.id, definition: { id: run.definition_id, name: run.name, revision: value.graph_revision, graph: value.graph }, dirty: false, input: '', requestKey: crypto.randomUUID() }); setMode('edit'); setOpen(true); setHistoryGraph(null) }
+      if (current()) { historyRequest.current++; setDraft(cached?.draft.dirty && cached.autoRestore !== false ? structuredClone(cached.draft) : { runTarget: run.id, definition: { id: run.definition_id, name: run.name, revision: value.graph_revision, graph: value.graph }, dirty: false, input: '', requestKey: crypto.randomUUID() }); setMode('edit'); setOpen(true); setHistoryGraph(null) }
     })
   }
   async function acceptRemote() {
     return perform(async () => {
+      await preserveDraft()
       const value = await workflows.readGraph(conversation.id, draft.runTarget ? 'run' : 'definition', draft.runTarget ?? draft.definition.id)
       if (current()) setDraft(old => old.definition === draft.definition ? { ...old, definition: { ...old.definition, graph: value.graph, revision: value.graph_revision, name: value.name }, dirty: false, requestKey: crypto.randomUUID() } : old)
     })
   }
-  function forkDraft() {
-    setDraft(value => ({ ...value, runTarget: undefined, definition: { ...value.definition, id: crypto.randomUUID(), revision: 0, name: `${value.definition.name}（草稿副本）` }, dirty: true, requestKey: crypto.randomUUID() }))
+  async function forkDraft() {
+    return perform(async () => {
+      await preserveDraft(true)
+      if (!current()) return
+      setDraft(value => ({ ...value, runTarget: undefined, definition: { ...value.definition, id: crypto.randomUUID(), revision: 0, name: `${value.definition.name}（草稿副本）` }, dirty: true, requestKey: crypto.randomUUID() }))
+      setMode('edit'); setRunId(null); setHistoryGraph(null)
+    })
   }
 
   /** 画布和侧栏共用的定义编辑入口，连线变化才重新计算串行顺序。 */
@@ -340,7 +410,8 @@ function useController(conversation: Conversation) {
     const position = source ? { x: visiblePositions[source.id].x + 320, y: visiblePositions[source.id].y } : defaultPosition(0)
     const nodes = graph.nodes.map((node, i) => {
       const current = visiblePositions[node.id] ?? defaultPosition(i)
-      return { ...node, position: current.x >= position.x ? { ...current, x: current.x + 320 } : current }
+      // 旧图的列间距可能小于 320；按来源列让位，避免新增任务覆盖原本紧邻的后继。
+      return { ...node, position: source && current.x > visiblePositions[source.id].x ? { ...current, x: current.x + 320 } : current }
     })
     nodes.splice(index + 1, 0, { id, kind, title: ({ role: '角色任务', approval: '人工确认', join: '结果汇合', condition: '条件选择', judge: '模型判断' })[kind], role_id: kind === 'role' ? role?.id ?? null : null,
       task: '', expected_output: '', inputs: source ? [source.id] : [], position,
@@ -352,25 +423,46 @@ function useController(conversation: Conversation) {
     return id
   }
   function editDefinition() {
-    if (run?.definition_id === draft.definition.id) { setMode('edit'); setOpen(true); return true }
-    const definition = data.definitions.find(d => d.id === run?.definition_id)
+    const definition = data.definitions.find(d => d.id === target.templateId)
     return definition ? choose(definition) : false
   }
+  async function selectRun(id: string) {
+    if (!data.runs.some(row => row.id === id)) return false
+    return perform(async () => {
+      await preserveDraft()
+      if (!current()) return
+      historyRequest.current++; setHistoryGraph(null); setCoordinationId(null); setRunId(id); setMode('run'); setOpen(true)
+      setProtectedNodesState(Object.keys(data.runs.find(r => r.id === id)?.constraints?.nodes ?? {})); setProtectionEdited(false)
+    })
+  }
+  function resumeDraft() {
+    if (pending.current || !user?.is_owner) return
+    historyRequest.current++; setHistoryGraph(null); setMode('edit'); setRunId(draft.runTarget ?? null); setOpen(true)
+  }
   return { localReady, localStatus, localNotice, localCopies, retryLocal, exportLocal, restoreLocal, removeLocal, protectedNodes, setProtectedNodes: (values: string[]) => { setProtectedNodesState(values); setProtectionEdited(true) }, conflict, remoteDefinition, remoteRun, acceptRemote, forkDraft, coordinate, cancelCoordination, editRun, historyGraph, selectHistory, coordinationId, detailAttempt, selectAttempt: setDetailAttempt, conversation, draft, data, run, graph, selected, selectedEdge, graphNotice, addNode, changeGraph, editDefinition,
+    target, inspectorPage, revealInspector, setInspectorPage, coordinationNodeId, startMode, setStartMode, resumeDraft,
+    coordinationInput: coordinationInputs[coordinationInputKey] ?? (target.kind === 'template' ? draft.input : ''),
+    setCoordinationInput: (input: string) => {
+      setCoordinationInputs(values => ({ ...values, [coordinationInputKey]: input }))
+      if (target.kind === 'template' && !coordinationNodeId) setDraft(value => ({ ...value, input, requestKey: crypto.randomUUID() }))
+    },
+    requestCoordination: (nodeId: string | null = null) => { setCoordinationNodeId(nodeId); revealInspector('coordination') },
     feedbackFocusId, focusFeedback: (id: string) => {
       const item = run?.feedback?.find(item => item.id === id)
       if (!item) return
-      setFeedbackFocusId(id); setSelected(item.node_id); setSelectedEdge(''); setHistoryGraph(null); setOpen(true)
-      window.dispatchEvent(new CustomEvent('roleplex:workflow-show', { detail: conversation.id }))
+      setFeedbackFocusId(id); setSelected(item.node_id); setSelectedEdge(''); setOpen(true)
+      revealInspector('context')
     },
-    selectNode: (id: string | null) => { setSelected(id); setFeedbackFocusId(null); if (id) setSelectedEdge('') },
-    selectEdge: (id: string) => { setSelectedEdge(id); if (id) { setSelected(null); setFeedbackFocusId(null) } }, mode, setMode, open, setOpen, busy, error, setError, refresh,
+    selectNode: (id: string | null) => { setSelected(id); setFeedbackFocusId(null); setInspectorPage('context'); if (id) { setSelectedEdge(''); revealInspector('context', false) } },
+    selectEdge: (id: string) => { setSelectedEdge(id); if (id) { setSelected(null); setFeedbackFocusId(null); revealInspector('context', false) } }, mode, setMode, open, setOpen, busy, error, setError, refresh,
     update, choose, save, start, control, automaticFeedback, setAutomaticFeedback, reportFeedback, updateFeedback,
-    selectRun: (id: string) => { historyRequest.current++; setHistoryGraph(null); setCoordinationId(null); setRunId(id || null); setMode(id ? 'run' : 'edit'); setProtectedNodesState(Object.keys(data.runs.find(r => r.id === id)?.constraints?.nodes ?? {})); setProtectionEdited(false) },
+    selectRun,
     input: (input: string) => setDraft(value => ({ ...value, input, requestKey: crypto.randomUUID() })),
-    newRun: () => {
+    newRun: async () => {
       const definition = data.definitions.find(d => d.id === run?.definition_id)
-      return definition ? choose(definition) : false
+      if (!definition || !await choose(definition)) return false
+      setDraft(value => ({ ...value, requestKey: crypto.randomUUID() }))
+      return true
     },
   }
 }

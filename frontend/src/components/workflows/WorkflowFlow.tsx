@@ -47,7 +47,7 @@ function Flow({ graph, run, editable, selected, selectedEdge, onSelectEdge, onIn
   const collapsed = useMemo(() => new Set(overview ? groups.filter(group => !expanded.has(group.id)).map(group => group.id) : []), [groups, expanded, overview])
   const projection = useMemo(() => projectGraph(graph, groups, collapsed), [graphKey, groups, collapsed])
   const hasFolded = projection.nodes.some(node => node.group)
-  const canEdit = editable && !hasFolded && relation === 'control'
+  const canEdit = editable && !workflow.busy && !hasFolded && relation === 'control'
   const visibleRun = useMemo(() => {
     if (editable) return null
     if (!run || !workflow.historyGraph) return run

@@ -1,0 +1,37 @@
+.workflow-toolbar-shell { flex-shrink: 0; color: #294e63; background: #f8fcfe; border-bottom: 1px solid #d9e8ef; }
+.workflow-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; font-size: 12px; }
+.workflow-object { flex: 1 1 220px; max-width: 330px; min-width: 160px; }
+.workflow-object-heading { display: flex; gap: 8px; align-items: center; margin-bottom: 5px; color: #6a8492; font-size: 11px; }
+.workflow-object-kind { border-radius: 5px; padding: 2px 6px; background: #e5f1f7; color: #347393; }
+.workflow-object-kind.kind-run-edit { background: #fff2d8; color: #886425; }
+.workflow-object-kind.kind-history { background: #edeaf7; color: #70638e; }
+.workflow-object > select { max-width: 100%; width: 100%; border: 0; background: transparent; font-size: 14px; font-weight: 600; color: #294e63; padding: 2px 0; }
+.workflow-main-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.workflow-main-actions > button, .workflow-main-actions select, .workflow-more > button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; border: 1px solid #c6dce7; border-radius: 8px; background: #fff; color: #35647c; padding: 6px 9px; white-space: nowrap; }
+.workflow-main-actions .is-primary { border-color: #197695; background: #197695; color: #fff; }
+.workflow-main-actions .is-stop { color: #a34952; border-color: #e6c8cd; }
+.workflow-main-actions button:disabled, .workflow-main-actions select:disabled { opacity: .42; }
+.workflow-toolbar button:focus-visible, .workflow-toolbar select:focus-visible, .workflow-inspector button:focus-visible { outline: 2px solid #357999; outline-offset: 3px; }
+.workflow-status-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 12px 9px; color: #68808c; font-size: 11px; }
+.workflow-status-line button { color: #277795; }
+.workflow-operation-error { color: #a44951; background: #fff1f3; padding: 8px 12px; font-size: 12px; overflow-wrap: anywhere; }
+.workflow-operation-note { color: #52746b; background: #eff8f3; padding: 5px 12px; font-size: 11px; }
+.workflow-more { position: relative; }
+.workflow-more [role="menu"] { position: absolute; top: calc(100% + 6px); right: 0; z-index: 45; display: flex; flex-direction: column; width: 210px; padding: 5px; border: 1px solid #c8dfe8; border-radius: 10px; background: #fff; box-shadow: 0 10px 25px #25496320; }
+.workflow-more [role="menuitem"] { display: flex; align-items: center; gap: 6px; text-align: left; padding: 8px 10px; border-radius: 6px; }
+.workflow-more [role="menuitem"]:hover:not(:disabled) { background: #eaf4f8; }
+.workflow-inspector-heading { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #dbe9ef; padding-bottom: 12px; }
+.workflow-inspector-heading h3 { font-size: 14px; font-weight: 600; margin-top: 5px; }
+.workflow-inspector fieldset:disabled { opacity: .6; }
+.workflow-inspector input, .workflow-inspector textarea, .workflow-inspector select { min-width: 0; max-width: 100%; }
+.workflow-entry-item, .workflow-feedback-row { display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 12px; border: 1px solid #cbdfe8; border-radius: 10px; text-align: left; background: #fff; }
+.workflow-entry-item span, .workflow-feedback-row span { color: #6b8794; font-size: 11px; }
+.workflow-entry-item:hover, .workflow-feedback-row:hover { border-color: #7bafc3; background: #f6fbfe; }
+.workflow-conflict { margin: 0; padding: 12px; border-bottom: 1px solid #dfbf77; color: #805c24; background: #fff8e8; font-size: 12px; }
+.workflow-conflict details, .workflow-conflict > div { margin-top: 8px; }
+.workflow-conflict button { border: 1px solid #d9c493; background: #fffef9; border-radius: 7px; padding: 6px 9px; }
+.workflow-conflict li { margin-top: 4px; }
+.workflow-dialog { width: min(880px, calc(100vw - 28px)); max-height: calc(100dvh - 40px); margin: auto; border: 1px solid #bdd5e1; border-radius: 14px; padding: 0; background: #f9fdff; color: #294e63; box-shadow: 0 18px 50px #102b4a35; }
+.workflow-dialog::backdrop { background: #18364c50; }
+.workflow-dialog-content { padding: 20px; }
+@media (max-width: 640px) { .workflow-toolbar { padding: 9px; gap: 8px; } .workflow-object { flex-basis: 100%; max-width: none; } .workflow-main-actions { width: 100%; gap: 5px; } .workflow-main-actions > button, .workflow-main-actions select, .workflow-more > button { padding: 6px 8px; } .workflow-dialog-content { padding: 12px; } }

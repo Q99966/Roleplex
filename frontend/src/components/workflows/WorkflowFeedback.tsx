@@ -12,24 +12,27 @@ const actions: Record<FeedbackAction, string> = { coordinate: '交给协调者',
 const closed = (item: WorkflowFeedback) => ['resolved', 'dismissed', 'accepted', 'obsolete'].includes(item.status)
 
 /** 运行反馈集中显示来源、处置和验证；原消息仍从原尝试打开。 */
-export function WorkflowFeedbackPanel() {
+export function WorkflowFeedbackPanel({ nodeId, compact = false }: { nodeId?: string; compact?: boolean } = {}) {
   const w = useWorkflow()
   const [showClosed, setShowClosed] = useState(false)
   if (!w.run) return null
-  const items = w.run.feedback ?? []
+  const items = (w.run.feedback ?? []).filter(item => (!nodeId || item.node_id === nodeId || item.handler_node_ids.includes(nodeId))
+    && (!w.historyGraph || item.graph_revision === w.historyGraph.revision))
   const pending = items.filter(item => !closed(item))
   return <section aria-label="节点反馈" className="space-y-3 rounded-2xl border border-slate-800 bg-panel p-4 text-xs">
     <div className="flex items-center justify-between gap-2"><h4 className="font-semibold">节点反馈 · {pending.length} 项待处理</h4>
       {!!items.length && <label className="flex gap-1"><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />显示已处置</label>}
     </div>
-    <p className="text-slate-500">{w.run.feedback_mode === 'automatic' ? '已授权协调者自动处置，沿用本次运行预算。' : '先记录意见，由你处置或交给协调者。'}</p>
+    <p className="text-slate-500">{w.historyGraph ? '显示来源属于此图版本的反馈及其最新处置记录。返回当前运行后再处理。' : w.run.feedback_mode === 'automatic' ? '已授权协调者自动处置，沿用本次运行预算。' : '先记录意见，由你处置或交给协调者。'}</p>
     {!items.length && <p className="text-slate-500">暂无反馈。可从节点的“结果与执行事实”提交问题。</p>}
     {!!items.length && !pending.length && !showClosed && <p className="text-slate-500">本次反馈均已有处置记录；接受遗留不表示验证通过。</p>}
-    {(showClosed ? items : pending).map(item => <FeedbackCard key={item.id} item={item} />)}
+    {(showClosed ? items : pending).map(item => compact ? <button type="button" key={item.id} aria-label={`打开反馈：${item.summary}`} className="workflow-feedback-row" onClick={() => w.focusFeedback(item.id)}>
+      <span>{feedbackCategories[item.category] ?? item.category} · {states[item.status] ?? item.status}</span><strong>{item.summary}</strong>
+    </button> : <FeedbackCard key={item.id} item={item} readOnly={Boolean(w.historyGraph)} />)}
   </section>
 }
 
-function FeedbackCard({ item }: { item: WorkflowFeedback }) {
+export function FeedbackCard({ item, readOnly = false }: { item: WorkflowFeedback; readOnly?: boolean }) {
   const w = useWorkflow()
   const [action, setAction] = useState<FeedbackAction>('wait')
   const [reason, setReason] = useState('')
@@ -83,7 +86,7 @@ function FeedbackCard({ item }: { item: WorkflowFeedback }) {
       <p>{event.actor_kind === 'role' ? event.action === 'created' ? '工作角色' : '协调者' : event.actor_kind === 'system' ? '系统' : 'Owner'} · {states[event.status] ?? event.status}</p>
       <p className="whitespace-pre-wrap text-slate-500">{event.reason}</p>
     </li>)}</ol></details>
-    <details><summary className="cursor-pointer text-indigo-500">{closed(item) ? '重新处理' : '处理这条反馈'}</summary>
+    {!readOnly && <details><summary className="cursor-pointer text-indigo-500">{closed(item) ? '重新处理' : '处理这条反馈'}</summary>
       <div className="mt-2 space-y-3">
         <label className="block">处置依据<textarea aria-label="处置依据" className={field} rows={2} maxLength={4000} value={reason} onChange={e => setReason(e.target.value)} placeholder="说明裁定、验证证据或等待条件" /></label>
         {!closed(item) && <button className={button} disabled={w.busy || stopped || !appointed || !reason.trim() || item.coordination_requested} onClick={() => void submit('coordinate')}>交给协调者处理</button>}
@@ -100,7 +103,7 @@ function FeedbackCard({ item }: { item: WorkflowFeedback }) {
         {!closed(item) && action === 'accept' && <p className="text-amber-600">接受遗留会允许后续继续，记录中保留问题，不算验证通过。</p>}
         <button className={button} disabled={w.busy || !reason.trim() || (!closed(item) && action === 'assign' && (!handler || !nodes.length)) || (!closed(item) && action === 'resolve' && !manual && !proof)} onClick={() => void submit(closed(item) ? 'reopen' : action)}>记录处置</button>
       </div>
-    </details>
+    </details>}
   </article>
 }
 

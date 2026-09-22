@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { ensureOwnerSession } from '../owner'
+import { openWorkflowTemplate, saveWorkflow, startWorkflow, workflowMore, workflowOverview, workflowToolbar } from '../workflow-ui'
 
 async function setup(page: Page) {
   page.setDefaultTimeout(10_000)
@@ -21,9 +22,7 @@ async function setup(page: Page) {
   })
   await page.reload()
   await page.getByRole('button', { name: `打开会话：${fixture.title}`, exact: true }).click()
-  await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-  await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-  await page.getByRole('button', { name: '原始流程 v1' }).click()
+  await openWorkflowTemplate(page, '原始流程')
   return fixture
 }
 
@@ -33,9 +32,10 @@ async function listing(page: Page, cid: number) {
 
 test('立即刷新恢复完整编辑；远端更新保留本地冲突；显式保存后不恢复旧脏状态', async ({ page }) => {
   const { cid, did } = await setup(page)
-  await page.getByRole('button', { name: '添加角色任务', exact: true }).click()
+  await workflowMore(page, '添加角色任务')
   await page.getByLabel('本步任务', { exact: true }).fill('尚未提交的任务')
   await page.getByLabel('节点颜色', { exact: true }).fill('#8040c0')
+  await workflowOverview(page)
   await page.getByLabel('本次运行补充要求', { exact: true }).fill('保留补充要求')
   await page.getByLabel('流程名称', { exact: true }).fill('立即刷新草稿')
   await page.reload()
@@ -53,13 +53,14 @@ test('立即刷新恢复完整编辑；远端更新保留本地冲突；显式�
     if (!r.ok) throw new Error(`remote ${r.status}`)
   }, { cid, did })
   await page.reload()
+  await workflowOverview(page)
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('立即刷新草稿')
-  await expect(page.getByRole('button', { name: '保存流程', exact: true })).toBeDisabled()
+  await expect(workflowToolbar(page).getByRole('button', { name: '保存模板', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: '另存本地草稿', exact: true }).click()
-  await page.getByRole('button', { name: '保存流程', exact: true }).click()
-  await expect(page.getByText('已保存版本 1', { exact: true })).toBeVisible()
+  await saveWorkflow(page)
+  await expect(workflowToolbar(page).getByText('版本 1', { exact: true })).toBeVisible()
   await page.reload()
-  await expect(page.getByText('已保存版本 1', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(page).getByText('版本 1', { exact: true })).toBeVisible()
   remote = await listing(page, cid)
   expect(remote.definitions).toHaveLength(2); expect(remote.runs).toHaveLength(0)
 })
@@ -67,12 +68,12 @@ test('立即刷新恢复完整编辑；远端更新保留本地冲突；显式�
 test('多标签页编辑互不覆盖，存储失败可备份', async ({ page, context }) => {
   await setup(page)
   await page.getByLabel('流程名称', { exact: true }).fill('标签页甲')
-  await expect(page.getByText('草稿已保存到此浏览器', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本地已保存')
   const second = await context.newPage()
   await second.goto(page.url())
   await expect(second.getByLabel('流程名称', { exact: true })).toHaveValue('标签页甲')
   await second.getByLabel('流程名称', { exact: true }).fill('标签页乙')
-  await expect(second.getByText('草稿已保存到此浏览器', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(second).getByRole('status')).toContainText('本地已保存')
   await page.reload(); await second.reload()
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('标签页甲')
   await expect(second.getByLabel('流程名称', { exact: true })).toHaveValue('标签页乙')
@@ -82,8 +83,10 @@ test('多标签页编辑互不覆盖，存储失败可备份', async ({ page, co
   // IDB 不可用仍允许编辑，但不能假装已经持久保存。
   await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
   await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-  await expect(page.getByText('本地草稿保存失败，请下载备份或重试', { exact: true })).toBeVisible()
+  if (!await workflowToolbar(page).isVisible()) await page.getByRole('button', { name: '打开工作流', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本地保存失败')
   await page.getByLabel('流程名称', { exact: true }).fill('存储失败仍可编辑')
+  await workflowMore(page, '草稿与恢复')
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '下载草稿备份', exact: true }).click()
   expect((await download).suggestedFilename()).toBe('workflow-draft.json')
@@ -92,19 +95,19 @@ test('多标签页编辑互不覆盖，存储失败可备份', async ({ page, co
 
 test('运行图草稿刷新后仍属于原运行，不启动新流程；损坏副本跳过', async ({ page }) => {
   const { cid } = await setup(page)
-  await page.getByRole('button', { name: '启动流程', exact: true }).click()
-  await expect(page.getByText(/等待人工确认 · 定义快照/)).toBeVisible()
-  await page.getByRole('button', { name: '编辑运行图', exact: true }).click()
-  await page.getByRole('button', { name: '添加人工确认', exact: true }).click()
+  await startWorkflow(page)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认')
+  await workflowMore(page, '编辑本次运行图')
+  await workflowMore(page, '添加人工确认')
   await page.getByLabel('节点名称', { exact: true }).fill('运行中待提交节点')
   await page.reload()
-  await expect(page.getByText('正在编辑本次运行图 · 不修改流程模板', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(page).getByText('本次运行调整', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '节点 2：运行中待提交节点', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '启动流程', exact: true })).toBeDisabled()
+  await expect(workflowToolbar(page).getByRole('button', { name: '启动流程', exact: true })).toHaveCount(0)
   const remote = await listing(page, cid)
   expect(remote.runs).toHaveLength(1); expect(remote.runs[0].graph.nodes).toHaveLength(1)
   expect(remote.definitions[0].graph.nodes).toHaveLength(1)
-  await expect(page.getByText('草稿已保存到此浏览器', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本地已保存')
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open('roleplex-workflow-drafts'); request.onsuccess = () => resolve(request.result); request.onerror = reject })
     await new Promise<void>((resolve, reject) => {
@@ -118,7 +121,10 @@ test('运行图草稿刷新后仍属于原运行，不启动新流程；损坏�
   await page.reload()
   await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
   await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
+  await page.getByRole('button', { name: '打开工作流', exact: true }).click()
+  await workflowMore(page, '草稿与恢复')
   await expect(page.getByText('部分本地副本损坏，已跳过；原始副本仍保留。', { exact: true })).toBeVisible()
+  await workflowOverview(page)
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('新工作流')
 })
 
@@ -129,14 +135,13 @@ test('手动恢复保留被替换的编辑，同一 Owner 重新登录后继续�
   await page.reload()
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('恢复点甲')
   await page.getByLabel('流程名称', { exact: true }).fill('恢复点乙')
-  await page.getByText(/恢复副本（/).click()
-  page.once('dialog', dialog => dialog.accept())
-  await page.getByRole('region', { name: '本地草稿', exact: true }).locator('div').filter({ has: page.locator('span', { hasText: '恢复点甲' }) }).getByRole('button', { name: '恢复', exact: true }).click()
+  await workflowMore(page, '草稿与恢复')
+  await page.getByRole('region', { name: '本地草稿', exact: true }).getByText('恢复点甲 · 模板草稿', { exact: true }).locator('..').getByRole('button', { name: '恢复', exact: true }).click()
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('恢复点甲')
   await page.reload()
   await expect(page.getByLabel('流程名称', { exact: true })).toHaveValue('恢复点甲')
-  await page.getByText(/恢复副本（/).click()
-  await expect(page.getByRole('region', { name: '本地草稿', exact: true }).locator('span', { hasText: '恢复点乙' })).toBeVisible()
+  await workflowMore(page, '草稿与恢复')
+  await expect(page.getByRole('region', { name: '本地草稿', exact: true }).getByText('恢复点乙 · 模板草稿', { exact: true })).toBeVisible()
   await expect(page.getByText('草稿已保存到此浏览器', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '退出登录', exact: true }).click()
   await ensureOwnerSession(page)

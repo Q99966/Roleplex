@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { ensureOwnerSession } from '../owner'
+import { openWorkflowTemplate, saveWorkflow, startWorkflow, workflowInspector, workflowMore, workflowOverview, workflowRecords, workflowToolbar } from '../workflow-ui'
 
 async function fixture(page: Page, name: string) {
   const root = path.join(process.env.ROLEPLEX_COMMAND_E2E_WORKSPACE!, name)
@@ -31,6 +32,18 @@ async function snapshot(page: Page, cid: number) {
   return page.evaluate(async ({ cid, base }) => (await fetch(`${base}/api/conversations/${cid}/workflows`, { headers: { Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` } })).json(), { cid, base: process.env.ROLEPLEX_E2E_API_ORIGIN! })
 }
 
+async function startRun(page: Page, cid: number, writer: number) {
+  return page.evaluate(async ({ cid, writer, base }) => {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }, did = crypto.randomUUID()
+    const saved = await fetch(`${base}/api/conversations/${cid}/workflows/definitions/${did}`, { method: 'PUT', headers, body: JSON.stringify({ name: '运行调整', expected_revision: 0, graph: { runtime_version: 2,
+      nodes: [{ id: 'develop', title: '开发', kind: 'role', role_id: writer, task: '[WF_BUILD]', tools: ['workspace_read','workspace_write'], result_keys: ['round'] }, { id: 'gate', title: '人工确认', kind: 'approval' }], edges: [['develop','gate']] } }) })
+    if (!saved.ok) throw new Error('fixture definition failed')
+    const response = await fetch(`${base}/api/conversations/${cid}/workflows/runs`, { method: 'POST', headers, body: JSON.stringify({ definition_id: did, expected_revision: 1, request_key: crypto.randomUUID() }) })
+    if (!response.ok) throw new Error('fixture start failed')
+    return (await response.json()).id as string
+  }, { cid, writer, base: process.env.ROLEPLEX_E2E_API_ORIGIN! })
+}
+
 test('从 /plan 创建草稿、真实图工具、共同编辑冲突与沿用规划预算启动', async ({ page }, testInfo) => {
   test.setTimeout(120_000); page.setDefaultTimeout(12_000)
   await page.setViewportSize({ width: 1600, height: 1000 }); await ensureOwnerSession(page)
@@ -49,13 +62,14 @@ test('从 /plan 创建草稿、真实图工具、共同编辑冲突与沿用规�
   const screenshot = testInfo.outputPath('graph-planning.png')
   await page.screenshot({ path: screenshot })
   await testInfo.attach('从目标生成的流程与协调入口', { path: screenshot, contentType: 'image/png' })
+  await workflowRecords(page)
   await page.getByRole('button', { name: '查看协调工具记录', exact: true }).click()
   const record = page.getByRole('dialog', { name: '协调执行记录' })
   await expect(record.getByText(/workflow_write_graph/)).toBeVisible()
   await expect(record.getByText(/workflow_edit_graph/)).toBeVisible()
   await record.getByRole('button', { name: '关闭协调记录', exact: true }).click()
   await canvas.getByRole('button', { name: '节点 2：执行任务', exact: true }).click()
-  await canvas.getByLabel('本步任务').fill('人工补充，保留这段草稿')
+  await workflowInspector(page).getByLabel('本步任务').fill('人工补充，保留这段草稿')
   await page.evaluate(async ({ cid, did, base }) => {
     const response = await fetch(`${base}/api/conversations/${cid}/workflows/graphs/definition/${did}/edit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` },
@@ -64,53 +78,88 @@ test('从 /plan 创建草稿、真实图工具、共同编辑冲突与沿用规�
     if (!response.ok) throw new Error(`remote edit ${response.status}`)
   }, { cid, did, base: process.env.ROLEPLEX_E2E_API_ORIGIN! })
   const conflict = page.getByRole('region', { name: '流程编辑冲突' })
-  await expect(conflict).toBeVisible(); await expect(canvas.getByLabel('本步任务')).toHaveValue('人工补充，保留这段草稿')
+  await expect(conflict).toBeVisible(); await expect(workflowInspector(page).getByLabel('本步任务')).toHaveValue('人工补充，保留这段草稿')
   await conflict.getByRole('button', { name: '另存本地草稿' }).click()
-  await page.getByRole('button', { name: '保存流程', exact: true }).click()
+  await saveWorkflow(page)
   await expect.poll(async () => (await snapshot(page, cid)).definitions.length).toBe(2)
   const after = await snapshot(page, cid)
   expect(after.definitions.find((d: { id: string }) => d.id === did).graph.nodes[0].title).toBe('远端确认')
   expect(after.definitions.find((d: { id: string }) => d.id !== did).graph.nodes[1].task).toBe('人工补充，保留这段草稿')
-  await page.getByRole('button', { name: '查看流程草稿', exact: true }).click()
+  await workflowToolbar(page).getByLabel('工作流对象').selectOption(`template:${did}`)
+  await expect(workflowToolbar(page).getByLabel('工作流对象')).toHaveValue(`template:${did}`)
+  await workflowOverview(page)
   await page.getByLabel('本次运行补充要求').fill('执行已保存的流程')
-  await page.getByRole('button', { name: '协调执行', exact: true }).click()
-  await expect(page.getByText(/等待人工确认 · 定义快照/)).toBeVisible({ timeout: 30_000 })
+  await startWorkflow(page, true)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认', { timeout: 30_000 })
   const running = await snapshot(page, cid)
   expect(running.runs[0].chain_id).toBe(data.coordinations[0].chain_id)
   expect(running.runs[0].used_decisions).toBeGreaterThan(data.coordinations[0].used_decisions)
   await canvas.getByRole('button', { name: '节点 1：远端确认', exact: true }).click()
-  await canvas.getByRole('button', { name: '确认继续', exact: true }).click()
-  await expect(page.getByText(/本次执行结束 · 定义快照/)).toBeVisible({ timeout: 30_000 })
+  await workflowInspector(page).getByRole('button', { name: '确认继续', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 30_000 })
 })
 
 test('协调者在真实运行中追加审查，历史图不混入新节点', async ({ page }) => {
   page.setDefaultTimeout(12_000); await page.setViewportSize({ width: 1600, height: 1000 }); await ensureOwnerSession(page)
   const { cid, writer } = await fixture(page, '运行重规划验收')
-  const rid = await page.evaluate(async ({ cid, writer, base }) => {
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('roleplex_token')}` }, did = crypto.randomUUID()
-    const saved = await fetch(`${base}/api/conversations/${cid}/workflows/definitions/${did}`, { method: 'PUT', headers, body: JSON.stringify({ name: '运行调整', expected_revision: 0, graph: { runtime_version: 2,
-      nodes: [{ id: 'develop', title: '开发', kind: 'role', role_id: writer, task: '[WF_BUILD]', tools: ['workspace_read','workspace_write'], result_keys: ['round'] }, { id: 'gate', title: '人工确认', kind: 'approval' }], edges: [['develop','gate']] } }) })
-    if (!saved.ok) throw new Error('fixture definition failed')
-    const response = await fetch(`${base}/api/conversations/${cid}/workflows/runs`, { method: 'POST', headers, body: JSON.stringify({ definition_id: did, expected_revision: 1, request_key: crypto.randomUUID() }) })
-    if (!response.ok) throw new Error('fixture start failed')
-    return (await response.json()).id as string
-  }, { cid, writer, base: process.env.ROLEPLEX_E2E_API_ORIGIN! })
+  const rid = await startRun(page, cid, writer)
   await page.reload(); await page.getByRole('button', { name: '打开会话：运行重规划验收', exact: true }).click()
-  await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-  await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-  await page.getByLabel('选择工作流运行').selectOption(rid)
-  await expect(page.getByText(/等待人工确认 · 定义快照/)).toBeVisible({ timeout: 30_000 })
+  await openWorkflowTemplate(page, '运行调整')
+  await workflowToolbar(page).getByLabel('工作流对象').selectOption(`run:${rid}`)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认', { timeout: 30_000 })
+  await workflowMore(page, '让协调者调整运行')
   await page.getByLabel('运行调整要求').fill('追加一个读取开发文件的审查节点，不重跑开发。')
-  await page.getByRole('button', { name: '让协调者调整运行', exact: true }).click()
+  await page.getByRole('button', { name: '发送协调要求', exact: true }).click()
   await expect.poll(async () => (await snapshot(page, cid)).runs[0].attempts.some((a: { node_id: string; status: string }) => a.node_id === 'runtime_review' && a.status === 'completed'), { timeout: 30_000 }).toBe(true)
   const run = (await snapshot(page, cid)).runs[0]
   expect(run.attempts.filter((a: { node_id: string }) => a.node_id === 'develop')).toHaveLength(1)
   const canvas = page.getByRole('region', { name: '工作流画布', exact: true })
   await expect(canvas.locator('.react-flow__node')).toHaveCount(3)
+  await workflowRecords(page)
   await page.getByLabel('查看运行图版本').selectOption('1')
   await expect(canvas.locator('.react-flow__node')).toHaveCount(2)
   await expect(canvas.getByText('运行新增审查')).toHaveCount(0)
   await page.getByLabel('查看运行图版本').selectOption(''); await expect(canvas.locator('.react-flow__node')).toHaveCount(3)
-  await page.getByRole('button', { name: '停止此运行', exact: true }).click()
-  await expect(page.getByText(/已停止 · 定义快照/)).toBeVisible()
+  await workflowToolbar(page).getByRole('button', { name: '停止运行', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('已停止')
+})
+
+
+test('节点内请求局部调整；取消协调保留已提交图和原任务，人工确认仍可继续', async ({ page }) => {
+  test.setTimeout(90_000); page.setDefaultTimeout(12_000)
+  await page.setViewportSize({ width: 1680, height: 1000 }); await ensureOwnerSession(page)
+  const { cid, writer } = await fixture(page, '取消协调保留运行验收')
+  const rid = await startRun(page, cid, writer)
+  await page.reload(); await page.getByRole('button', { name: '打开会话：取消协调保留运行验收', exact: true }).click()
+  await openWorkflowTemplate(page, '运行调整')
+  await workflowToolbar(page).getByLabel('工作流对象').selectOption(`run:${rid}`)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认')
+  const before = (await snapshot(page, cid)).runs[0]
+  const original = before.attempts.find((a: { node_id: string }) => a.node_id === 'develop')
+  const canvas = page.getByRole('region', { name: '工作流画布', exact: true })
+  await canvas.getByRole('button', { name: '节点 1：开发', exact: true }).click()
+  await workflowInspector(page).getByRole('button', { name: '请协调者调整此节点', exact: true }).click()
+  await workflowInspector(page).getByLabel('本节点调整要求').fill('[GRAPH_REPLAN_PAUSE] 补充本节点的审查，保留人工确认和已有开发结果。')
+  await workflowRecords(page)
+  await canvas.getByRole('button', { name: '节点 1：开发', exact: true }).click()
+  await workflowInspector(page).getByRole('button', { name: '请协调者调整此节点', exact: true }).click()
+  await expect(workflowInspector(page).getByLabel('本节点调整要求')).toHaveValue('[GRAPH_REPLAN_PAUSE] 补充本节点的审查，保留人工确认和已有开发结果。')
+  await workflowInspector(page).getByRole('button', { name: '发送协调要求', exact: true }).click()
+  await expect.poll(async () => (await snapshot(page, cid)).runs[0].graph_revision).toBe(2)
+  await workflowInspector(page).getByRole('button', { name: '停止协调', exact: true }).click()
+  await expect.poll(async () => (await snapshot(page, cid)).coordinations[0].status).toBe('stopped')
+  await expect.poll(async () => (await snapshot(page, cid)).runs[0].status).toBe('waiting')
+  const after = (await snapshot(page, cid)).runs[0]
+  expect(after.status).toBe('waiting')
+  expect(after.graph_revision).toBe(2)
+  expect(after.graph.nodes.some((n: { id: string }) => n.id === 'runtime_review')).toBe(true)
+  expect(after.attempts.find((a: { id: string }) => a.id === original.id)).toMatchObject({ execution_id: original.execution_id, status: 'completed' })
+  await page.reload()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认')
+  await canvas.getByRole('button', { name: '节点 2：人工确认', exact: true }).click()
+  await workflowInspector(page).getByRole('button', { name: '确认继续', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 20_000 })
+  const final = (await snapshot(page, cid)).runs[0]
+  expect(final.attempts.filter((a: { node_id: string }) => a.node_id === 'develop')).toHaveLength(1)
+  expect(final.attempts.find((a: { node_id: string }) => a.node_id === 'runtime_review').status).toBe('completed')
 })

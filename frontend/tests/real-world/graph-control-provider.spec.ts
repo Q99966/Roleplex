@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { startWorkflow, workflowInspector, workflowMore, workflowOverview, workflowRecords, workflowToolbar } from '../workflow-ui'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -58,16 +59,18 @@ test('真实 World 从目标读写编辑图、执行、运行中追加审查与�
     }, { cid: fixture.cid, sid: designed.coordinations[0].id, base })
     expect(['workflow_read_graph','workflow_write_graph','workflow_edit_graph'].every(name => tools.includes(name))).toBe(true)
     stage = '授权执行并等待人工确认'
+    await workflowOverview(page)
     await page.getByLabel('本次运行补充要求').fill('保持已保存图的结构和节点任务，读取图后启动当前流程；不要代签人工确认。')
-    await page.getByRole('button', { name: '协调执行', exact: true }).click()
-    await expect(page.getByText(/等待人工确认 · 定义快照/)).toBeVisible({ timeout: 100_000 })
+    await startWorkflow(page, true)
+    await expect(workflowToolbar(page).getByRole('status')).toContainText('等待人工确认', { timeout: 100_000 })
     expect((await readFile(path.join(root, 'graph-proof.txt'), 'utf8')) === proof).toBe(true)
     const before = (await snapshot()).runs[0]
     const develop = before.attempts.find((a: { node_id: string }) => a.node_id === 'develop')
     expect(before.chain_id === designed.coordinations[0].chain_id).toBe(true)
     stage = '真实模型运行中新增审查'
+    await workflowMore(page, '让协调者调整运行')
     await page.getByLabel('运行调整要求').fill(`先 read_graph 和 inspect_run 核对当前运行；不要修改已执行 develop 或等待中的 gate。用 edit_graph 新增 extra_review 角色任务，标题“追加审查”，角色选择图管理审查者，仅 workspace_read，inputs 为 develop。实际读取 graph-proof.txt，核对内容为 ${proof}，workflow_result 上报布尔 approved（result_schema 明确 boolean）。连接 develop→extra_review、extra_review→review。不要重跑开发或代签人工确认，不要停止运行。提交后简短结束。`)
-    await page.getByRole('button', { name: '让协调者调整运行', exact: true }).click()
+    await page.getByRole('button', { name: '发送协调要求', exact: true }).click()
     await expect.poll(async () => (await snapshot()).runs[0].attempts.some((a: { node_id: string; status: string }) => a.node_id === 'extra_review' && a.status === 'completed'), { timeout: 100_000 }).toBe(true)
     const revised = (await snapshot()).runs[0]
     expect(revised.attempts.filter((a: { node_id: string }) => a.node_id === 'develop').length).toBe(1)
@@ -77,15 +80,15 @@ test('真实 World 从目标读写编辑图、执行、运行中追加审查与�
     const canvas = page.getByRole('region', { name: '工作流画布', exact: true })
     const gateIndex = revised.graph.nodes.findIndex((n: { id: string }) => n.id === 'gate')
     await canvas.getByRole('button', { name: `节点 ${gateIndex+1}：${revised.graph.nodes[gateIndex].title}`, exact: true }).click()
-    await canvas.getByRole('button', { name: '确认继续', exact: true }).click()
-    await expect(page.getByText(/本次执行结束 · 定义快照/)).toBeVisible({ timeout: 80_000 })
+    await workflowInspector(page).getByRole('button', { name: '确认继续', exact: true }).click()
+    await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束', { timeout: 80_000 })
     const final = (await snapshot()).runs[0]
     expect(final.attempts.filter((a: { execution_id: string | null }) => a.execution_id).every((a: { usage: { output_tokens: number | null } }) => (a.usage.output_tokens ?? 0) > 0)).toBe(true)
     expect(final.attempts.find((a: { node_id: string }) => a.node_id === 'review').result.values.approved).toBe(true)
     stage = '刷新核对历史图'
-    await page.reload(); await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-    await page.getByLabel('选择工作流运行').selectOption(final.id)
+    await page.reload()
+    await expect(workflowToolbar(page).getByLabel('工作流对象')).toHaveValue(`run:${final.id}`)
+    await workflowRecords(page)
     await page.getByLabel('查看运行图版本').selectOption(String(before.graph_revision))
     await expect(canvas.locator('.react-flow__node')).toHaveCount(3)
   } catch {

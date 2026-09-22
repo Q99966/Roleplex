@@ -1,8 +1,9 @@
 import type { WorkflowDefinition } from '../../api/workflows'
 
 export type Draft = { runTarget?: string; definition: WorkflowDefinition; dirty: boolean; input: string; requestKey: string }
-export type DraftView = { open: boolean; selected: string | null; protectedNodes: string[]; protectionEdited: boolean }
-export type LocalDraft = { format: 1; id: string; scope: string; updatedAt: number; sequence: number; draft: Draft; view: DraftView }
+export type DraftView = { open: boolean; selected: string | null; protectedNodes: string[]; protectionEdited: boolean;
+  target?: { mode: 'edit' | 'run'; runId: string | null; historyRevision: number | null } }
+export type LocalDraft = { format: 1; id: string; scope: string; updatedAt: number; sequence: number; draft: Draft; view: DraftView; autoRestore?: boolean }
 export type DraftStatus = 'saving' | 'saved' | 'error'
 const DATABASE = 'roleplex-workflow-drafts'
 const JOURNAL = 'roleplex:workflow-draft-journal:'
@@ -15,7 +16,8 @@ const object = (value: unknown): value is Record<string, any> => Boolean(value &
 /** 浏览器持久数据也需校验；允许未完成草稿，不把读取缓存当成服务端授权。 */
 function valid(value: unknown, scope: string): value is LocalDraft {
   if (!object(value) || value.format !== 1 || value.scope !== scope || typeof value.id !== 'string'
-    || !Number.isFinite(value.updatedAt) || !Number.isSafeInteger(value.sequence) || !object(value.draft) || !object(value.view)) return false
+    || !Number.isFinite(value.updatedAt) || !Number.isSafeInteger(value.sequence) || !object(value.draft) || !object(value.view)
+    || (value.autoRestore !== undefined && typeof value.autoRestore !== 'boolean')) return false
   const { draft, view } = value
   const definition = draft.definition, graph = definition?.graph
   return typeof draft.dirty === 'boolean' && typeof draft.input === 'string' && typeof draft.requestKey === 'string'
@@ -41,6 +43,9 @@ function valid(value: unknown, scope: string): value is LocalDraft {
       && Array.isArray(graph.presentation.edge_labels) && graph.presentation.edge_labels.every((label: unknown) => object(label)
         && typeof label.source === 'string' && typeof label.target === 'string' && typeof label.label === 'string')))
     && typeof view.open === 'boolean' && (view.selected === null || typeof view.selected === 'string')
+    && (view.target === undefined || (object(view.target) && ['edit', 'run'].includes(view.target.mode)
+      && (view.target.runId === null || typeof view.target.runId === 'string')
+      && (view.target.historyRevision === null || (Number.isSafeInteger(view.target.historyRevision) && view.target.historyRevision >= 0))))
     && Array.isArray(view.protectedNodes) && view.protectedNodes.every((x: unknown) => typeof x === 'string') && typeof view.protectionEdited === 'boolean'
 }
 
@@ -147,8 +152,9 @@ export class DraftWriter {
     // 固定合并窗口，连续输入不能无限推迟持久化。
     if (this.timer === undefined) this.timer = window.setTimeout(() => void this.flush(), 200)
   }
-  /** 手动恢复前确认旧编辑已写入独立副本，防止随后的刷新覆盖唯一备用日志。 */
-  async preserve(): Promise<boolean> {
+  /** 交接前持久保留旧编辑；另存后源草稿只供手动恢复，不能重新覆盖原模板。 */
+  async preserve(manualOnly = false): Promise<boolean> {
+    if (manualOnly && this.current) this.current = { ...this.current, autoRestore: false, sequence: ++sequence, updatedAt: Date.now() }
     this.emergency()
     try {
       while (this.current && this.current.sequence > this.persisted) {

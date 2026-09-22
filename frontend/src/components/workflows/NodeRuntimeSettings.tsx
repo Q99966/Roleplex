@@ -44,7 +44,7 @@ export function NodeRuntimeSettings({ node, patch }: { node: WorkflowNode; patch
       {typeof condition.value === 'boolean' ? <select aria-label="条件比较值" className={field} value={String(condition.value)} onChange={e => change({ value: e.target.value === 'true' })}><option value="true">true</option><option value="false">false</option></select>
         : condition.value !== null && <input aria-label="条件比较值" type={typeof condition.value === 'number' ? 'number' : 'text'} className={field} value={String(condition.value)} onChange={e => change({ value: typeof condition.value === 'number' ? Number(e.target.value) : e.target.value })} />}
       <label className="block">多个来源<select className={field} value={condition.aggregate} onChange={e => change({ aggregate: e.target.value as 'all' | 'any' })}><option value="all">全部满足</option><option value="any">任一满足</option></select></label>
-      <p className="text-slate-500">判断节点的出边需在右栏“连线工具”设置 true/false，或通过循环声明指定回边/出口。</p>
+      <p className="text-slate-500">选中判断节点的出边设置条件；循环回边和出口在高级设置中声明。</p>
     </fieldset>}
   </div>
 }

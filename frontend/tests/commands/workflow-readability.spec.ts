@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { ensureOwnerSession } from '../owner'
+import { openWorkflowTemplate, saveWorkflow, startWorkflow, workflowFeedback, workflowMore, workflowToolbar } from '../workflow-ui'
 
 async function fixture(page: Page, name: string) {
   return page.evaluate(async ({ name, base }) => {
@@ -40,15 +41,7 @@ async function snapshot(page: Page, cid: number) {
 }
 async function open(page: Page, name: string, restored = false) {
   await page.reload(); await page.getByRole('button', { name: `打开会话：${name}`, exact: true }).click()
-  if (restored) await expect(page.getByRole('region', { name: '本地草稿', exact: true })).toBeVisible()
-  else {
-    await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-  }
-  const list = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^已保存流程/ }) }).first()
-  await expect(list.locator('summary')).toContainText('1')
-  if (!await list.evaluate(element => (element as HTMLDetailsElement).open)) await list.locator('summary').click()
-  await page.getByRole('button', { name: /可读工作流 v/ }).click()
+  await openWorkflowTemplate(page, '可读工作流', restored)
 }
 
 test('阶段总览、循环展开、布局撤销和保存、业务标签与窄屏', async ({ page }, info) => {
@@ -64,7 +57,7 @@ test('阶段总览、循环展开、布局撤销和保存、业务标签与窄�
   await canvas.getByRole('button', { name: '展开阶段：并行实现', exact: true }).focus()
   await page.keyboard.press('Delete')
   await expect(canvas.locator('.react-flow__node')).toHaveCount(5)
-  await expect(page.getByText('已保存版本 1', { exact: true })).toBeVisible()
+  await expect(workflowToolbar(page).getByText('版本 1', { exact: true })).toBeVisible()
   await canvas.getByRole('button', { name: '适配视图', exact: true }).click()
   const overview = info.outputPath('workflow-overview.png')
   await canvas.screenshot({ path: overview }); await info.attach('阶段总览', { path: overview, contentType: 'image/png' })
@@ -76,12 +69,12 @@ test('阶段总览、循环展开、布局撤销和保存、业务标签与窄�
   await canvas.getByRole('button', { name: '整理布局', exact: true }).click()
   await expect(canvas.getByText('返回下一轮 · 需要修订', { exact: true })).toBeVisible()
   await canvas.getByRole('button', { name: '撤销整理', exact: true }).click()
-  await page.getByRole('button', { name: '保存流程', exact: true }).click()
-  await expect(page.getByText('已保存版本 2', { exact: true })).toBeVisible()
+  await saveWorkflow(page)
+  await expect(workflowToolbar(page).getByText('版本 2', { exact: true })).toBeVisible()
   expect((await snapshot(page, cid)).definitions[0].graph).toEqual(initial)
   await canvas.getByRole('button', { name: '整理布局', exact: true }).click()
-  await page.getByRole('button', { name: '保存流程', exact: true }).click()
-  await expect(page.getByText('已保存版本 3', { exact: true })).toBeVisible()
+  await saveWorkflow(page)
+  await expect(workflowToolbar(page).getByText('版本 3', { exact: true })).toBeVisible()
   const organized = (await snapshot(page, cid)).definitions[0].graph
   const withoutPositions = (graph: typeof organized) => ({ ...graph, nodes: graph.nodes.map((node: { position: unknown }) => ({ ...node, position: null })) })
   expect(withoutPositions(organized)).toEqual(withoutPositions(initial))
@@ -89,12 +82,13 @@ test('阶段总览、循环展开、布局撤销和保存、业务标签与窄�
   expect(positions.core.x).toBe(positions.ui.x)
   expect(positions.design.x).toBeLessThan(positions.core.x)
   expect(positions.join.x).toBeGreaterThan(positions.core.x)
+  await workflowMore(page, '高级设置')
   await page.getByText('连线工具', { exact: true }).click()
   await page.getByLabel('选择连线', { exact: true }).selectOption(JSON.stringify(['judge', 'end']))
   await page.getByLabel('分支显示名称', { exact: true }).fill('验收完成')
   await expect(canvas.getByRole('note')).toContainText('checked = true')
-  await page.getByRole('button', { name: '保存流程', exact: true }).click()
-  await expect(page.getByText('已保存版本 4', { exact: true })).toBeVisible()
+  await saveWorkflow(page)
+  await expect(workflowToolbar(page).getByText('版本 4', { exact: true })).toBeVisible()
   await open(page, name, true)
   await canvas.getByRole('button', { name: '节点细节', exact: true }).click()
   await canvas.getByRole('button', { name: '适配视图', exact: true }).click()
@@ -118,8 +112,8 @@ test('运行折叠仍显示反馈等待，聚焦与整理视图不改运行版�
   await page.setViewportSize({ width: 1920, height: 1100 }); await ensureOwnerSession(page)
   const name = '运行总览反馈验收', { cid } = await fixture(page, name)
   await open(page, name)
-  await page.getByRole('button', { name: '启动流程', exact: true }).click()
-  await expect(page.getByText('等待反馈处置 · 定义快照 v1', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await startWorkflow(page)
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('等待反馈处置', { timeout: 30_000 })
   const canvas = page.getByRole('region', { name: '工作流画布', exact: true })
   const group = canvas.getByRole('group', { name: '循环：审查与修订', exact: true })
   await expect(group).toContainText('待处理反馈 1')
@@ -131,7 +125,7 @@ test('运行折叠仍显示反馈等待，聚焦与整理视图不改运行版�
   const before = (await snapshot(page, cid)).runs[0]
   await canvas.getByRole('button', { name: '整理视图', exact: true }).click()
   await canvas.getByRole('button', { name: '撤销整理', exact: true }).click()
-  const issue = page.getByRole('article', { name: '反馈：两个验收数字冲突', exact: true })
+  const issue = await workflowFeedback(page, '两个验收数字冲突')
   await issue.getByRole('button', { name: '定位处理路径', exact: true }).click()
   await expect(canvas.getByLabel('画布关系')).toHaveValue('feedback')
   await expect(canvas.getByText(/尚未关联处理节点/)).toBeVisible()
@@ -139,6 +133,6 @@ test('运行折叠仍显示反馈等待，聚焦与整理视图不改运行版�
   expect(after.graph_revision).toBe(before.graph_revision)
   expect(after.graph).toEqual(before.graph)
   expect(after.attempts.map((attempt: { id: string }) => attempt.id)).toEqual(before.attempts.map((attempt: { id: string }) => attempt.id))
-  await page.getByRole('button', { name: '停止此运行', exact: true }).click()
-  await expect(page.getByText('已停止 · 定义快照 v1', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '停止运行', exact: true }).click()
+  await expect(workflowToolbar(page).getByRole('status')).toContainText('已停止')
 })

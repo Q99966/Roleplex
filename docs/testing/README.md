@@ -494,3 +494,11 @@ frontend 的 `npm run test:workflow-logic` 使用现有 Playwright runner 验证
 backend 的 `python -m pytest tests/test_workflow_presentation.py tests/test_graph_control.py tests/test_orchestrator.py tests/test_workflow_feedback.py -q --tb=short --show-capture=no` 覆盖展示信息保存、旧客户端省略字段、历史版本、非法引用、运行循环即时展示，以及正在规划/汇总时纯展示修订不改变 phase、分工或已有尝试。持久化复用既有 JSON 字段，没有新增表或迁移。
 
 frontend 的 `npm run test:e2e:commands -- workflow-readability.spec.ts workflow-node-editing.spec.ts workflow-drafts.spec.ts workflow-reactflow.spec.ts workflow-routing.spec.ts workflow-feedback.spec.ts graph-control.spec.ts` 使用真实前后端和 fake Provider，验证总览、展开、整理/撤销/保存、业务标签、实际运行反馈、小屏定位及原交互回归。截图通过既有 reporter 存入标准日志目录。视觉检查和本轮结果见[可读性验收](workflow-readability.md)；本批不重复运行收费 Provider 验收。
+
+### 工作流操作面板
+
+frontend：`npm run test:e2e:commands -- workflow-workbench.spec.ts workflow-feedback.spec.ts workflow-drafts.spec.ts workflow-node-editing.spec.ts workflow-canvas.spec.ts workflow-reactflow.spec.ts workflow-routing.spec.ts workflow-readability.spec.ts graph-control.spec.ts orchestration.spec.ts`。真实前后端和 fake Provider 覆盖主工具栏与唯一上下文、模板/运行分别提交、历史刷新与读取失败只读、草稿冲突和恢复、反馈处置与局部调整、取消协调保留图与原执行、重新运行的新请求身份、Guest 隔离、窄屏/键盘及原图交互。
+
+相邻右栏回归：`npm run test:e2e -- conversation-details.spec.ts`；布局算法：`npm run test:workflow-logic`；编译构建：`npm run build`。与浏览器相关的配置使用各自隔离测试库；依次运行，避免测试产物目录互相覆盖。取消协调的固件只在 fake Provider 的指定标记下停留于真实图提交之后，取消通过产品控制路径触发，不直接改写运行状态。
+
+本批维护现有真实 Provider 脚本的 UI 入口，但不因界面调整重复调用收费模型。实际结果、截图与覆盖缺口见[操作面板验收](workflow-workbench.md)。

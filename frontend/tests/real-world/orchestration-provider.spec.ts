@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { openWorkflowTemplate, startWorkflow, workflowToolbar } from '../workflow-ui'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { orchestrationFixture, orchestrationSnapshot } from '../orchestration-fixture'
@@ -27,12 +28,10 @@ test('真实 World 群协调者规划、并行审查与两轮条件返工', asyn
     await page.getByRole('menuitemradio', { name: '会话成员', exact: true }).locator('span').last().click()
     await page.getByLabel('任命群协调者').selectOption(String(coordinator))
     await expect(page.getByLabel('任命群协调者')).toBeEnabled()
-    await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-    await page.getByRole('button', { name: /并行返工 v1/ }).click()
+    await openWorkflowTemplate(page, '并行返工')
     stage = '真实协调执行'
     await page.getByLabel('本次运行补充要求').fill('保持已有流程结构、任务、角色、工具和循环配置不变；读图检查后启动当前流程。')
-    await page.getByRole('button', { name: '协调执行', exact: true }).click()
+    await startWorkflow(page, true)
     await expect.poll(async () => {
       const run = (await orchestrationSnapshot(page, cid)).runs[0]
       if (run && ['failed','blocked','stopped','interrupted'].includes(run.status)) throw new Error(`协调执行终态 ${run.status} ${run.error_code ?? ''}`)
@@ -53,10 +52,8 @@ test('真实 World 群协调者规划、并行审查与两轮条件返工', asyn
     expect(run.attempts.some((a: { phase: string }) => a.phase==='summary')).toBe(true)
     stage = '刷新持久历史'
     await page.reload()
-    await page.getByRole('button', { name: '切换详情模块', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '工作流', exact: true }).locator('span').last().click()
-    await page.getByLabel('选择工作流运行').selectOption(run.id)
-    await expect(page.getByText(/本次执行结束 · 定义快照/)).toBeVisible()
+    await expect(workflowToolbar(page).getByLabel('工作流对象')).toHaveValue(`run:${run.id}`)
+    await expect(workflowToolbar(page).getByRole('status')).toContainText('本次执行结束')
   } catch {
     await page.goto('about:blank')
     throw new Error(`真实协调验收未通过，阶段：${stage}；请按保留 World 的运行状态检查。`)

@@ -279,6 +279,9 @@ class GraphControlModel(ScriptedChatModel):
 
     async def _astream(self,messages,stop=None,run_manager=None,**kwargs):
         meta=json.loads(self.prompt.split('本次图管理授权：',1)[1].split('\n',1)[0])
+        if meta['mode'] == 'replan' and self.index == 2 and '[GRAPH_REPLAN_PAUSE]' in self.prompt:
+            # 浏览器先观察真实图提交，再取消仍活跃的协调执行；等待可被任务取消中断。
+            await asyncio.sleep(30)
         outputs=[m for m in messages if isinstance(m,ToolMessage)]
         last={}
         if outputs:
