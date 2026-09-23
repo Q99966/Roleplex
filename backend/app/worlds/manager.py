@@ -14,11 +14,11 @@ from pathlib import Path
 
 import psutil
 
-from .compatibility import WorldRequiresNewerRoleplex
+from .compatibility import WorldRequiresNewerRoleplex, WorldTypeUnavailable
 from ..workspaces.process_identity import birth_identity, same_birth
 
 
-WORLD_FORMAT_VERSION = 1
+WORLD_FORMAT_VERSION = 2
 _MANIFEST = "world.json"
 _DATABASE = "roleplex.db"
 _SECRET_FILES = (".jwt-secret", ".api-key-secret")
@@ -56,6 +56,9 @@ class WorldInfo:
     path: Path
     created_at: str
     format_version: int
+    world_type: str = 'general'
+    type_version: int = 1
+    unavailable_reason: str | None = None
 
     @property
     def database_path(self) -> Path:
@@ -85,11 +88,13 @@ class WorldManager:
         """返回经过校验且保证位于根目录下的世界路径。"""
         return self.root / validate_world_name(name)
 
-    def _write_manifest(self, directory: Path, name: str, created_at: str | None = None) -> None:
+    def _write_manifest(self, directory: Path, name: str, created_at: str | None = None, *, world_type='general', type_version=1) -> None:
         payload = {
             "name": name,
             "format_version": WORLD_FORMAT_VERSION,
             "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+            "world_type": world_type,
+            "type_version": type_version,
         }
         temporary = directory / f".{_MANIFEST}.tmp-{os.getpid()}"
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -105,13 +110,15 @@ class WorldManager:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(secrets.token_urlsafe(48))
 
-    def create(self, name: str) -> WorldInfo:
+    def create(self, name: str, *, world_type='general', type_version=None) -> WorldInfo:
         """创建空世界及两份独立密钥。
 
         Raises:
             FileExistsError：同名目录已经存在，避免覆盖未知数据。
         """
         normalized = validate_world_name(name)
+        from ..world_types.registry import resolve
+        descriptor = resolve(world_type, type_version)
         directory = self.world_path(normalized)
         directory.mkdir(parents=True, exist_ok=False)
         try:
@@ -119,14 +126,14 @@ class WorldManager:
             sqlite3.connect(directory / _DATABASE).close()
             for filename in _SECRET_FILES:
                 self._create_secret(directory / filename)
-            self._write_manifest(directory, normalized)
+            self._write_manifest(directory, normalized, world_type=descriptor.id, type_version=descriptor.version)
             return self.get(normalized)
         except Exception:
             # 只回收本函数刚创建且尚未对外可见的半成品目录。
             shutil.rmtree(directory, ignore_errors=True)
             raise
 
-    def get(self, name: str) -> WorldInfo:
+    def get(self, name: str, *, allow_unavailable=False) -> WorldInfo:
         """读取并校验世界元数据。"""
         normalized = validate_world_name(name)
         directory = self.world_path(normalized)
@@ -134,37 +141,60 @@ class WorldManager:
         if not manifest_path.is_file():
             raise FileNotFoundError(normalized)
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if payload.get("name") != normalized or not isinstance(payload.get("format_version"), int):
+        if not isinstance(payload, dict) or payload.get("name") != normalized or type(payload.get("format_version")) is not int or payload['format_version'] < 1:
             raise ValueError(f"世界元数据无效：{normalized}")
         if payload["format_version"] > WORLD_FORMAT_VERSION:
             raise WorldRequiresNewerRoleplex(
                 "这个世界来自更新版本的 Roleplex，请升级软件后再打开；世界数据没有被修改。"
             )
+        from ..world_types.registry import resolve, valid_type_id
+        world_type = payload.get('world_type', 'general')
+        type_version = payload.get('type_version', 1)
+        if (not valid_type_id(world_type) or type(type_version) is not int or type_version < 1
+            or payload['format_version'] >= 2 and ('world_type' not in payload or 'type_version' not in payload)
+            or payload['format_version'] == 1 and world_type != 'general'):
+            raise ValueError('世界类型元数据无效')
+        reason = None
+        try:
+            resolve(world_type, type_version)
+        except WorldTypeUnavailable:
+            if not allow_unavailable:
+                raise
+            reason = 'WORLD_TYPE_UNAVAILABLE'
         return WorldInfo(
             name=normalized,
             path=directory,
             created_at=str(payload.get("created_at", "")),
             format_version=payload["format_version"],
+            world_type=world_type, type_version=type_version, unavailable_reason=reason,
         )
 
-    def ensure(self, name: str) -> WorldInfo:
+    def ensure(self, name: str, *, world_type=None, type_version=None) -> WorldInfo:
         """返回已有世界；目录不存在时创建，并可补齐安全的创建半成品。"""
         try:
-            return self.get(name)
+            world = self.get(name)
+            if world_type is not None and world.world_type != world_type or type_version is not None and world.type_version != type_version:
+                raise WorldTypeUnavailable('WORLD_TYPE_MISMATCH')
+            return world
         except FileNotFoundError:
             normalized = validate_world_name(name)
             directory = self.world_path(normalized)
             if not directory.exists():
-                return self.create(normalized)
+                return self.create(normalized, world_type=world_type or 'general', type_version=type_version)
             allowed = {_DATABASE, "files", *_SECRET_FILES}
             unknown = {entry.name for entry in directory.iterdir()} - allowed
             if unknown:
                 raise ValueError(f"世界目录缺少元数据且包含未知文件：{sorted(unknown)}")
+            database = directory / _DATABASE
+            if database.exists() and database.stat().st_size > 0:
+                raise ValueError('已有数据库缺少世界元数据，请恢复原存档元数据')
+            from ..world_types.registry import resolve
+            descriptor = resolve(world_type or 'general', type_version)
             (directory / "files").mkdir(exist_ok=True)
             sqlite3.connect(directory / _DATABASE).close()
             for filename in _SECRET_FILES:
                 self._create_secret(directory / filename)
-            self._write_manifest(directory, normalized)
+            self._write_manifest(directory, normalized, world_type=descriptor.id, type_version=descriptor.version)
             return self.get(normalized)
 
     def list_worlds(self) -> list[WorldInfo]:
@@ -176,7 +206,7 @@ class WorldManager:
             if not directory.is_dir():
                 continue
             try:
-                worlds.append(self.get(directory.name))
+                worlds.append(self.get(directory.name, allow_unavailable=True))
             except (ValueError, FileNotFoundError, WorldRequiresNewerRoleplex, json.JSONDecodeError, OSError):
                 continue
         return sorted(worlds, key=lambda world: world.name.casefold())

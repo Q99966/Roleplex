@@ -50,7 +50,7 @@ async def test_creation_contract(tmp_path, monkeypatch):
             ])
             assert sorted([first.status_code, second.status_code]) == [201, 409]
             created = first if first.status_code == 201 else second
-            assert set(created.json()) == {'name', 'current', 'created_at'}
+            assert {'name', 'current', 'created_at', 'world_type', 'type_version'} <= set(created.json())
             assert created.json()['name'] == '新世界'
             assert created.json()['current'] is False
             world = manager.get('新世界')
@@ -67,7 +67,7 @@ async def test_creation_contract(tmp_path, monkeypatch):
                 response = await client.post('/api/worlds', headers=headers, json={'name': 'blocked'})
                 assert response.json()['error']['code'] == 'WORLD_OPERATION_IN_PROGRESS'
             for error_type in [OSError, sqlite3.OperationalError]:
-                def fail_create(name):
+                def fail_create(name, **kwargs):
                     raise error_type('private storage path')
                 monkeypatch.setattr(manager, 'create', fail_create)
                 failed = await client.post('/api/worlds', headers=headers, json={'name': 'failed'})

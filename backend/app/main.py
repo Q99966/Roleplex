@@ -25,7 +25,7 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import agent_budget, approvals, artifacts, auth, context_compaction, context_policy, conversation_context, conversations, memory, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, workflows
+from .routers import agent_budget, approvals, artifacts, auth, context_compaction, context_policy, conversation_context, conversations, memory, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, world_types, world_orchestrator, workflows
 from .runtime.manager import manager as runtime_manager
 from .runtime.registry import RuntimeRejected
 from .runtime.wrapper import watch_wrapper
@@ -62,6 +62,9 @@ async def lifespan(_app: FastAPI):
         world = world_manager.ensure(settings.world_name)
         assert_world_compatible(world.database_path)
         world_manager.acquire(settings.world_name)
+    from .world_types import service as world_type_service
+    world_type_service.configure(settings.world_name, world.world_type if world_manager else 'general',
+        world.type_version if world_manager else 1)
     process_status = "success"
     runtime_started = False
     close_wrapper_watch = lambda: None
@@ -95,6 +98,7 @@ async def lifespan(_app: FastAPI):
             "world.starting", extra={"world_managed": settings.world_managed},
         )
         await init_db()
+        await world_type_service.initialize()
         await runtime_manager.initialize()
         from .workspaces.diffs import initialize_current_pool
         initialize_current_pool()
@@ -104,6 +108,8 @@ async def lifespan(_app: FastAPI):
         await recover_compactions()
         from .workflows import service as workflow_service
         await workflow_service.initialize()
+        from .world_orchestrator import tasks as world_tasks
+        await world_tasks.initialize()
         await retention.purge_expired_on_startup()
         close_wrapper_watch = watch_wrapper()
         yield
@@ -113,6 +119,8 @@ async def lifespan(_app: FastAPI):
         raise
     finally:
         close_wrapper_watch()
+        from .world_orchestrator import tasks as world_tasks
+        await world_tasks.shutdown()
         from .workflows import service as workflow_service
         await workflow_service.shutdown()
         shutdown_error = None
@@ -233,6 +241,8 @@ app.include_router(runtime.router)
 app.include_router(agent_budget.router)
 app.include_router(prompt_settings.router)
 app.include_router(context_policy.router)
+app.include_router(world_types.router)
+app.include_router(world_orchestrator.router)
 app.include_router(conversation_context.router)
 app.include_router(memory.router)
 app.include_router(context_compaction.router)
@@ -241,11 +251,13 @@ app.include_router(ws_router)
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str | bool]:
+async def health() -> dict[str, str | bool | int]:
     """报告进程可用性和当前事件 epoch。"""
+    from .world_types.service import current
     return {
         "status": "ok",
         "stream_epoch": events.current_epoch(),
         "world_name": settings.world_name,
         "world_managed": settings.world_managed,
+        **current(),
     }

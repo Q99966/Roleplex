@@ -101,3 +101,9 @@ C 兼容新增 active_summary（id/source_count/through_message_id/text/text_byt
 `context/store.py` 在 ORM flush 后同步消息创建、终态、修订与删除，原事务失败一起回滚；回收站只改变读取资格。未来原消息修改仍须遵守 revision 和同事务同步，批量 SQL 绕开 ORM 时必须显式调用 sync_sources。新压缩段及发布版本由 C 扩展，不以启动回填覆盖未来用户发布的压缩内容。模型及索引定义见[数据模型](../../internal/data-model.md)。
 
 错误沿用公开错误信封：未登录 401，Guest 403，无权会话/角色 404；参数不合法 422；`CONTEXT_SOURCE_CHANGED` 409（源版本变化，重新读取）；`CONTEXT_PREVIEW_UNAVAILABLE` 422（上下文无法组装）；`CONTEXT_STORAGE_UNAVAILABLE` 503（存储读取失败，无 SQL 参数或正文）。执行侧用既有消息终态报告错误。代码与说明见[错误注册表](../../error-codes.md)。
+
+## 世界协调与类型材料
+
+岗位会话复用共享上下文/压缩；按固定管理角色计算容量，普通角色会话不读取该岗位历史。ContextBuilder 增加协调职责来源、类型材料及有界当前任务快照；类型/任务内容计入 world_type 预算项，来源凭据纳入 context_snapshot 和逐次 runtime_context，执行私有工具结果不发布为共享摘要。类型来源每次调用前复核；已读岗位记忆/子群材料撤权后不能通过私有压缩继续使用。见[类型](world-types.md)及[世界协调](world-orchestrator.md)。
+
+来源修复使用 Context schema 10、共享投影版本 3。公开通信来源纳入指纹，节点完整输入通过宿主校验的 execution_inputs 构建；旧执行输入在共享材料中标为 excluded/execution_input。原来源修订使既有摘要失效，原记录仍可回读，见[协作通信](workflow-communication.md)。

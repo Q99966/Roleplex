@@ -88,7 +88,7 @@ async def finish(generation_id:int):
         logger.warning('usage.record_failed',extra={'generation_id':generation_id,'error_type':safe_exception_type(exc)})
 
 
-async def summary(session,conversation_id:int,role_id:int,execution_id:str|None=None):
+async def summary(session,conversation_id:int,role_id:int,execution_id:str|None=None,*,chains=None):
     """用可迁移聚合查询汇总，不扫描日志或加载历史正文。
 
     Args:
@@ -96,8 +96,9 @@ async def summary(session,conversation_id:int,role_id:int,execution_id:str|None=
         conversation_id：会话范围。
         role_id：角色范围。
         execution_id：可选单次执行范围。
+        chains：可选宿主已鉴权的世界任务链集合；提供时替代会话/角色筛选，不是公开查询参数。
     """
-    filters=[AgentExecution.conversation_id==conversation_id,AgentExecution.role_id==role_id]
+    filters=[AgentExecution.chain_id.in_(chains)] if chains is not None else [AgentExecution.conversation_id==conversation_id,AgentExecution.role_id==role_id]
     if execution_id is not None:filters.append(AgentExecution.execution_id==execution_id)
     per_execution=(select(ModelCallUsage.execution_id,func.count(ModelCallUsage.id).label('calls'))
         .join(AgentExecution,AgentExecution.execution_id==ModelCallUsage.execution_id).where(*filters)
@@ -119,7 +120,7 @@ async def summary(session,conversation_id:int,role_id:int,execution_id:str|None=
     values=(await session.execute(select(*columns).join(AgentExecution,AgentExecution.execution_id==ModelCallUsage.execution_id).where(*filters))).one()
     calls,completed=int(values[0]),int(values[1] or 0)
     untracked_messages=0
-    if execution_id is None:
+    if execution_id is None and chains is None:
         linked=select(AgentExecution.id).join(Generation,Generation.id==AgentExecution.generation_id).where(Generation.assistant_message_id==Message.id).exists()
         untracked_messages=int(await session.scalar(select(func.count(Message.id)).where(
             Message.conversation_id==conversation_id,Message.sender_type=='role',Message.sender_id==role_id,~linked)) or 0)

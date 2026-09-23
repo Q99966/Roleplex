@@ -13,6 +13,10 @@ class WorldRequiresNewerRoleplex(RuntimeError):
     """世界由更新软件写入，当前版本必须拒绝打开。"""
 
 
+class WorldTypeUnavailable(ValueError):
+    """存档的类型或类型版本没有已安装实现；不能降格成普通世界。"""
+
+
 def _script_directory() -> ScriptDirectory:
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))

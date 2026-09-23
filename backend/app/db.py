@@ -85,7 +85,11 @@ async def init_db() -> None:
     from .context.store import install_projection_hooks, backfill_contexts
     install_projection_hooks()
     await ensure_instance_settings()
+    from .world_orchestrator.service import initialize as initialize_manager
+    await initialize_manager()
     await recover_interrupted_messages()
+    from .communication.backfill import run as backfill_communication
+    await backfill_communication()
     await backfill_contexts()
     from .workspaces.approvals import recover_approvals
     await recover_approvals()

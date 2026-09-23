@@ -1,7 +1,7 @@
 import { useEffect,useRef,useState } from 'react'
 import { api,getAuthEpoch,type RoleExecutionUsage,type UsageMetric } from '../api/client'
 import { useAppStore } from '../store/app'
-import { useChatStore } from '../store/chat'
+import { useConversationChat } from '../store/conversationChat'
 
 const labels = {cache_miss_tokens:'缓存未命中输入 Token',output_tokens:'输出 Token',cache_hit_tokens:'缓存命中 Token',input_cache_hit_ratio:'输入缓存命中率'} as const
 const stopReasons:Record<string,string>={decision_budget:'决策预算停止',graph_budget:'图保护停止',user_cancelled:'用户停止',provider_failed:'模型请求失败',protocol_error:'执行异常',interrupted:'执行中断',context_rejected:'上下文检查未通过'}
@@ -25,8 +25,8 @@ function MetricValue({metric,time=false,ratio=false}:{metric:UsageMetric;time?:b
 export function RoleUsagePanel({conversationId,roleId}:{conversationId:number;roleId:number}) {
   const user=useAppStore(state=>state.user)
   const world=useAppStore(state=>state.worldName)
-  const active=useChatStore(state=>state.conversationId===conversationId&&state.activeGenerationIds.length>0)
-  const messageKey=useChatStore(state=>{
+  const active=useConversationChat(state=>state.conversationId===conversationId&&state.activeGenerationIds.length>0)
+  const messageKey=useConversationChat(state=>{
     if(state.conversationId!==conversationId)return ''
     const latest=state.messages.filter(message=>message.sender_type==='role'&&message.sender_id===roleId).at(-1)
     return latest?`${latest.id}:${latest.status}`:''

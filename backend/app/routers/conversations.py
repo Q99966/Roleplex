@@ -82,6 +82,7 @@ async def list_conversations(user: Annotated[User, Depends(get_current_user)], s
         .where(
             ConversationMember.member_type == "user", ConversationMember.member_id == user.id,
             Conversation.deleted_at.is_(None),
+            Conversation.purpose == 'chat',
         )
         .order_by(ConversationMember.pinned.desc(), Conversation.last_message_at.desc(), Conversation.created_at.desc())
     )).all()
@@ -101,6 +102,7 @@ async def list_deleted_conversations(user: Annotated[User, Depends(get_current_u
         .where(
             ConversationMember.member_type == "user", ConversationMember.member_id == user.id,
             Conversation.deleted_at.is_not(None),
+            Conversation.purpose == 'chat',
         )
         .order_by(Conversation.deleted_at.desc())
     )).all()
@@ -120,6 +122,7 @@ async def create_conversation(payload: ConversationCreate, user: Annotated[User,
         raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
     roles = (await session.scalars(select(Role).where(
         Role.id.in_(payload.role_ids),
+        Role.managed_kind.is_(None),
         Role.created_by == user.id,
         Role.active.is_(True),
         Role.deleted_at.is_(None),
@@ -272,6 +275,7 @@ async def update_group_members(
             raise HTTPException(status_code=422, detail="ROLE_NOT_AVAILABLE")
         roles = (await session.scalars(select(Role).where(
             Role.id.in_(payload.role_ids),
+            Role.managed_kind.is_(None),
             Role.created_by == user.id,
             Role.active.is_(True),
             Role.deleted_at.is_(None),
@@ -371,6 +375,8 @@ async def _owned_conversation(session: AsyncSession, conversation_id: int, owner
     conversation = await session.get(Conversation, conversation_id)
     if not conversation or conversation.created_by != owner_id:
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
+    if conversation.purpose != 'chat':
+        raise HTTPException(409, 'CONVERSATION_MANAGED')
     return conversation
 
 

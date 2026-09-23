@@ -14,7 +14,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from app.worlds.manager import validate_world_name  # noqa: E402
 from app.worlds import WorldManager  # noqa: E402
-from app.worlds.compatibility import WorldRequiresNewerRoleplex, assert_world_compatible  # noqa: E402
+from app.worlds.compatibility import WorldRequiresNewerRoleplex, WorldTypeUnavailable, assert_world_compatible  # noqa: E402
 
 DEFAULT_WORLDS_DIR = BACKEND_DIR.parent / "worlds"
 
@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     """构造包装器参数。"""
     parser = argparse.ArgumentParser(description="启动可切换世界的 Roleplex 后端")
     parser.add_argument("--world", default="default")
+    parser.add_argument('--world-type', default=None, help='首次创建时的类型；已存在世界必须匹配')
+    parser.add_argument('--type-version', type=int, default=None)
     parser.add_argument("--worlds-dir", default=str(DEFAULT_WORLDS_DIR))
     parser.add_argument("--ensure-world", action="append", default=[], help="启动前确保额外世界存在，可重复")
     parser.add_argument("--host", default="0.0.0.0")
@@ -30,26 +32,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(argv: list[str] | None = None) -> int:
+def run(argv: list[str] | None = None, *, application: str = 'app.main:app') -> int:
     """循环启动后端；收到受控切换请求时使用目标世界重启。
 
     Args:
         argv：命令行参数；省略时读取进程参数。
+        application：宿主装配的 ASGI 入口；隔离测试用来安装受控类型，不从世界元数据读取。
     """
     args = build_parser().parse_args(argv)
     current = validate_world_name(args.world)
     worlds_dir = Path(args.worlds_dir).resolve()
     manager = WorldManager(worlds_dir)
-    manager.ensure(current)
-    for name in args.ensure_world:
-        manager.ensure(validate_world_name(name))
+    try:
+        manager.ensure(current, world_type=args.world_type, type_version=args.type_version)
+        for name in args.ensure_world:
+            manager.ensure(validate_world_name(name))
+    except (WorldRequiresNewerRoleplex, WorldTypeUnavailable, ValueError) as exc:
+        print(f'无法启动世界 {current}：{exc}', file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory(prefix="roleplex-world-wrapper-") as temporary:
         control_file = Path(temporary) / "switch-target"
         while True:
-            world = manager.ensure(current)
             try:
+                world = manager.ensure(current)
                 assert_world_compatible(world.database_path)
-            except WorldRequiresNewerRoleplex as exc:
+            except (WorldRequiresNewerRoleplex, WorldTypeUnavailable) as exc:
                 print(f"无法启动世界 {current}：{exc}", file=sys.stderr)
                 return 2
             environment = dict(os.environ)
@@ -61,7 +68,7 @@ def run(argv: list[str] | None = None) -> int:
                 "WORLD_CONTROL_FILE": str(control_file),
             })
             command = [
-                sys.executable, "-m", "uvicorn", "app.main:app",
+                sys.executable, "-m", "uvicorn", application,
                 "--host", args.host, "--port", str(args.port),
             ]
             read_fd, write_fd = os.pipe() if os.name == 'posix' else (None, None)

@@ -59,6 +59,24 @@ async def references(conversation_id: int, role_id: int, user: Owner, response: 
             value = {'id': row.id, 'execution_id': row.execution_id, 'tool_call_id': row.tool_call_id,
                 'action': row.action, 'created_at': service.utc(row.created_at), 'available': False}
             try:
+                if row.source_kind == 'world_note':
+                    if not scope.world_coordination:
+                        raise HTTPException(404, 'MEMORY_SOURCE_NOT_FOUND')
+                    from ..world_orchestrator.memory import validate_reference
+                    await validate_reference(session, user.id, row.source_id, row.source_revision)
+                    value.update(available=True, world_source={'kind': 'world_note', 'source_id': row.source_id,
+                        'source_revision': row.source_revision, 'title': '世界约定'})
+                    items.append(value)
+                    continue
+                if row.source_kind == 'world_child':
+                    if not scope.world_coordination:
+                        raise HTTPException(404, 'MEMORY_SOURCE_NOT_FOUND')
+                    from ..world_orchestrator.tasks import validate_child_source
+                    group = await validate_child_source(session, user.id, row.source_id)
+                    value.update(available=True, world_source={'kind': 'world_child', 'source_id': row.source_id,
+                        'source_revision': row.source_revision, 'title': group.title})
+                    items.append(value)
+                    continue
                 source = await service.document(session, scope, row.source_kind, row.source_id, row.source_revision)
                 source.pop('text')
                 value.update(available=True, source=source)

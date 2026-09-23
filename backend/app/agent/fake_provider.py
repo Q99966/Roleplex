@@ -104,6 +104,65 @@ class ScriptedChatModel(BaseChatModel):
         ]
 
 
+class WorldCoordinatorProbeModel(ScriptedChatModel):
+    """世界委派固件只使用真实概览的群/模板引用，并等待实际群结果。"""
+    _groups: list = PrivateAttr(default_factory=list)
+
+    async def _astream(self, messages, **kwargs):
+        outputs = [m for m in messages if isinstance(m, ToolMessage)]
+        def call(name, args):
+            return ScriptedTurn(tool_calls=[{'name': name, 'args': args, 'id': f'world-probe-{self.index}'}])
+        if self.index == 0:
+            turn = call('world_read_overview', {})
+        elif self.index in (1, 2):
+            if self.index == 1:
+                self._groups = json.loads(outputs[-1].content)['groups'][:2]
+            group = self._groups[self.index - 1]
+            turn = call('world_delegate_group', {'conversation_id': group['id'], 'definition_id': group['definition_id'],
+                'expected_graph_revision': group['definition_revision'], 'goal': '执行既有受控流程并交付结果。',
+                'request_key': f'group-{group["id"]}', 'mode': 'execute'})
+        elif self.index == 3:
+            turn = call('world_wait_task', {'seconds': 30})
+        elif self.index == 4:
+            turn = call('world_finish_task', {'summary': '两个群已完成真实流程。'})
+        else:
+            turn = ScriptedTurn(text='世界任务已依据两个群的真实执行结果完成。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            yield chunk
+
+
+class CommunicationWorldProbe(ScriptedChatModel):
+    """只在受控验收中根据真实概览选择目标群，验证世界→群→角色的署名链。"""
+    async def _astream(self, messages, **kwargs):
+        outputs = [item for item in messages if isinstance(item, ToolMessage)]
+        def call(name, args): return ScriptedTurn(tool_calls=[{'name': name, 'args': args, 'id': f'communication-{self.index}'}])
+        if self.index == 0: turn = call('world_read_overview', {})
+        elif self.index == 1:
+            group = next(item for item in json.loads(outputs[-1].content)['groups'] if item['title'] == '协作署名验收')
+            turn = call('world_delegate_group', {'conversation_id': group['id'], 'definition_id': group['definition_id'],
+                'expected_graph_revision': group['definition_revision'], 'request_key': 'communication-group',
+                'goal': 'WORLD_PUBLIC_TASK_TARGET 三个角色分别完成自己的分工。', 'mode': 'execute'})
+        elif self.index == 2: turn = call('world_wait_task', {'seconds': 30})
+        elif self.index == 3: turn = call('world_finish_task', {'summary': '三个角色已分别完成，来源和接收对象可核对。'})
+        else: turn = ScriptedTurn(text='世界协调任务已完成。')
+        self.index += 1
+        for chunk in self._chunks(turn):
+            await asyncio.sleep(self.delay)
+            yield chunk
+
+
+class WorldTypeProbeModel(ScriptedChatModel):
+    """只从实际输入回报受控类型资料，验证初始化/构建器/模型的真实交接。"""
+    async def _astream(self, messages, **kwargs):
+        value = next((str(m.content) for m in messages if str(m.content).startswith('世界类型资料（')), '')
+        if value:
+            items = json.loads(value.split('\n', 1)[1])['items']
+            value = ' '.join(item['text'] for item in items)
+        for chunk in self._chunks(ScriptedTurn(text='世界类型资料核对：' + (value or '没有类型材料'))):
+            yield chunk
+
+
 class ContextCompactionModel(ScriptedChatModel):
     """压缩验收固件从实际传入的来源取简短句子和引用，不伪造 Provider usage。"""
     delay: float = 0
@@ -444,6 +503,21 @@ def fake_reply_model(prompt: str, *, delay: float = 0.08) -> ScriptedChatModel:
         prompt：用户当前消息文本，会被拼进回复以便断言输入确实到达了模型。
         delay：分片间隔秒数。
     """
+    if '[COMMUNICATOR_WORLD_PROBE]' in prompt:
+        return CommunicationWorldProbe(delay=0)
+    if '[COMMUNICATOR_WORK_PROBE]' in prompt:
+        return ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name': 'workflow_result', 'args': {
+            'values': {'completed': True}, 'summary': '本角色的受控任务已完成。'}, 'id': 'communication-result'}]), ScriptedTurn(text='本角色已完成自己的分工。')])
+    if '[WORLD_TYPE_TOOL_PROBE]' in prompt:
+        return ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name': 'type_fixture_record', 'args': {}, 'id': 'type-record'}]), ScriptedTurn(text='类型工具已完成真实记录。')])
+    if '[WORLD_ACTIVITY_PROBE]' in prompt:
+        return ScriptedChatModel(delay=0, turns=[ScriptedTurn(tool_calls=[{'name': 'world_activity_fixture_record', 'args': {'request_key': 'fixture-activity'}, 'id': 'start-type'}]),
+            ScriptedTurn(tool_calls=[{'name': 'world_wait_task', 'args': {'seconds': 30}, 'id': 'wait-type'}]),
+            ScriptedTurn(tool_calls=[{'name': 'world_finish_task', 'args': {'summary': '类型活动已实际执行。'}, 'id': 'finish-type'}]), ScriptedTurn(text='类型活动完成。')])
+    if '[WORLD_TASK_PROBE]' in prompt:
+        return WorldCoordinatorProbeModel(delay=0)
+    if '[WORLD_TYPE_PROBE]' in prompt:
+        return WorldTypeProbeModel(delay=0)
     if '[MEMORY_PROBE]' in prompt:
         return MemoryProbeModel(query=prompt.split('[MEMORY_PROBE]', 1)[1].strip(), delay=delay)
     if '[PROMPT_LAYERS_PROBE]' in prompt:

@@ -15,11 +15,13 @@ from ..models import Conversation, ConversationContext, ConversationContextEntry
 from .projection import stable_message_text, parts_text, public_execution_facts
 from .fingerprint import stable_hash
 
-PROJECTION_VERSION = 2
+PROJECTION_VERSION = 3
 _CHANGES = 'roleplex_context_changes'
 
 
 def _values(message: Message) -> dict:
+    from ..communication.service import sender_identity
+    sender_type, sender_id = sender_identity(message)
     pending = message.status in {'pending', 'generating'}
     unpaired = any(p.get('type') == 'tool_call' and p.get('status') == 'running' for p in message.parts_json or [])
     text = '' if unpaired else stable_message_text(message)
@@ -27,12 +29,17 @@ def _values(message: Message) -> dict:
     facts = public_execution_facts(message)
     reason = ('generating' if pending else 'tool_pending' if unpaired else
         'failed' if message.status == 'error' else 'interrupted' if message.status == 'interrupted' else 'empty')
+    if (message.meta_json or {}).get('communication', {}).get('kind') == 'legacy_execution_input':
+        search_text = None
+        reason = 'execution_input'
     return dict(conversation_id=message.conversation_id, source_revision=message.revision,
-        source_status=message.status, sender_type=message.sender_type, sender_id=message.sender_id,
+        source_status=message.status, sender_type=sender_type, sender_id=sender_id,
         chain_id=message.chain_id, pinned=message.pinned, text=text, text_bytes=len(text.encode('utf-8')),
         state='pending' if pending else 'included' if text else 'excluded', reason=None if text else reason,
         created_at=message.created_at, search_text=search_text, execution_facts_json=facts,
-        text_hash=stable_hash([text, search_text, facts, message.sender_type, message.sender_id, message.status]),
+        text_hash=stable_hash([text, search_text, facts, sender_type, sender_id, message.status,
+            (message.meta_json or {})['communication']]) if (message.meta_json or {}).get('communication') else
+            stable_hash([text, search_text, facts, sender_type, sender_id, message.status]),
         projection_version=PROJECTION_VERSION)
 
 

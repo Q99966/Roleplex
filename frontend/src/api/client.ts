@@ -42,11 +42,11 @@ export type RoleInput = {
   expected_revision?: number
 }
 /** Agent 角色定义；`deleted_at` 非空表示墓碑，配置已清空，仅保留身份供历史消息展示。 */
-export type Role = { id: number; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; revision: number; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
+export type Role = { id: number; managed_kind?: string | null; name: string; avatar: string | null; description: string | null; tags: string[]; system_prompt: string; revision: number; model_config_id: number | null; model_name: string; context_window_tokens: number; context_window_ceiling_tokens: number; effective_context_window_tokens: number; params: Record<string, unknown>; skills: Record<string, unknown>[]; builtin_tools: string[]; mcp_servers: Record<string, unknown>[]; active: boolean; deleted_at: string | null; created_at: string; updated_at: string }
 /** 会话；`deleted_at` 非空表示在回收站中，保留期内可恢复。 */
 export type Conversation = { id: number; type: 'single' | 'group'; title: string; orchestrator_enabled: boolean; orchestrator_role_id: number | null; orchestrator_revision?: number; workspace_binding_id: number | null; role_ids: number[]; revision: number; last_message_at: string | null; pinned: boolean; archived: boolean; deleted_at: string | null }
 export type Part = { type: string; text?: string; language?: string; code?: string; title?: string; artifact_id?: number; version?: number; call_id?: string; tool_name?: string; status?: string; duration_ms?: number; command?: string; command_status?: 'exited' | 'timed_out' | 'cancelled'; exit_code?: number | null; truncated?: boolean; error_code?: string; [key: string]: unknown }
-export type Message = { id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number; stop_reason?: StopReason | null }
+export type Message = { communication?: MessageCommunication | null; id: number; conversation_id: number; sender_type: string; sender_id: number | null; reply_to_id: number | null; mentions: Array<number | 'all'>; parts_json: Part[]; status: string; revision: number; chain_id: string | null; created_at: string; timeline_version?: number; stop_reason?: StopReason | null }
 /** 服务器保存的停止原因，不包含回合统计或私有工具内容。 */
 export type StopReason = 'user_cancelled' | 'graph_budget' | 'decision_budget' | 'provider_failed' | 'protocol_error' | 'interrupted' | 'context_rejected'
 export type ToolCapture = { text: string; bytes: number; truncated: boolean }
@@ -129,12 +129,15 @@ export type ToolDetails = {
     execution_status: string | null; exit_code: number | null
   } | null
 }
-export type MessageCreate = { parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
+export type MessageCreate = { world_task_mode?: 'chat' | 'execute'; world_task_id?: string; expected_task_revision?: number; expected_appointment_revision?: number; parts: Part[]; mentions?: Array<number | 'all'>; reply_to_id?: number | null; client_message_id?: string }
 export type HistoryWindow = { has_more: boolean; next_cursor: string | null; oversized: boolean; page_bytes: number }
 export type MessageHistory = HistoryWindow & { items: Message[]; event_seq: number; stream_epoch: string; active_generation_id: number | null; active_generation_ids: number[] }
+export type CommunicationActor = { kind: 'user' | 'role' | 'world_manager' | 'system'; id: number | null; role_id?: number; name: string; historical?: boolean; duty?: string }
+export type MessageCommunication = { version: number; kind: string; actor: CommunicationActor; recipients: CommunicationActor[];
+  authorized_by_user_id: number | null; source: Record<string, unknown>; report_to: CommunicationActor[]; via?: CommunicationActor | null; legacy?: boolean }
 export type SendMessageResult = { message: Message; generation_id: number | null; generation_ids: number[]; duplicate: boolean }
-export type HealthStatus = { status: string; stream_epoch: string; world_name: string; world_managed: boolean }
-export type WorldSummary = { name: string; current: boolean; created_at: string }
+export type HealthStatus = { status: string; stream_epoch: string; world_name: string; world_managed: boolean; world_type?: string; type_version?: number }
+export type WorldSummary = { name: string; current: boolean; created_at: string; world_type?: string; type_version?: number; available?: boolean; unavailable_reason?: string | null }
 export type WorldList = { current: string; switching_supported: boolean; creation_supported?: boolean; items: WorldSummary[] }
 export type WorkspaceAvailability = 'available' | 'unavailable' | 'busy' | 'disabled'
 export type WorkspaceBinding = {
@@ -283,8 +286,8 @@ export const api = {
 
   // 世界存档：列表仅 Owner 可读，切换必须由包装器托管后端。
   worlds: () => request<WorldList>('/api/worlds'),
-  createWorld: (name: string) => request<WorldSummary>('/api/worlds', {
-    method: 'POST', body: JSON.stringify({ name }),
+  createWorld: (name: string, worldType = 'general', typeVersion?: number) => request<WorldSummary>('/api/worlds', {
+    method: 'POST', body: JSON.stringify({ name, world_type: worldType, ...(typeVersion ? { type_version: typeVersion } : {}) }),
   }),
   backupWorld: (signal?: AbortSignal) => request<Blob>('/api/worlds/backup', {
     method: 'POST', body: JSON.stringify({ confirm_cleanup: true }), cache: 'no-store', signal,
@@ -309,7 +312,7 @@ export const api = {
   deleteWorkspace: (id: number, confirmed = false) => request<void>(`/api/workspaces/${id}?confirm_cleanup=${confirmed}`, { method: 'DELETE' }),
 
   // 角色管理 API
-  roles: () => request<Role[]>('/api/roles'),
+  roles: (includeManaged = false) => request<Role[]>(`/api/roles${includeManaged ? '?include_managed=true' : ''}`),
   role: (id: number) => request<Role>(`/api/roles/${id}`),
   createRole: (body: RoleInput) => request<Role>('/api/roles', { method: 'POST', body: JSON.stringify(body) }),
   updateRole: (id: number, body: RoleInput) => request<Role>(`/api/roles/${id}`, { method: 'PUT', body: JSON.stringify(body) }),

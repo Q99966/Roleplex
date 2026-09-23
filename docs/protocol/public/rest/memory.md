@@ -60,3 +60,9 @@ message 来源包括 done/stopped 和有原文的 error/interrupted；后两者�
 上下文面板的“历史检索”提供角色选择、范围/类型、关键词、继续搜索、原文及前后文、工具来源核对。查询草稿只在当前页面身份内保留；账号/World/角色变化丢弃迟到响应，错误后清除旧预览。未启用工具的角色仍可被 Owner 选为人工权限视角，实际 Agent 要使用工具须先显式启用。
 
 REST 要求 Owner，调用角色的 Guest 可在已有会话权限下使用 Owner 已启用的只读工具；所有结果仍受同一共享范围限制。无认证 401，Guest 管理接口 403；不可读来源/角色 404，版本/游标变更 409，查询/参数/范围非法 422，存储不可用 503。工具把安全错误码作为 rejected/failed 返回，不把 SQL、原始异常或凭据交给模型。错误表见[注册表](../../error-codes.md)。
+
+## 世界岗位范围与来源记录
+
+普通角色共享交集不变；实际 world_coord grant 的执行任务可查询冻结目标群中当前仍可读的历史，普通岗位对话只查协调会话。不会导入该角色所有私人会话或后来新增的群。岗位条目使用独立世界记忆工具，复用 MemoryReference 的 world_note/world_child 来源类别；引用记录 API 兼容新增 world_source（kind/source_id/source_revision/title），与普通 message/summary 的 source 分开，原文按世界记忆/任务入口核对。版本、权限及私有压缩复核见[世界协调协议](world-orchestrator.md)。
+
+协作通信修复后，旧内部节点输入不再作为普通会话记忆检索命中；曾发出的该来源引用返回 MEMORY_SOURCE_CHANGED。执行输入只经 Owner 受权详情读取，旧摘要和岗位记忆仍验证原来源版本，见[协作通信](workflow-communication.md)。

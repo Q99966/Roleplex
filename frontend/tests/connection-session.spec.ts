@@ -209,7 +209,7 @@ test('退出登录后迟到的 Owner 配置请求不能写回工作台', async (
   let release!: () => void
   const held = new Promise<void>((resolve) => { release = resolve })
   let captured = false
-  await page.route('**/api/roles', async (route) => {
+  await page.route(/\/api\/roles(?:\?.*)?$/, async (route) => {
     const response = await route.fetch()
     captured = true
     await held

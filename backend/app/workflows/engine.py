@@ -139,6 +139,14 @@ async def start(cid, uid, payload, *, manager_execution_id=None):
             message = Message(conversation_id=cid, sender_type='user', sender_id=uid,
                 parts_json=[{'type': 'text', 'text': f"{'协调执行' if coord else '启动工作流'}：{definition.name}\n{payload.input_text}"}],
                 mentions_json=[], status='done', revision=0, chain_id=run.chain_id, meta_json={'workflow_run_id': run.id}, created_at=service.now())
+            from ..communication.service import actor, envelope, stamp
+            if manager:
+                message.sender_type, message.sender_id = 'system', None
+                message.parts_json = [{'type': 'text', 'text': '工作流已启动；目标见关联的委派记录。'}]
+                message.reply_to_id = manager.trigger_message_id
+            stamp(message, envelope('workflow_started' if manager else 'workflow_goal',
+                await actor(session, 'system') if manager else await actor(session, 'user', uid),
+                owner_id=uid, source={'run_id': run.id, 'goal_message_id': manager.trigger_message_id if manager else None}))
             session.add(message); await session.flush()
             run.trigger_message_id = message.id
             from ..services.agent_budget import freeze
@@ -229,11 +237,9 @@ async def dispatch(session, run, activation, row):
             grant_id = next((item.coordination_session_id for item in feedback_items if item.handler_activation_ids.get(node['id']) == activation.id and item.coordination_session_id), None)
             manager = await session.get(CoordinationSession, grant_id) if grant_id else None
             if manager: parent_execution_id = manager.execution_id
-    message = Message(conversation_id=run.conversation_id, sender_type='user', sender_id=run.owner_id,
-        parts_json=[{'type': 'text', 'text': task}], mentions_json=[role_id], status='done', revision=0, chain_id=run.chain_id,
-        meta_json={'workflow_run_id': run.id, 'workflow_attempt_id': row.id, 'workflow_activation_id': activation.id,
-                   'workflow_iteration': activation.iteration, 'coordination_phase': row.phase}, created_at=service.now())
-    session.add(message); await session.flush()
+    from ..communication import dispatch as communication
+    from ..communication.service import save_input, actor
+    batch, message, event = await communication.ensure(session, run, activation, row, role_id)
     generation = Generation(conversation_id=run.conversation_id, stream_epoch=current_epoch(), status='queued', run_id=run.chain_id)
     session.add(generation); await session.flush()
     execution = AgentExecution(execution_id=uuid4().hex, conversation_id=run.conversation_id, generation_id=generation.id,
@@ -250,6 +256,11 @@ async def dispatch(session, run, activation, row):
         workspace_binding_id=run.workspace_binding_id, resource_root=run.workspace_root, revision=row.number,
         authority_json={'owner_id': run.owner_id, 'role_id': role_id, 'phase': row.phase,
             'appointment_revision': run.snapshot.get('appointment_revision'), 'activation_id': activation.id,'graph_revision':row.graph_revision,'result_fields':result_fields}, created_at=service.now()))
+    address = {**message.meta_json['communication'], 'recipients': [await actor(session, 'role', role_id)]}
+    await save_input(session, execution, message, run.owner_id, task,
+        {'workflow_run_id': run.id, 'workflow_attempt_id': row.id, 'workflow_activation_id': activation.id,
+         'workflow_iteration': activation.iteration, 'coordination_phase': row.phase, 'communication': address}, batch_id=batch.id)
+    await communication.attach(session, batch, row)
     job = QueueJob(conversation_id=run.conversation_id, generation_id=generation.id, status='queued', payload_json={
         'current_message_id': message.id, 'triggered_by_user_id': run.owner_id, 'allow_dangerous': True,
         'request_id': run.snapshot.get('request_id'), 'parallel_workflow': True}, attempts=0, cancel_requested=False, created_at=service.now())
@@ -257,8 +268,6 @@ async def dispatch(session, run, activation, row):
     row.input_message_id, row.generation_id, row.execution_id, row.status = message.id, generation.id, execution.execution_id, 'queued'
     activation.status = 'active'
     conv.last_message_at = service.now()
-    from ..services.chat import message_payload
-    event = await events.append_event(session, run.conversation_id, 'message_created', {'message': message_payload(message)}, revision=0)
     return job.id, event
 
 
@@ -356,7 +365,7 @@ async def advance(rid):
                 if activation.status == 'pending':
                     a = await attempt(session, run, activation); attempts[a.id] = a
                     jid, event = await dispatch(session, run, activation, a)
-                    enqueue.append(jid); pending.append(event); touched = True
+                    enqueue.append(jid); pending.extend([event] if event else []); touched = True
                 run.status = 'running'
             elif state['phase'] == 'summary':
                 activation = current['__summary']
@@ -366,7 +375,7 @@ async def advance(rid):
                     upstream = [a.selected_attempt_id for nid, a in current.items() if not nid.startswith('__') and a.status == 'completed' and a.selected_attempt_id]
                     a = await attempt(session, run, activation, upstream); attempts[a.id] = a
                     jid, event = await dispatch(session, run, activation, a)
-                    enqueue.append(jid); pending.append(event); touched = True
+                    enqueue.append(jid); pending.extend([event] if event else []); touched = True
                 else: run.status = 'running'
             else:
                 # 本轮依赖解析不会读取其他轮次的“最近消息”。
@@ -467,7 +476,7 @@ async def advance(rid):
                             activation.status = a.status = 'completed'; a.ended_at = service.now(); touched = True
                         elif active_count < run.snapshot['concurrency']:
                             jid, event = await dispatch(session, run, activation, a)
-                            enqueue.append(jid); pending.append(event); active_count += 1; touched = True
+                            enqueue.append(jid); pending.extend([event] if event else []); active_count += 1; touched = True
                     except HTTPException as exc:
                         a = attempts.get(activation.selected_attempt_id)
                         if a is None: a = await attempt(session, run, activation); attempts[a.id] = a

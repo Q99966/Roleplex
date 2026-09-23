@@ -29,12 +29,21 @@ async def validate_parent(session, execution_id, cid, uid):
     if parent is None or parent.conversation_id != cid or parent.status != 'running' or generation is None or generation.stop_requested_at:
         raise asyncio.CancelledError()
     await require_context_access(session, conversation_id=cid, role_id=parent.role_id, user_id=uid)
+    if parent.execution_kind == 'world_coord':
+        from ..world_orchestrator.service import authorized
+        await authorized(session, execution_id)
     from ..workflows.allocations import allowed
     if not await allowed(session, execution_id):
         raise ContextBuildError('CONTEXT_SOURCE_CHANGED')
     from ..memory.service import revalidate_execution
     await revalidate_execution(session, execution_id, cid, parent.role_id, uid,
         (parent.context_snapshot_json or {}).get('material'))
+    receipt = ((parent.context_snapshot_json or {}).get('material') or {}).get('execution_input')
+    if receipt:
+        from ..models import ExecutionInput
+        row = await session.get(ExecutionInput, execution_id)
+        if not row or stable_hash([row.text, row.source_json]) != receipt['fingerprint']:
+            raise ContextBuildError('CONTEXT_SOURCE_CHANGED')
     return parent
 
 
@@ -42,7 +51,13 @@ async def validate_job(session, job):
     """原任务、策略、模型与来源版本都仍适用时才继续收费或采用结果。"""
     from .compaction_runner import CompactionFailure
     runtime = job.runtime_json
-    await validate_parent(session, runtime['parent_execution_id'], job.conversation_id, job.owner_id)
+    parent = await validate_parent(session, runtime['parent_execution_id'], job.conversation_id, job.owner_id)
+    if runtime.get('world_type'):
+        from ..world_types.service import revalidate_material
+        from .domain import ContextBuildRequest
+        await revalidate_material(session, ContextBuildRequest(role_id=parent.role_id, conversation_id=job.conversation_id,
+            current_message_id=None, triggered_by_user_id=job.owner_id, execution_id=parent.execution_id,
+            execution_kind=parent.execution_kind), {'world_type': runtime['world_type'], 'visible_through_message_id': runtime['boundary']})
     view = await policy.resolve(session, job.conversation_id)
     if not view['effective']['enabled'] or view['stamp'] != runtime['policy_stamp']:
         raise CompactionFailure('CONTEXT_POLICY_CHANGED', 'stale')
@@ -105,6 +120,7 @@ async def shared(request, context):
     effective = view['effective']
     amount = context.request_estimate['before_truncation_tokens'] - sum(
         context.request_estimate['breakdown'][key] for key in ['system', 'tools', 'current', 'interruption'])
+    amount -= context.request_estimate['breakdown'].get('world_type', 0)
     if not effective['enabled'] or amount < effective['trigger_tokens']:
         return False
     lock = _shared_locks.setdefault(cid, asyncio.Lock())
@@ -170,7 +186,7 @@ async def prepare(request):
     context = await read()
     from .budget import token_estimate
     from .domain import ContextBudgetExceeded
-    fixed = token_estimate(sum(context.request_estimate['breakdown'][key] for key in ['system', 'tools', 'current']))
+    fixed = token_estimate(sum(context.request_estimate['breakdown'].get(key, 0) for key in ['system', 'tools', 'current', 'world_type']))
     if fixed.estimated_tokens + fixed.safety_margin_tokens > context.budget.input_budget_tokens:
         raise ContextBudgetExceeded(estimated_tokens=fixed.estimated_tokens, safety_margin_tokens=fixed.safety_margin_tokens,
             input_budget_tokens=context.budget.input_budget_tokens, estimator_kind=fixed.estimator_kind)

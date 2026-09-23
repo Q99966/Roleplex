@@ -45,5 +45,6 @@ export const workflows = {
   start: (cid: number, definition: WorkflowDefinition, request_key: string, input_text: string, mode: 'manual' | 'coordinated' = 'manual') => request<WorkflowRun>(`${base(cid)}/runs`, { method: 'POST', body: JSON.stringify({ definition_id: definition.id, expected_revision: definition.revision, request_key, input_text, mode }) }),
   control: (cid: number, run: WorkflowRun, body: { action: 'confirm' | 'stop' | 'retry' | 'resume'; attempt_id?: string; decision?: boolean; instruction?: string; acknowledge_facts?: boolean; rerun_downstream?: boolean }) => request<WorkflowRun>(`${base(cid)}/runs/${run.id}/control`, { method: 'POST', body: JSON.stringify({ ...body, expected_revision: run.revision }) }),
   facts: (cid: number, rid: string, aid: string) => request<{ attempt_id: string; text: string }>(`${base(cid)}/runs/${rid}/attempts/${aid}/facts`),
+  input: (cid: number, rid: string, aid: string) => request<{ text: string | null; legacy: boolean }>(`${base(cid)}/runs/${rid}/attempts/${aid}/input`),
   message: (cid: number, rid: string, aid: string) => request<Message | null>(`${base(cid)}/runs/${rid}/attempts/${aid}/message`),
 }

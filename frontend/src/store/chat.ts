@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, type Message, type Part, type StreamEvent } from '../api/client'
+import { api, type Message, type MessageCreate, type Part, type StreamEvent } from '../api/client'
 import { SessionStream, type ConnectionStatus, type SubscriptionStatus } from '../api/stream'
 import { useAppStore } from './app'
 import { HistoryCache, type ReadingPosition } from './history-cache'
@@ -30,18 +30,10 @@ type ChatState = {
   openConversation: (conversationId: number) => Promise<void>
   closeConversation: () => void
   retryConnection: () => void
-  sendMessage: (text: string, mentions?: Array<number | 'all'>) => Promise<boolean>
+  sendMessage: (text: string, mentions?: Array<number | 'all'>, options?: Pick<MessageCreate, 'world_task_mode' | 'world_task_id' | 'expected_task_revision' | 'expected_appointment_revision'>) => Promise<boolean>
   stopGeneration: () => Promise<void>
 }
 
-let stream: SessionStream | null = null
-let openSequence = 0
-let historyController: AbortController | null = null
-let opening: Promise<void> | null = null
-let olderController: AbortController | null = null
-let windowSequence = 0
-const cache = new HistoryCache()
-const unseenRevisions = new Map<number, number>()
 const bottomPosition: ReadingPosition = { anchor: null, offset: 0, bottom: true }
 
 /** 读取消息正文，仅用于旧格式事件兼容。
@@ -58,7 +50,18 @@ function invalidateSession() {
   window.location.hash = '#/auth'
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+/** 每个视图拥有自己的订阅、历史缓存和请求生命周期；共用领域 reducer。 */
+export function createChatStore({ preservePendingSend = false } = {}) {
+let stream: SessionStream | null = null
+let openSequence = 0
+let historyController: AbortController | null = null
+let opening: Promise<void> | null = null
+let olderController: AbortController | null = null
+let windowSequence = 0
+const cache = new HistoryCache()
+const unseenRevisions = new Map<number, number>()
+let pendingSend: { signature: string; body: MessageCreate } | null = null
+return create<ChatState>((set, get) => ({
   runtimeVersion: 0,
   approvalVersion: 0,
   conversationId: null, messages: [], loading: false, sending: false, generating: false,
@@ -98,7 +101,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           position: anchorExists ? position : bottomPosition })
       },
       onEvent: (event) => {
-        if (stream === owned && get().conversationId === event.conversation_id) applyEvent(set, get, event)
+        if (stream !== owned || get().conversationId !== event.conversation_id) return
+        if (event.type === 'communication_updated') {
+          const cid = event.conversation_id
+          const position = get().position
+          get().closeConversation(); cache.clear()
+          void get().openConversation(cid).then(() => {
+            if (stream === owned && get().conversationId === cid && get().messages.some(message =>
+              position.anchor === `m-${message.id}` || position.anchor?.startsWith(`m-${message.id}:`))) get().setPosition(cid, position)
+          })
+          return
+        }
+        applyEvent(set, get, event, unseenRevisions)
       },
       onError: (error) => {
         if (stream !== owned) return
@@ -118,6 +132,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   /** 认证/World 上下文结束时释放连接、请求和当前消息。 */
   endSession: () => {
+    if (!preservePendingSend) pendingSend = null
     cache.clear()
     unseenRevisions.clear()
     ++windowSequence
@@ -268,21 +283,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
    * @param mentions 群聊显式指定的角色或 all。
    * @returns 当前会话已获服务端接收确认才返回 true，供输入框安全清理本次草稿。
    */
-  sendMessage: async (text, mentions = []) => {
+  sendMessage: async (text, mentions = [], options = {}) => {
     const conversationId = get().conversationId
     if (!conversationId || !text.trim() || get().loading || get().sending || get().subscription !== 'ready') return false
     const sequence = openSequence
     set({ sending: true, error: null })
     try {
-      const result = await api.sendMessage(conversationId, {
-        parts: [{ type: 'text', text }], mentions, client_message_id: crypto.randomUUID(),
-      })
+      const signature = JSON.stringify([conversationId, text, mentions, options.world_task_mode, options.world_task_id])
+      if (!pendingSend || pendingSend.signature !== signature) pendingSend = { signature, body: {
+        parts: [{ type: 'text', text }], mentions, client_message_id: crypto.randomUUID(), ...options,
+      } }
+      const result = await api.sendMessage(conversationId, pendingSend.body)
       if (sequence !== openSequence) return false
-      set({ generating: result.generation_ids.length > 0, activeGenerationIds: result.generation_ids })
+      pendingSend = null
+      // 重发核对只确认原消息，不用已结束请求的旧 generation_ids 覆盖实时状态。
+      if (!result.duplicate) set({ generating: result.generation_ids.length > 0, activeGenerationIds: result.generation_ids })
       upsert(set, get, result.message)
       return true
     } catch (error) {
-      if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '发送失败' })
+      if (sequence === openSequence && (error as { status?: number }).status && (error as { status: number }).status < 500) pendingSend = null
+      if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '发送结果未确认，重试会核对同一请求' })
       return false
     } finally {
       if (sequence === openSequence) set({ sending: false })
@@ -299,6 +319,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     catch (error) { if (sequence === openSequence) set({ error: error instanceof Error ? error.message : '停止生成失败' }) }
   },
 }))
+}
+
+export const useChatStore = createChatStore()
 
 /** 插入或按 id 替换一条消息，保持按消息序号排序。 */
 function upsert(set: any, get: () => ChatState, message: Message) {
@@ -315,7 +338,7 @@ function upsert(set: any, get: () => ChatState, message: Message) {
  * @param get 读取当前已选择窗口。
  * @param event 已经传输层验证归属和顺序的领域事件。
  */
-export function applyEvent(set: any, get: () => ChatState, event: StreamEvent) {
+export function applyEvent(set: any, get: () => ChatState, event: StreamEvent, unseenRevisions = new Map<number, number>()) {
   if (event.type === 'runtime_changed') { set({ runtimeVersion: get().runtimeVersion + 1 }); return }
   if (event.type === 'approval_changed') {
     set({ approvalVersion: get().approvalVersion + 1 })

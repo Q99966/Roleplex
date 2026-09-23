@@ -548,3 +548,39 @@ UI 继续通过既有消息 WS 和调用级轮询读取业务状态；没有需�
 - `npm run test:e2e:worlds -- compaction-memory-worlds.spec.ts`：真实进程切换/重启，自动策略、摘要和引用的 World 隔离。
 
 模型均为 fake，无联网计费；不能据此宣称真实模型语义摘要质量通过。结果见[D 批验收](context-auto-compaction.md)。
+
+### 世界类型与桌宠协调（P1–P4）
+
+公共契约见[类型](../protocol/public/rest/world-types.md)和[世界协调](../protocol/public/rest/world-orchestrator.md)，本轮结果见[验收记录](world-orchestrator-foundation.md)。
+
+```bash
+# backend/
+pytest tests/test_world_types.py tests/test_world_orchestrator.py tests/test_world_tasks.py tests/test_world_task_controls.py tests/test_world_memories.py -q
+python scripts/check_migrations.py
+# frontend/，浏览器套件顺序运行，避免共用产物目录
+npm run test:e2e:commands -- world-orchestrator.spec.ts
+npm run test:e2e:worlds -- world-types.spec.ts world-creation.spec.ts
+npm run test:e2e -- history-window.spec.ts connection-session.spec.ts
+npm run build
+```
+
+world-types fixture 只由 tests/world_types_e2e_server.py / world_types_e2e_app.py 装配；普通生产注册表没有受控类型。继续使用现有隔离 World、fake Provider、端口、产物和清理约定。
+
+### 固定管理者与协作通信修复（R1–R4）
+
+[协议](../protocol/public/rest/workflow-communication.md)维护消息来源、收件人、广播与执行输入；结果见[修复验收](workflow-communication.md)。
+
+```bash
+# backend/
+pytest tests/test_world_manager_identity.py tests/test_workflow_communication.py tests/test_world_orchestrator.py tests/test_world_tasks.py tests/test_world_task_controls.py -q
+python scripts/check_migrations.py
+# frontend/；套件顺序执行，沿用各自的隔离目录/端口
+npm run test:e2e:commands -- workflow-communication.spec.ts
+npm run test:e2e:commands -- world-orchestrator.spec.ts
+npm run test:e2e:commands -- workflow-canvas.spec.ts workflow-feedback.spec.ts
+npm run test:e2e:worlds -- world-types.spec.ts world-creation.spec.ts
+npm run test:e2e -- history-window.spec.ts connection-session.spec.ts
+npm run build
+```
+
+迁移中的来源回填使用原任务关系，不需要复制真实对话到测试产物。普通 Owner 角色清单仍可通过默认 roles 接口获取；测试拦截工作台目录请求时需兼容 include_managed 查询参数。

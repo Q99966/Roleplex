@@ -54,12 +54,24 @@ async def consume(execution_id: str, index: int, *, reserve: int = 0) -> bool:
                 return True
             if execution.decision_count != index - 1:
                 raise ValueError('WORKFLOW_BUDGET_SEQUENCE_INVALID')
+            local_budget = await session.get(WorkflowBudget, execution.chain_id)
+            if local_budget and local_budget.root_chain_id:
+                from ..world_orchestrator.tasks import child_allowed
+                if not await child_allowed(session, execution.chain_id):
+                    raise asyncio.CancelledError()
+                root = await session.execute(update(WorkflowBudget).where(
+                    WorkflowBudget.chain_id == local_budget.root_chain_id,
+                    or_(WorkflowBudget.decision_limit.is_(None), WorkflowBudget.used_decisions < WorkflowBudget.decision_limit - reserve),
+                ).values(used_decisions=WorkflowBudget.used_decisions + 1))
+                if root.rowcount != 1:
+                    return False
             result = await session.execute(update(WorkflowBudget).where(
                 WorkflowBudget.chain_id == execution.chain_id,
                 WorkflowBudget.conversation_id == execution.conversation_id,
                 or_(WorkflowBudget.decision_limit.is_(None), WorkflowBudget.used_decisions < WorkflowBudget.decision_limit - reserve),
             ).values(used_decisions=WorkflowBudget.used_decisions + 1))
             if result.rowcount != 1:
+                await session.rollback()
                 return False
             updated = await session.execute(update(AgentExecution).where(AgentExecution.id == execution.id,
                 AgentExecution.decision_count == index - 1).values(decision_count=index))

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getAuthEpoch, type Role } from '../../api/client'
 import { contextActions, contextError, type MemoryAccess, type MemoryRead, type MemorySource, type SearchResult } from '../../api/contextActions'
 import { useAppStore } from '../../store/app'
-import { useChatStore } from '../../store/chat'
+import { useConversationChat } from '../../store/conversationChat'
 import { SummaryBody } from './SummaryBody'
 
 const field = 'mt-2 block w-full rounded-xl border border-slate-700 bg-panel p-2.5 text-xs outline-none focus:border-indigo-400'
@@ -23,8 +23,8 @@ export function MemoryPanel({ conversationId, role, scope, onEditRole }: { conve
   const resultTitle = useRef<HTMLHeadingElement>(null), queryInput = useRef<HTMLInputElement>(null)
   const [records, setRecords] = useState<MemoryAccess[] | null>(null), [recordsOpen, setRecordsOpen] = useState(false), [recordsError, setRecordsError] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const active = useChatStore(state => state.conversationId === conversationId && state.activeGenerationIds.length > 0)
-  const boundary = useChatStore(state => state.conversationId === conversationId ? state.messages.slice(-4).map(row => `${row.id}:${row.status}`).join(',') : '')
+  const active = useConversationChat(state => state.conversationId === conversationId && state.activeGenerationIds.length > 0)
+  const boundary = useConversationChat(state => state.conversationId === conversationId ? state.messages.slice(-4).map(row => `${row.id}:${row.status}`).join(',') : '')
   useEffect(() => { alive.current = true; return () => { alive.current = false; searchAbort.current?.abort(); readAbort.current?.abort() } }, [])
   useEffect(() => { drafts.set(scope, query) }, [scope, query])
   useEffect(() => {
@@ -148,7 +148,7 @@ export function MemoryPanel({ conversationId, role, scope, onEditRole }: { conve
         {records?.length === 0 && <p className="text-slate-500">角色还没有历史检索记录。</p>}
         {records?.map(record => <article key={record.id} className="rounded-xl border border-slate-800 bg-panel p-3">
           <p>{record.action === 'read' ? '回读原文' : '搜索命中'} · 执行 {record.execution_id.slice(0, 8)}</p>
-          {record.available && record.source ? <><p className="mt-1 break-words text-slate-500">{record.source.conversation_title} · {sender(record.source)} · v{record.source.source_revision}</p><button type="button" className={`${button} mt-2`} onClick={() => void read(record.source!)}>核对这条来源</button></> : <p className="mt-2 text-slate-500">来源目前不可读取，保留已发生的工具读取记录。</p>}
+          {record.available && record.world_source ? <p className="mt-1 text-slate-500">{record.world_source.title} · v{record.world_source.source_revision} · 在{record.world_source.kind === 'world_note' ? '世界记忆' : '世界任务详情'}中核对。</p> : record.available && record.source ? <><p className="mt-1 break-words text-slate-500">{record.source.conversation_title} · {sender(record.source)} · v{record.source.source_revision}</p><button type="button" className={`${button} mt-2`} onClick={() => void read(record.source!)}>核对这条来源</button></> : <p className="mt-2 text-slate-500">来源目前不可读取，保留已发生的工具读取记录。</p>}
         </article>)}
       </section>}
     </details>

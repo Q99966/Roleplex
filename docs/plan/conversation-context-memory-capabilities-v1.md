@@ -239,7 +239,7 @@ MCP 不是宿主沙箱。资源和副作用不因工作目录、工具名称或�
 
 ## 9. 实施顺序与可独立推进的部分
 
-A–D 已完成并有独立验收，后续方向为 E Skills 和 F MCP 产品模块。建议单线执行顺序为 **A → B → C → D → E → F**。E/F 的实质前置是 A 的配置保留与统一能力接口，可以独立提前推进；B–D 不等待技能库或 MCP 完工，也不等待世界 Orchestrator。
+A–D 已完成并有独立验收，E Skills 和 F MCP 产品模块保留为独立方向。用户本轮优先采用[世界类型、桌宠与世界 Orchestrator 前期计划](world-orchestrator-foundation-v1.md)，为另一 worktree 提供公共接入条件；它复用 A–D，不等待 E/F。原先 **A → B → C → D → E → F** 是本计划内部推荐次序，不能作为新增世界类型任务的阻塞条件。E/F 的实质前置是 A 的配置保留与统一能力接口；B–D 的既有实现也不依赖世界协调器。
 
 ```mermaid
 flowchart LR
@@ -287,6 +287,6 @@ README 只在功能落地后更新可用事实；界面行为写入现行设计�
 | 普通任务的工具分配主要按工作区工具筛选 | 按工具类别与实际资源解析；知识工具不依赖文件根，MCP 不继承原生文件安全承诺 |
 | C4/Memory/导出/世界编排按旧阶段互相等待 | 必要验证随当前批次，其他能力按真实依赖独立安排 |
 
-世界 Orchestrator/桌宠 API、跨世界 Memory、自动长期记忆抽取、复杂向量检索、技能市场/任意包执行、远程 MCP、Repository/Git/worktree 和新的费用/时间预算系统保留为可独立评估的后续方向，不作为 A–F 的隐含前置或自动扩展任务。此范围划分不构成以后实现它们的永久限制。
+世界 Orchestrator/桌宠和世界职责记忆已按[公共前期工作](world-orchestrator-foundation-v1.md)接入，验证独立于 A–F；类型业务继续由另一 worktree 完成。跨世界 Memory、自动长期记忆抽取、复杂向量检索、技能市场/任意包执行、远程 MCP、Repository/Git/worktree 和新的费用/时间预算系统仍为待选方向，不作为当前任务的隐含前置。
 
-初次制定计划时只做文档检查；A 的实现、迁移和实际验证见[提示词配置验收](../testing/prompt-settings.md)，B 见[持久上下文验收](../testing/conversation-context.md)。C 见[主动压缩与检索验收](../testing/context-compaction-memory.md)。D–F 尚未实施或验收。
+初次制定计划时只做文档检查；A 的实现、迁移和实际验证见[提示词配置验收](../testing/prompt-settings.md)，B 见[持久上下文验收](../testing/conversation-context.md)。C 见[主动压缩与检索验收](../testing/context-compaction-memory.md)。D 见[自动压缩与运行边界验收](../testing/context-auto-compaction.md)；E/F 尚未实施或验收。

@@ -362,3 +362,7 @@ button { cursor: pointer; }
 .wheel-sector:not(:disabled):hover .wheel-tint, .wheel-sector:focus-visible .wheel-tint { opacity: .12; }
 .wheel-sector:disabled > span:last-child { opacity: .7; }
 .wheel-sector:focus-visible path { stroke: currentColor; stroke-opacity: .8; stroke-width: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .world-pet *, .world-pet *::before, .world-pet *::after { animation: none !important; transition: none !important; }
+}

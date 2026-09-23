@@ -45,7 +45,15 @@ def stable_message_text(message: Message) -> str:
     from ..services.execution_evidence import message_stop_reason
     if message.status not in {'done', 'stopped'}:
         return ''
-    text = parts_text(message.parts_json or [])
+    communication = (message.meta_json or {}).get('communication') or {}
+    if communication.get('kind') == 'legacy_execution_input':
+        return ''
+    from ..communication.service import public_parts
+    text = parts_text(public_parts(message) or [])
+    if communication and communication.get('kind') != 'chat':
+        sender = communication.get('actor', {})
+        targets = communication.get('recipients', [])
+        text = f'【{sender.get("name", "工作流记录")} → {"、".join(t.get("name", "指定对象") for t in targets) or "本会话"}】\n' + text
     if not text:
         return ''
     if message.status == 'stopped':
@@ -67,7 +75,9 @@ def project_text(text: str, sender_type: str, sender_id: int | None, target_role
 def project_message(message: Message, *, target_role_id: int) -> BaseMessage | None:
     """按目标角色投影一条终态来源；供工作流精确上游复用。"""
     text = stable_message_text(message)
-    return project_text(text, message.sender_type, message.sender_id, target_role_id) if text else None
+    from ..communication.service import sender_identity
+    sender_type, sender_id = sender_identity(message)
+    return project_text(text, sender_type, sender_id, target_role_id) if text else None
 
 
 def public_execution_facts(message: Message) -> dict | None:

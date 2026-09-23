@@ -48,11 +48,11 @@ Authorization: Bearer <Owner Token>
 
 ## 创建世界
 
-`POST /api/worlds` 仅当前 World Owner 可调用，body 为 `{"name":"another-world"}`，不接受额外字段。
-成功返回 `201` 和 `{"name":"another-world","current":false,"created_at":"..."}`。
+`POST /api/worlds` 仅当前 World Owner 可调用，body 为 `{"name":"another-world","world_type":"general","type_version":1}`。world_type 默认 general，type_version 可省略以选择该类型最新已安装版本；其余字段拒绝。
+成功返回 `201`，含 name/current/created_at 及 world_type/type_version/available/unavailable_reason；name-only 旧请求继续创建 general。类型配置与初始化见[世界类型协议](world-types.md)。
 名称为 1–64 字符，去除首尾空白后由 WorldManager 校验；拒绝空白、`.`、`..`、控制字符和 Windows 非法路径字符。
 
-创建独立空数据库、附件目录和双密钥，不复制账号、模型配置或聊天记录；数据库表仍由首次启动的 Alembic 迁移创建。
+创建独立空数据库、附件目录和双密钥，不复制账号、模型配置或聊天记录；数据库表仍由首次启动的 Alembic 迁移创建。新存档 manifest format_version=2，保存明确类型身份，旧软件拒绝打开；原格式 1 缺类型字段时解释为 general@1，不修改密钥和历史。已有非空数据库缺 manifest 时拒绝自动补为 general，需恢复原元数据。
 创建不会切换当前 World，也不会停止当前任务或后台服务。前端成功后更新世界列表，用户另行选择切换，沿用既有回收确认；新世界首次注册成为 Owner。
 
 同名目录（包括不完整目录）返回 `409 WORLD_ALREADY_EXISTS`，不覆盖、不认领已有内容；并发同名请求最多一个成功。
@@ -113,3 +113,9 @@ W1d 增量：写入切换目标前关闭当前 World 新进程入口，并按
 - 世界版本不高于软件时由 Alembic 自动升级；数据库记录未知的新 revision 时，启动失败必须翻译为
   `WORLD_REQUIRES_NEWER_ROLEPLEX` 的可读提示，不得尝试 stamp、降级或修改数据。
 - 世界切换不是数据库事务，也不承诺保留进行中的生成；包装器退出前沿用正常关闭流程。
+
+## 类型发现与启动兼容
+
+列表兼容增加 world_type/type_version、available 和 unavailable_reason。已安装实现缺失或存档类型版本不支持时，仍可显示该世界但禁止切换；错误为 WORLD_TYPE_UNAVAILABLE。无效元数据不猜测类型；新于当前软件的整体格式仍按原保护拒绝。启动和包装器切换都在迁移之前校验类型，未知类型不会被降格或改写。
+
+CLI create 支持 --world-type 和 --type-version；包装器同名参数用于首次创建，已有世界必须匹配。部署注册入口与具体配置 API 见[世界类型协议](world-types.md)。

@@ -10,6 +10,7 @@ import { useAppStore } from '../store/app'
 import { useChatStore } from '../store/chat'
 import { type Conversation, type Message, type Role } from '../api/client'
 import { MessageParts } from './MessageParts'
+import { messageAuthor, CommunicationAddress } from './MessageCommunication'
 import { ShellApprovals } from './ShellApprovals'
 import { ProcessPanel } from './ProcessPanel'
 import { ChatComposer } from './ChatComposer'
@@ -202,7 +203,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
             const isUser = message.sender_type === 'user'
             // 用含墓碑的查找表：角色被删除后仍要显示原名称，否则历史会变成匿名 Agent。
             const role = message.sender_id === null ? undefined : roleDirectory[message.sender_id]
-            const senderName = isUser ? (user?.nickname ?? '我') : (role?.name ?? 'Agent')
+            const senderName = messageAuthor(message, user, roleDirectory)
             const senderDeleted = !isUser && Boolean(role?.deleted_at)
             const budgetStopped = message.stop_reason === 'graph_budget' || message.stop_reason === 'decision_budget'
             return (
@@ -225,6 +226,7 @@ export function ActiveWorkspace({ isSidebarCollapsed, onOpenRoleModal, onManageM
                   <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed border break-words ${
                     isUser ? 'bg-slate-800 text-slate-100 border-slate-700/80 shadow-sm whitespace-pre-wrap' : 'bg-slate-900/60 text-slate-300 border-slate-800'
                   }`}>
+                    <CommunicationAddress message={message} />
                     <MessageParts key={`${worldName}:${user?.id}:${message.id}`} message={message} isOwner={Boolean(user?.is_owner)} />
                   </div>
                 </div>

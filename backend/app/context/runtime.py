@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..db import SessionLocal
 from ..models import AgentExecution, ConversationContext, Generation, Message, Role
 from . import automatic, compaction, policy
-from .budget import estimate_messages_tokens, estimate_request, message_content_text
+from .budget import estimate_messages_tokens, estimate_request, message_content_text, token_estimate
 from .compaction_schema import Start, private_text
 from .domain import ContextBudgetExceeded, ContextBuildError
 from .fingerprint import stable_hash
@@ -103,7 +103,8 @@ class RuntimeContext:
         runtime = {'parent_execution_id': request.execution_id, 'policy_stamp': view['stamp'], 'scope': 'execution',
             'boundary': self.context.material_snapshot['visible_through_message_id'],
             'source_signature': signature, 'input_tokens': amount, 'unit_count': len(units), 'kind': kind,
-            'sources': self.context.material_snapshot['sources'], 'execution_facts': facts}
+            'sources': self.context.material_snapshot['sources'], 'execution_facts': facts,
+            'world_type': self.context.material_snapshot.get('world_type')}
         try:
             value = await compaction.start(request.conversation_id, request.triggered_by_user_id, Start(
                 request_key='private:' + stable_hash([request.execution_id, signature, view['stamp']]),
@@ -124,14 +125,24 @@ class RuntimeContext:
         """以实际 Schema、全部输入、输出预留与安全余量复核；不靠裁剪后数字判断历史压力。"""
         async with SessionLocal() as session:
             await automatic.validate_parent(session, self.request.execution_id, self.request.conversation_id, self.request.triggered_by_user_id)
+            from ..world_types.service import revalidate_material
+            await revalidate_material(session, self.request, self.context.material_snapshot)
             view = await policy.resolve(session, self.request.conversation_id)
             role = await session.get(Role, self.request.role_id)
             window = min(self.context.budget.effective_context_window, role.context_window_tokens)
+            if self.context.material_snapshot.get('world_task'):
+                from ..world_orchestrator.tasks import context_message
+                task_text, task_id, revision = await context_message(session, self.request.execution_id)
+                messages = list(messages)
+                messages[self.anchor - 1] = HumanMessage(content=task_text)
+                self.receipt = {**self.receipt, 'world_task_id': task_id, 'world_task_revision': revision}
         effective = view['effective']
         output = self.context.budget.output_reserved_tokens
         adapted = self.adapted(messages)
         estimate = estimate_request(adapted, definitions)
         fixed = estimate_request([messages[0], messages[self.anchor]], definitions)
+        fixed['estimated_tokens'] += self.context.request_estimate['breakdown'].get('world_type', 0)
+        fixed['safety_margin_tokens'] = token_estimate(fixed['estimated_tokens']).safety_margin_tokens
         if fixed['estimated_tokens'] + fixed['safety_margin_tokens'] + output > window:
             raise ContextBudgetExceeded(estimated_tokens=fixed['estimated_tokens'], safety_margin_tokens=fixed['safety_margin_tokens'],
                 input_budget_tokens=window - output, estimator_kind=fixed['estimator_kind'])

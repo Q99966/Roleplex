@@ -623,3 +623,55 @@ Context schema 8 的普通材料兼容增加 summary_id/summary_omitted_reason�
 Context schema 9 的首次采用凭据保持不可覆盖；逐次调用的 input_estimate_json 可兼容增加 runtime_context，包含工具/上游维护 ID、来源 hash/数量、策略 stamp、窗口/输出预留和目标是否达到，不复制摘要。私有输出的 sources 只引用该维护输入单元，不冒充全局消息 ID。
 
 升级默认关闭自动策略，旧消息、手动任务及摘要版本不变；降级仅删除新增配置/描述列，不重放子任务。须先正常停止进程再升级/降级，运行中的模型调用不能靠数据库迁移继续。
+
+### 世界类型配置与初始化（0028）
+
+世界类型身份由 world.json 的 world_type/type_version 唯一确定。`world_type_state` 为当前物理数据库的单例：id Integer 主键；configuration_json JSON、revision Integer、initialized_version Integer、status String32、resources_json JSON、required_fields_json JSON、updated_at DateTime 均非空；initialized_type String64、error_code String64 可空。initialized_type/version 只是初始化凭据，不提供独立切换类型入口。
+
+初始化与其创建的业务资源在同一短事务中提交；异常先回滚资源，再按观察版本记录安全失败状态。配置先 CAS 保存，失败后仍可核对；已 ready 的同版本重试和重启不会重复播种。未知类型在迁移前拒绝，旧 general 世界在启动/Owner 就绪时补单例状态，原消息、角色与密钥不改写。
+
+### 世界任命与协调会话（0029）
+
+`conversations.purpose` 非空 String(24)，数据库默认 chat；world_coord 由世界任命服务创建。普通 API 不提供自行改变用途入口。`world_orchestrator` 单例保存可空 role_id、唯一可空 conversation_id、revision、updated_at；角色/会话引用删除时 SET NULL。用途隔离同时落实在 REST、WS、ContextBuilder 和 Memory。
+
+`world_coordination_grants` 以 execution_id 为 PK/FK，记录 conversation_id、owner_id、role_id 历史快照、appointment_revision、created_at；0030 再增加 task_id。角色 ID 快照不因角色删除丢失。换绑递增任命版本，旧 grant 不复活，消息和 ModelCallUsage 继续引用原执行。
+
+### 世界目标、子关系与根预算（0030）
+
+| 表 | 字段和约束 |
+|---|---|
+| workflow_budgets | root_chain_id 可空自引用 FK（RESTRICT）；普通链为 null，世界子群保持独立 chain，原子扣根及本地额度 |
+| world_tasks | id PK；owner_id、conversation_id、唯一 trigger_message_id、root_execution_id、唯一 chain_id；role_id/appointment_revision 快照；title、scope_json、status/revision、summary/error_code、feedback_hash、时间 |
+| world_task_children | id PK、task_id、parent_execution_id、request_key/request_digest、kind；可空 conversation_id、唯一可空 coordination_id、唯一可空 chain_id；status、reference_json、error_code、created_at；(task_id,request_key) 唯一 |
+| world_coordination_grants | 可空 task_id FK，删除世界任务时 SET NULL |
+
+世界任务不替代 WorkflowRun/AgentExecution。重规划 child 引用已有群链，自身 chain_id 为空，避免重复统计；补充用户要求复用根 chain，用户消息 meta_json 保存该次 request_generation_ids 以精确幂等。取消/恢复保留实际子执行和原副作用事实。详细状态机见[世界协调](../public/rest/world-orchestrator.md)。
+
+### 世界约定、版本及采用来源（0031）
+
+`world_memories` 保存 id、owner_id、category/text、status/revision、origin、可空 source_message_id/source_revision/source_role_id、request_key/request_digest 及时间；(owner_id,request_key) 唯一。来源 ID 是历史凭据，不以 SET NULL 抹去被删除的原来源；读取时实时核对存在、版本、归属及有效性。
+
+`world_memory_versions` 以 (memory_id,revision) 为复合主键，memory_id FK 级联删除，保存不可变 snapshot_json 和 created_at。当前正文编辑/停用与版本快照同事务提交。Owner 编辑正文形成手动来源；只停用/恢复保留原作者。
+
+已有 `memory_references.source_kind` 兼容增加 world_note/world_child，不改表。前者记录条目版本，后者记录已读取子群结果的权限来源；均在下一次模型调用/私有压缩前复核，正文不写入引用表。Owner 读取记录使用可选 world_source 元数据，不把岗位条目伪装成普通消息引用。
+
+0028–0031 使用通用类型并提供降级。0029 降级删除岗位会话的成员关系，避免去掉用途字段后成为普通角色可读来源。新增迁移已做 SQLite 重放/降级、外键与 metadata 检查；PostgreSQL 仅离线 SQL 验证。
+
+### 固定管理者身份（0032）
+
+`roles.managed_kind` 为可空 String(32)，普通角色为 null，专用世界管理角色为 world_manager；(created_by,managed_kind) 唯一，保证同 Owner 不重复建立系统岗位。WorldOrchestrator 仍是该物理 World 的稳定岗位记录，role_id 指向专用执行角色，revision 继续作为执行授权版本；模型与人设配置仍使用既有 Role 表和 Role.revision。
+
+schema 创建后，Owner 就绪时幂等建立管理角色/岗位会话。已有旧普通角色绑定复制可用配置并保留原普通角色；原岗位会话与历史沿用。普通 Role 删除/修改入口保护该身份，专门配置入口进行 CAS、授权撤销和精确收口。固定身份已存在时不能无损退回旧可任命语义，0032 降级返回 WORLD_MANAGER_DOWNGRADE_REQUIRES_EXPORT。
+
+### 派发批次与独立执行输入（0033）
+
+| 表 | 字段与约束 |
+|---|---|
+| workflow_dispatch_batches | id 为持久批次摘要 PK，run_id FK、唯一 message_id FK、members_json、created_at；删除所属运行/消息时级联 |
+| execution_inputs | execution_id PK/FK；conversation_id、owner_id；可空 message_id 与 batch_id（删除来源时 SET NULL）；text、source_json、created_at |
+
+批次以宿主任务、图/循环版本、依赖/条件边和阶段分组，重试独立；members_json 保存原 activation/attempt/角色引用，进度仍从原执行表读取。ExecutionInput 保存冻结的节点或规划输入，不另建模型循环、Trace 或用量；公开消息锚点不再是伪造用户发言。新的 QueueJob 继续携带消息锚点，ContextBuilder 使用实际 execution 验证输入归属后读取。
+
+消息 `meta_json.communication` 兼容新增宿主提供的主体、接收人、报告对象、用途、授权用户和任务引用；不新建客户端可随意写入的作者字段。旧原字段/正文保留，启动时依据原任务关系分批补充已确认来源并更新 revision；正文与历史名称不能凭猜测回填。
+
+共享上下文投影版本提升为 3。旧节点输入退出共享材料和普通 Memory，依赖旧语义的摘要/引用依照来源版本/指纹失效。所有已完成模型调用、原消息和文件证据保留；存在 execution_inputs 时 0033 降级返回 EXECUTION_INPUT_DOWNGRADE_REQUIRES_EXPORT，不能丢弃输入后回退成旧用户消息语义。

@@ -117,6 +117,7 @@ class RoleResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     id: int
+    managed_kind: str | None = None
     name: str
     avatar: str | None
     description: str | None
@@ -242,6 +243,10 @@ class MessageCreate(BaseModel):
     mentions: list[int | Literal["all"]] = Field(default_factory=list)
     reply_to_id: int | None = None
     client_message_id: str | None = Field(default=None, max_length=128)
+    world_task_mode: Literal['chat', 'execute'] = 'chat'
+    world_task_id: str | None = Field(default=None, min_length=1, max_length=64)
+    expected_task_revision: int | None = Field(default=None, ge=0)
+    expected_appointment_revision: int | None = Field(default=None, ge=0, le=2**31 - 1)
 
     @model_validator(mode='after')
     def reject_server_facts(self):

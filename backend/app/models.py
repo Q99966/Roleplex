@@ -53,6 +53,21 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class WorldTypeState(Base):
+    """当前存档类型的配置与初始化凭据；类型身份仍以 world.json 为准。"""
+    __tablename__ = 'world_type_state'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    configuration_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=json_dict)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    initialized_type: Mapped[str | None] = mapped_column(String(64))
+    initialized_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='pending')
+    resources_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=json_dict)
+    required_fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=json_list)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ModelConfig(Base):
     """Owner 范围内的模型厂商配置，Key 材料以加密形式保存。"""
 
@@ -80,6 +95,7 @@ class Role(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    managed_kind: Mapped[str | None] = mapped_column(String(32))
     avatar: Mapped[str | None] = mapped_column(String(512))
     description: Mapped[str | None] = mapped_column(Text)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=json_list, nullable=False)
@@ -103,6 +119,7 @@ class Role(Base):
     __table_args__ = (
         # 只对未删除的角色约束重名：墓碑保留原名用于历史展示，同时允许立刻新建同名角色。
         # 部分索引在 SQLite 与 PostgreSQL 上都支持，不依赖单一数据库的专属特性。
+        UniqueConstraint('created_by', 'managed_kind', name='uq_role_owner_managed'),
         Index(
             "uq_role_owner_name_active", "created_by", "name", unique=True,
             sqlite_where=text("deleted_at IS NULL"), postgresql_where=text("deleted_at IS NULL"),
@@ -123,6 +140,7 @@ class Conversation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(16), nullable=False, default="single")
+    purpose: Mapped[str] = mapped_column(String(24), nullable=False, default='chat', server_default='chat')
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
     prompt_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
@@ -234,6 +252,7 @@ class WorkflowBudget(Base):
     """同一用户消息链的冻结预算，角色发言不会重置额度。"""
     __tablename__ = 'workflow_budgets'
     chain_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    root_chain_id: Mapped[str | None] = mapped_column(ForeignKey('workflow_budgets.chain_id', name='fk_workflow_budget_root', ondelete='RESTRICT'))
     conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
     # 独立上下文维护请求没有聊天消息；它仍使用唯一 chain 和世界预算快照。
     trigger_message_id: Mapped[int | None] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=True, unique=True)
@@ -664,3 +683,5 @@ from .workflows.models import WorkflowDefinition, WorkflowRun, WorkflowAttempt, 
 
 from .workflows.models import CoordinationSession, WorkflowGraphRevision
 from .workflows.models import WorkflowFeedback, WorkflowFeedbackEvent
+from .world_orchestrator.models import WorldOrchestrator, WorldCoordinationGrant, WorldTask, WorldTaskChild, WorldMemory, WorldMemoryVersion
+from .communication.models import ExecutionInput, WorkflowDispatchBatch

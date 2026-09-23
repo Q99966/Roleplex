@@ -42,8 +42,16 @@ async def interruption_context(session,*,conversation,role,current,triggered_by_
         source_message_id：工作流服务已关联的精确来源；普通聊天保持最近中断语义。
         workflow_source：允许对已授权节点尝试（包括群聊、已完成结果）核对；不得来自模型参数。
     """
-    if triggered_by_user_id is None or triggered_by_user_id!=role.created_by or current.sender_id!=triggered_by_user_id:
+    if triggered_by_user_id is None or triggered_by_user_id!=role.created_by:
         return None
+    if current.sender_id != triggered_by_user_id:
+        # 系统派发不是 Owner 发言。只允许 workflow 入口关联的真实输入证明授权用户。
+        from ..models import ExecutionInput
+        if not workflow_source or not await session.scalar(select(ExecutionInput.execution_id).join(AgentExecution,
+            AgentExecution.execution_id == ExecutionInput.execution_id).where(ExecutionInput.message_id == current.id,
+            ExecutionInput.conversation_id == conversation.id, ExecutionInput.owner_id == triggered_by_user_id,
+            AgentExecution.role_id == role.id).limit(1)):
+            return None
     owner=await session.get(User,triggered_by_user_id)
     if owner is None or not owner.is_owner:
         return None

@@ -166,3 +166,7 @@ POST /api/conversations/{conversation_id}/restore
 `PUT /api/conversations/{id}/orchestrator`，仅当前 World Owner 且为本人创建的存活群成员可调用。请求 `{role_id,expected_revision}`；role_id 为有效现有群角色，null 表示取消。expected_revision 对应会话 revision；成功同时递增 revision 和 orchestrator_revision，广播 conversation_updated，返回完整会话。旧版本返回 409 CONVERSATION_REVISION_CONFLICT；非群返回 422 GROUP_CHAT_REQUIRED；角色不可用返回 422 WORKFLOW_ROLE_UNAVAILABLE。
 
 旧创建字段保留兼容，但 orchestrator_revision=0 不激活协调权，须通过此入口显式任命。更换/取消、移除协调角色或停用/删除它封闭旧协调运行，旧任务不继承新任命。普通发送/@ 顺序、手动工作流和单聊不依赖任命。协调执行及任务权限见[工作流](workflows.md)。
+
+## 受限岗位会话
+
+世界管理者初始化服务在 Owner 就绪后创建 `purpose=world_coord` 的 single 会话，普通创建请求不能指定该用途。它不出现在普通列表/回收站，成员、改绑工作区、删除等普通管理操作返回 CONVERSATION_MANAGED；消息/WS/上下文只对岗位 Owner 及当前任职角色生效。管理者配置更新复用原会话并保留实际消息作者，具体生命周期见[世界协调协议](world-orchestrator.md)。

@@ -1,12 +1,18 @@
 # 计划与阶段记录
 
-复核日期：2026-09-22。工作流、群任命、并行循环、协调图管理及版本化重规划已接入。[三批改进计划](workflow-feedback-usability-v1.md)的反馈处置、图可读性和操作面板三批已实现。当前[会话上下文与能力总体计划](conversation-context-memory-capabilities-v1.md)的 A 提示词与能力配置、B 持久上下文与占用、C 主动压缩与检索回读已实现，D–F 待实施；世界 Orchestrator 与桌宠 API 留待后续。旧阶段原文保留在[历史资料](../archive/README.md)。
+复核日期：2026-09-23。工作流、群任命、并行循环、协调图管理及版本化重规划已接入。[三批改进计划](workflow-feedback-usability-v1.md)的反馈处置、图可读性和操作面板三批已实现。[会话上下文与能力总体计划](conversation-context-memory-capabilities-v1.md)的 A–D 已完成，E/F Skills 与 MCP 待实施。[世界类型与桌宠基础](world-orchestrator-foundation-v1.md)的 P1–P4 已接入并有[验收记录](../testing/world-orchestrator-foundation.md)。[世界管理者身份、消息来源与任务广播修复](world-coordination-message-provenance-v1.md)的 R1–R4 已接入，实际验证见[修复验收](../testing/workflow-communication.md)。旧阶段原文保留在[历史资料](../archive/README.md)。
 
-## 当前总体计划
+## 最近采用的修复
 
-[会话上下文、提示词、主动检索与 Skills/MCP](conversation-context-memory-capabilities-v1.md)承接用户本轮要求：全部单聊/群聊持久保存会话上下文，提供占用、主动/自动压缩和分别配置的提示词；Agent 主动检索关联会话；补齐平台/世界/角色/会话提示词入口，以及 Skills 和 MCP 的真实管理与调用。
+[世界管理者身份、消息来源与任务广播修复](world-coordination-message-provenance-v1.md)承接实际使用反馈：固定管理者岗位，分开授权人与消息作者，明确收件人/@/回复关系，把同批多角色任务展示为一条广播，并修正执行输入、历史摘要与 Memory 的来源。保留现有“对话/执行/补充”模式。R1 身份与来源、R2 广播与输入/上下文、R3 发言与回报规则、R4 历史联调均已接入，字段与兼容性见[协作通信](../protocol/public/rest/workflow-communication.md)。
 
-推荐顺序为提示词与能力配置 → 持久上下文与占用 → 主动压缩与检索回读 → 自动压缩 → Skills → MCP。Skills/MCP 可在共同配置与授权基础完成后独立推进，不要求等待整个上下文主线。具体交付与依赖只在[总体计划第 9 节](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)维护。A–C 已完成，分别见[提示词](../testing/prompt-settings.md)、[上下文](../testing/conversation-context.md)及[主动压缩/检索验收](../testing/context-compaction-memory.md)；下一步是 D 自动压缩与运行边界。
+[世界类型、桌宠与世界 Orchestrator](world-orchestrator-foundation-v1.md)已交付公共世界类型底座、世界任命、真实协调会话、跨会话任务/反馈/预算及桌宠工作台。狼人杀的业务、群结构、身份与私密读取策略由另一 worktree 独立负责。接口与真实接入时点见[开工交接说明](world-type-worktree-handoff-v1.md)：可以立即开展独立开发，P1 接入类型与页面，P3 联调真实协调执行。Skills、MCP 和 Roleplex 内置 Git/worktree 均非前置。
+
+## 上下文与能力基线
+
+[会话上下文、提示词、主动检索与 Skills/MCP](conversation-context-memory-capabilities-v1.md)维护已有上下文批次与保留的能力模块方向：全部单聊/群聊持久保存会话上下文，提供占用、主动/自动压缩和分别配置的提示词；Agent 主动检索关联会话；补齐平台/世界/角色/会话提示词入口，以及 Skills 和 MCP 的真实管理与调用。
+
+A–D 已完成，分别见[提示词](../testing/prompt-settings.md)、[上下文](../testing/conversation-context.md)、[主动压缩/检索](../testing/context-compaction-memory.md)及[自动压缩与运行边界](../testing/context-auto-compaction.md)验收。Skills/MCP 可在共同配置与授权基础上独立推进，不阻塞本轮世界类型与协调计划。原批次依赖由[总体计划第 9 节](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)维护，不把原先的 A–F 推荐顺序当作新任务排期。
 
 ## 最近完成的改进
 
@@ -19,11 +25,12 @@
 | 主题 | 已完成记录 | 未实施方向 | 入口 |
 |---|---|---|---|
 | 总体架构 | 基础账号、单聊、群聊、World、日志等早期阶段 | 旧 P/M 编号保留为历史分类，不固定新任务顺序 | [总体阶段记录](nested-watching-crown.md) |
-| 上下文与编排 | C0–C2、串行群聊、v2 工作流、图管理、反馈交接、持久上下文/占用及主动压缩/检索 | 自动压缩按总体计划继续，导出/导入独立安排 | [历史阶段](context-cache-orchestration-v1.md)、[总体计划](conversation-context-memory-capabilities-v1.md) |
+| 上下文与编排 | C0–C2、串行群聊、v2 工作流、图管理、反馈交接、持久上下文/占用、主动/自动压缩及检索 | Skills/MCP 与导出/导入独立安排 | [历史阶段](context-cache-orchestration-v1.md)、[总体计划](conversation-context-memory-capabilities-v1.md) |
 | 提示词与能力配置 | 平台/世界/角色/会话提示词、来源预览、角色配置保留和共同工具能力快照 | Skills 与 MCP 完整产品模块 | [总体计划](conversation-context-memory-capabilities-v1.md) |
 | 工作区与仓库 | E0 execution、文件、命令、Shell、会话换绑入口和群聊串行文件工具 | Repository、Git、worktree | [工作区与仓库](agent-repository-workspaces-v1.md) |
 | 可操作工作流图 | 人工/模型共享图编辑、运行修订与历史、阶段总览、拓扑整理、循环展开与聚焦、统一操作面板 | 后续按实际使用反馈确定 | [工作流阶段记录](conversation-workflows-v1.md)、[三批记录](workflow-feedback-usability-v1.md) |
-| 群 Orchestrator 与后台调度 | 群任命、图管理授权、并行循环、反馈分类/处置/复核 | 世界协调者之后安排 | [图管理记录](orchestrator-graph-control-v1.md)、[三批记录](workflow-feedback-usability-v1.md) |
+| 群 Orchestrator 与后台调度 | 群任命、图管理授权、并行循环、反馈分类/处置/复核 | 世界协调基础已接入，类型业务按独立分支继续 | [图管理记录](orchestrator-graph-control-v1.md)、[三批记录](workflow-feedback-usability-v1.md) |
+| 世界类型与桌宠协调 | 类型注册、世界任命/任务/记忆及真实桌宠工作台已实现 | 固定管理者与来源/广播修复已完成；类型业务由另一 worktree 负责 | [基础记录](world-orchestrator-foundation-v1.md)、[当前修复](world-coordination-message-provenance-v1.md)、[worktree 交接](world-type-worktree-handoff-v1.md) |
 | 工作流反馈与易用性 | 反馈与局部处置、图可读性、主工具栏与唯一上下文面板 | 后续按实际使用反馈确定 | [三批记录](workflow-feedback-usability-v1.md) |
 | 工具时间线 | 有序文本/工具与 Owner 私有详情 | 后续扩展按需求确定 | [时间线与详情](tool-timeline-details-v1.md) |
 | 会话加载 | A 连接解耦、B 历史窗口/缓存/阅读位置 | 单条超长消息分块 | [会话加载](conversation-loading-v1.md) |
@@ -37,7 +44,7 @@
 
 ## 后续执行顺序建议
 
-[三批界面与反馈改进](workflow-feedback-usability-v1.md)已完成。当前优先范围为[会话上下文与能力总体计划](conversation-context-memory-capabilities-v1.md)，按该计划组织提示词、持久上下文、压缩、主动检索、Skills 和 MCP；图管理、运行和草稿恢复继续回归。下表其他未实施方向不自动进入开发。
+[三批界面与反馈改进](workflow-feedback-usability-v1.md)、上下文 A–D 和世界基础 P1–P4 已接入。[身份、来源与任务广播修复](world-coordination-message-provenance-v1.md)也已接入，类型分支可取得包含 R1–R4 的公共提交后联调正式身份/消息/输入契约。Skills/MCP 保留独立路线，下表其他未实施方向不自动进入开发。
 
 | 建议顺序 | 工作 | 相比旧排期的调整 |
 |---|---|---|
@@ -47,8 +54,9 @@
 | 第一批已实现 | 反馈与局部处置 | 区分实现缺陷、契约冲突、能力缺口和未知结果，关联处置、局部修改及复核。 |
 | 第二批已实现 | 图可读性 | 阶段总览、拓扑布局、业务分支标签、循环范围及相关路径突出，展示调整不改变执行语义。 |
 | 第三批已实现 | 操作面板整理 | 一条主工具栏、一个画布、一个上下文面板；记录与高级配置按需打开，作用对象明确。 |
-| 当前计划，A–C 已实现 | 提示词、会话上下文、主动检索、Skills/MCP | 按[总体计划](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)的 A–F 交付；不再仅有自动 Checkpoint 或配置占位。 |
-| 后续方向，本轮不展开 | 世界 Orchestrator → 群 Orchestrator | 世界级可复用桌宠接入 API；世界配置、桌宠调用与跨群委派之后再考虑。 |
+| A–D 已实现，E/F 可独立安排 | 提示词、会话上下文、主动检索、Skills/MCP | 上下文/压缩作为公共基线；Skills/MCP 不阻塞世界类型与协调。后续范围见[总体计划](conversation-context-memory-capabilities-v1.md#9-实施顺序与可独立推进的部分)。 |
+| P1–P4 已实现 | 世界类型与世界 Orchestrator → 群 Orchestrator | 已建立协调会话/任务/记忆和类型执行接口；R1–R4 再修正为固定管理身份，狼人杀业务由另一 worktree 负责。 |
+| R1–R4 已实现 | 固定世界管理者、准确署名、收件人及单条任务广播 | 已连同执行输入、摘要/Memory 来源及历史兼容修正；对话/执行/补充模式保留。 |
 | 有独立修改/合并需求时 | Repository/Git/worktree 或其他隔离方案 | 用于独立分支同时修改及结果合并，不作为并行任务或循环执行的通用前置。 |
 | 可独立安排 | 会话导出/导入、Guest 邀请及现有流程维护 | 不等待总体计划全部完成，也不把这些能力捆成一个任务。MCP 产品接入已纳入当前总体计划。 |
 | 按实际瓶颈插入 | 缓存专项优化、运行中原生编辑、自动长期记忆提取与其他能力库 | 必要缓存一致性验证、上下文压缩和主动历史检索已进入主线；长期记忆自动提取不作为检索或导出的前置。运行中原生编辑仍单独处理并发与服务生命周期。 |
@@ -57,6 +65,8 @@
 
 | 要做的能力 | 需要解决的前置问题 | 可以解除的旧绑定 |
 |---|---|---|
+| 世界类型接入 | 公共注册、生命周期、受控上下文/工具/活动接口及迁移基线 | 独立业务可先开发；P1 接入类型/页面，P3 接入协调执行，不等 Skills/MCP。 |
+| 世界协调与桌宠 | 服务端任命、协调会话隔离、子链/根预算和取消、类型适配与真实状态界面 | 复用现有执行和消息事实；本地桌宠绑定不等于权限，跨群不共用 WorkflowRun 唯一 chain。 |
 | 会话导出/导入 | 明确当前支持的数据范围、格式版本、资源重建和敏感数据边界 | 不依赖未实现的编排或长期记忆；未来字段可通过格式兼容演进。 |
 | 群聊文件工具（已实现） | 已覆盖资源绑定、触发者/角色授权、串行租用交接、停止与成员撤销；命令/Shell/服务仍限单聊 | 不依赖 Git 仓库；当前契约见工作区协议。 |
 | 图管理协调执行 | 本群任命资格、Owner 本次协调请求、目标定义/运行及明确能力范围；新入口可早于 workflow run | 任命或 phase 名称不能直接代表图编辑授权；普通角色执行不继承管理工具。 |

@@ -10,6 +10,7 @@ import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 import { RuntimeLimit } from './RuntimeLimit'
 import { WorldBackup } from './WorldBackup'
 import { WorldCreate } from './WorldCreate'
+import { WorldTypeSettings } from './WorldTypeSettings'
 const WorldPromptSettingsPanel = lazy(() => import('./prompts/PromptSettings').then(module => ({ default: module.WorldPromptSettingsPanel })))
 const RolePromptInheritance = lazy(() => import('./prompts/PromptSettings').then(module => ({ default: module.RolePromptInheritance })))
 export type SettingsTab = 'models' | 'worlds' | 'workspaces' | 'prompts' | 'account'
@@ -368,6 +369,7 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
 
               {/* 切换世界操作区 */}
               <WorldCreate />
+              <WorldTypeSettings onOpenConversation={id => { onClose(); window.location.hash = `#/workspace/conversation/${id}` }} />
               <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
                   <Server size={14} className="text-indigo-400" />
@@ -396,8 +398,8 @@ export function SettingsModal({ onClose, initialTab = 'models' }: SettingsModalP
                       </option>
                     )}
                     {worlds.map((world) => (
-                      <option key={world.name} value={world.name} className="bg-slate-900 py-1.5 text-slate-200">
-                        {world.name} {world.name === worldName ? '· 当前运行' : ''}
+                      <option key={world.name} value={world.name} disabled={world.available === false} className="bg-slate-900 py-1.5 text-slate-200">
+                        {world.name} {world.name === worldName ? '· 当前运行' : ''}{world.available === false ? ' · 类型不可用' : ''}
                       </option>
                     ))}
                   </select>
@@ -954,7 +956,7 @@ export function RoleModal({ role, onClose, onOpenSettings }: RoleModalProps) {
           {/* 按钮控制 */}
           <div className="flex items-center justify-between border-t border-slate-800 pt-4 mt-2">
             <div>
-              {role && (
+              {role && !role.managed_kind && (
                 <button 
                   type="button"
                   onClick={() => void handleDelete()}

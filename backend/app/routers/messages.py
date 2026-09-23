@@ -40,6 +40,8 @@ async def require_member(session: AsyncSession, conversation_id: int, user_id: i
             ConversationMember.member_type == "user",
             ConversationMember.member_id == user_id,
             Conversation.deleted_at.is_(None),
+            (Conversation.purpose == 'chat') | ((Conversation.created_by == user_id) &
+                select(User.id).where(User.id == user_id, User.is_owner.is_(True)).exists()),
         )
     )
     if not member:
@@ -91,6 +93,18 @@ async def send_message(
 ):
     """持久化用户消息并排队一次生成；重复的客户端消息标识按幂等处理。"""
     await require_member(session, conversation_id, user.id)
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation and conversation.purpose == 'world_coord':
+        from ..world_orchestrator import service
+        return await service.send(session, conversation_id, payload, user)
+    if payload.world_task_mode != 'chat' or payload.world_task_id is not None:
+        raise HTTPException(422, 'WORLD_TASK_EXECUTION_REQUIRED')
+    return await _send_message(conversation_id, payload, user, session)
+
+
+async def _send_message(conversation_id, payload, user, session, *, world_appointment_revision=None, world_task=None):
+    """共用消息创建事务；世界任命凭据仅由已鉴权的服务端入口传入。"""
+    await require_member(session, conversation_id, user.id)
     text = next((part.text or "" for part in payload.parts if part.type == "text"), "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="TEXT_PART_REQUIRED")
@@ -110,6 +124,8 @@ async def send_message(
                 )
                 .order_by(Generation.id.asc())
             )).all()) if existing.chain_id else []
+            if 'request_generation_ids' in (existing.meta_json or {}):
+                generation_ids = existing.meta_json['request_generation_ids']
             return {
                 "message": chat.message_payload(existing),
                 "duplicate": True,
@@ -121,9 +137,13 @@ async def send_message(
     if conversation is None:
         raise HTTPException(status_code=404, detail="CONVERSATION_NOT_FOUND")
     target_roles = await _resolve_target_roles(session, conversation, payload.mentions)
+    if payload.reply_to_id is not None:
+        parent = await session.get(Message, payload.reply_to_id)
+        if not parent or parent.conversation_id != conversation_id:
+            raise HTTPException(404, 'MESSAGE_NOT_FOUND')
 
     now = datetime.now(timezone.utc)
-    run_id = chat.new_run_id()
+    run_id = world_task.chain_id if world_task else chat.new_run_id()
     message = Message(
         conversation_id=conversation_id,
         sender_type="user",
@@ -138,10 +158,14 @@ async def send_message(
         created_at=now,
     )
     session.add(message)
+    from ..communication.service import actor, envelope, stamp
+    stamp(message, envelope('chat', await actor(session, 'user', user.id),
+        [await actor(session, 'role', role.id) for role in target_roles], owner_id=user.id))
     await session.flush()
 
     from ..services.agent_budget import freeze
-    await freeze(session, message)
+    if world_task is None:
+        await freeze(session, message)
 
     jobs: list[QueueJob] = []
     generations: list[Generation] = []
@@ -156,7 +180,7 @@ async def send_message(
         session.add(generation)
         await session.flush()
         execution_id = chat.new_run_id()
-        execution_kind = "single" if conversation.type == "single" else "group_role"
+        execution_kind = 'world_coord' if world_appointment_revision is not None else "single" if conversation.type == "single" else "group_role"
         execution = AgentExecution(
             execution_id=execution_id,
             conversation_id=conversation_id,
@@ -164,11 +188,21 @@ async def send_message(
             chain_id=run_id,
             role_id=role.id,
             execution_kind=execution_kind,
+            parent_execution_id=world_task.root_execution_id if world_task else None,
             attempt=1,
             status="queued",
             created_at=now,
         )
         session.add(execution)
+        if world_appointment_revision is not None:
+            from ..models import WorldCoordinationGrant
+            await session.flush()
+            task_id = world_task.id if world_task else None
+            if payload.world_task_mode == 'execute' and world_task is None:
+                from ..world_orchestrator.tasks import create_in_session
+                task_id = (await create_in_session(session, execution, message, user.id, world_appointment_revision)).id
+            session.add(WorldCoordinationGrant(execution_id=execution_id, conversation_id=conversation_id,
+                owner_id=user.id, role_id=role.id, appointment_revision=world_appointment_revision, task_id=task_id, created_at=now))
         job = QueueJob(
             conversation_id=conversation_id,
             generation_id=generation.id,
@@ -188,6 +222,12 @@ async def send_message(
         executions.append(execution)
         jobs.append(job)
 
+    if world_appointment_revision is not None:
+        message.meta_json = {**(message.meta_json or {}), 'request_generation_ids': [g.id for g in generations]}
+    if world_task:
+        world_task.status = 'queued'
+        world_task.revision += 1
+        world_task.updated_at = now
     conversation.last_message_at = now
 
     created_event = await event_store.append_event(
@@ -277,6 +317,33 @@ async def get_tool_details(
     if part.get('tool_name') == 'workspace_run_shell':
         return await shell_detail_payload(session, message, call_id, row, part.get('status', 'interrupted'))
     return detail_payload(row) if row is not None else {'availability': 'not_recorded', 'input': None, 'output': None}
+
+
+@router.get('/{conversation_id}/messages/{message_id}/dispatch')
+async def dispatch_details(conversation_id: int, message_id: int, response: Response,
+    user: Annotated[User, Depends(get_current_user)], session: Annotated[AsyncSession, Depends(get_session)]):
+    """会话成员查看广播的公开进度，读取不触发任何新执行。"""
+    response.headers['Cache-Control'] = 'no-store'
+    await require_member(session, conversation_id, user.id)
+    message = await session.get(Message, message_id)
+    if not message or message.conversation_id != conversation_id:
+        raise HTTPException(404, 'WORKFLOW_DISPATCH_NOT_FOUND')
+    from ..communication.dispatch import view
+    return await view(session, message)
+
+
+@router.get('/{conversation_id}/messages/{message_id}/input')
+async def legacy_input(conversation_id: int, message_id: int, response: Response,
+    user: Annotated[User, Depends(require_owner)], session: Annotated[AsyncSession, Depends(get_session)]):
+    """Owner 回读被标识为执行专用的原文；历史关联缺失也保留原始记录。"""
+    await require_member(session, conversation_id, user.id)
+    response.headers['Cache-Control'] = 'no-store'
+    message = await session.get(Message, message_id)
+    conversation = await session.get(Conversation, conversation_id)
+    if not message or message.conversation_id != conversation_id or conversation.created_by != user.id or (message.meta_json or {}).get('communication', {}).get('kind') != 'legacy_execution_input':
+        raise HTTPException(404, 'EXECUTION_INPUT_NOT_FOUND')
+    from ..context.projection import parts_text
+    return {'message_id': message_id, 'text': parts_text(message.parts_json), 'legacy': True}
 
 
 @router.post("/{conversation_id}/stop", status_code=202)

@@ -21,7 +21,7 @@ from ..config.logging import set_process_stop_reason
 from ..models import User
 from ..security.tokens import require_owner
 from ..worlds import WorldManager, WorldActiveError
-from ..worlds.compatibility import assert_world_compatible, WorldRequiresNewerRoleplex
+from ..worlds.compatibility import assert_world_compatible, WorldRequiresNewerRoleplex, WorldTypeUnavailable
 from ..runtime.manager import manager as runtime_manager, settled
 from ..runtime.registry import RuntimeRejected
 
@@ -41,6 +41,8 @@ class WorldCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=64)
+    world_type: str = Field(default='general', pattern=r'^[a-z][a-z0-9_]{0,63}$')
+    type_version: int | None = Field(default=None, strict=True, ge=1, le=2**31 - 1)
 
 
 class WorldBackupRequest(BaseModel):
@@ -128,6 +130,8 @@ async def list_worlds(_owner: Annotated[User, Depends(require_owner)]) -> dict:
                 "name": world.name,
                 "current": world.name == settings.world_name,
                 "created_at": world.created_at,
+                "world_type": world.world_type, "type_version": world.type_version,
+                "available": world.unavailable_reason is None, "unavailable_reason": world.unavailable_reason,
             }
             for world in manager.list_worlds()
         ],
@@ -151,14 +155,17 @@ async def create_world(
             raise HTTPException(409, 'WORLD_OPERATION_IN_PROGRESS')
         try:
             world = await settled(asyncio.create_task(
-                asyncio.to_thread(manager.create, payload.name), context=copy_context()))
+                asyncio.to_thread(manager.create, payload.name, world_type=payload.world_type, type_version=payload.type_version), context=copy_context()))
         except FileExistsError:
             raise HTTPException(409, 'WORLD_ALREADY_EXISTS') from None
+        except WorldTypeUnavailable:
+            raise HTTPException(422, 'WORLD_TYPE_UNAVAILABLE') from None
         except ValueError:
             raise HTTPException(422, 'WORLD_NAME_INVALID') from None
         except (OSError, sqlite3.Error):
             raise HTTPException(503, 'WORLD_OPERATION_FAILED') from None
-    return {"name": world.name, "current": False, "created_at": world.created_at}
+    return {"name": world.name, "current": False, "created_at": world.created_at,
+        "world_type": world.world_type, "type_version": world.type_version, "available": True, "unavailable_reason": None}
 
 
 @router.post("/switch", status_code=202)
@@ -176,6 +183,8 @@ async def switch_world(
         assert_world_compatible(target.database_path)
         if manager.is_active(payload.name):
             raise HTTPException(409, 'WORLD_ACTIVE')
+    except WorldTypeUnavailable:
+        raise HTTPException(409, 'WORLD_TYPE_UNAVAILABLE') from None
     except WorldRequiresNewerRoleplex:
         raise HTTPException(409, 'WORLD_REQUIRES_NEWER_ROLEPLEX') from None
     except (FileNotFoundError, ValueError):

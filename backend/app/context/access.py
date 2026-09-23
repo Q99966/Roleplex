@@ -17,3 +17,7 @@ async def require_context_access(session, *, conversation_id: int, role_id: int,
         raise ContextBuildError('CONVERSATION_NOT_FOUND')
     if role is None:
         raise ContextBuildError('ROLE_NOT_AVAILABLE')
+    purpose = await session.scalar(select(Conversation.purpose).where(Conversation.id == conversation_id))
+    if purpose == 'world_coord':
+        from ..world_orchestrator.service import validate_member
+        await validate_member(session, conversation_id, role_id, user_id)

@@ -171,3 +171,9 @@ page_bytes 计入完整 snapshot 信封（含 subscription_id）。未提交该�
 群任命通过既有 conversation_updated 广播 orchestrator_enabled、orchestrator_role_id、orchestrator_revision 与会话 revision；客户端读取共享会话并按版本合并。workflow_updated 继续只携带 run_id/status/revision，v2 并行激活、循环轮次与资源等待通过工作流快照恢复，不对旧客户端要求识别新的流式事件。
 
 图管理兼容新增 `workflow_graph_updated`（definition_id、可空 run_id、graph_revision、mutation_id）与 `workflow_coordination_updated`（coordination_id、status、revision）。均只通知身份/版本，不广播私有图、目标正文或差异内容；Owner 再读完整控制快照。客户端合并快照遵守各对象 revision，重复/乱序通知不执行图操作；未知客户端可忽略，有限轮询仍可恢复缺口。
+
+## 世界协调会话与状态通知
+
+岗位 conversation 仍使用相同 auth/subscribe/backlog/snapshot 协议，但订阅资格额外要求岗位 Owner；同角色普通会话不继承权限。任命更换的 conversation_updated 可包含 world_orchestrator_revision。world_task_updated 只含 task_id/revision/status，正文由 Owner 经世界任务 API 读取；旧客户端忽略未知通知，原消息 reducer 不变。详见[世界协调](../rest/world-orchestrator.md)。
+
+communication_updated 兼容事件的 payload 为 `{reload_history:true}`，用于来源回填后的窗口失效。新客户端释放在途旧分页、清理缓存并读取当前授权窗口，仍可定位的阅读锚点与人工草稿保留；该事件不派发模型。旧客户端忽略未知通知，重启或重新读取时取得修正来源。

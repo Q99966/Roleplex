@@ -24,7 +24,7 @@ def to_response(role: Role) -> RoleResponse:
     通过 `deleted_at` 区分并做降级展示，而不是显示成匿名 Agent。
     """
     return RoleResponse(
-        id=role.id, name=role.name, avatar=role.avatar, description=role.description,
+        id=role.id, name=role.name, managed_kind=role.managed_kind, avatar=role.avatar, description=role.description,
         tags=role.tags_json or [], system_prompt=role.system_prompt, revision=role.revision,
         model_config_id=role.model_config_id, model_name=role.model_name,
         context_window_tokens=role.context_window_tokens,
@@ -53,6 +53,8 @@ async def editable_role(session: AsyncSession, role_id: int, owner_id: int) -> R
     ))
     if not role:
         raise HTTPException(status_code=404, detail="ROLE_NOT_FOUND")
+    if role.managed_kind:
+        raise HTTPException(409, 'ROLE_MANAGED_IDENTITY')
     return role
 
 
@@ -74,9 +76,10 @@ async def flush_role(session: AsyncSession):
 
 
 @router.get("", response_model=list[RoleResponse])
-async def list_roles(user: Annotated[User, Depends(get_current_user)], session: Annotated[AsyncSession, Depends(get_session)]):
+async def list_roles(user: Annotated[User, Depends(get_current_user)], session: Annotated[AsyncSession, Depends(get_session)], include_managed: bool = False):
     """仅列出当前认证用户拥有的角色。"""
-    roles = (await session.scalars(select(Role).where(Role.created_by == user.id).order_by(Role.updated_at.desc()))).all()
+    roles = (await session.scalars(select(Role).where(Role.created_by == user.id,
+        True if include_managed else Role.managed_kind.is_(None)).order_by(Role.updated_at.desc()))).all()
     return [to_response(role) for role in roles]
 
 
@@ -139,12 +142,17 @@ async def update_role(role_id: int, payload: RoleCreate, user: Annotated[User, D
         role.updated_at = datetime.now(timezone.utc)
         await flush_role(session)
         pending = []
+        world_revoked = None
         if payload.active is False:
             from ..workflows.coordination import revoke_role_runs
             pending = await revoke_role_runs(session, role_id)
+            from ..world_orchestrator.service import invalidate_role_in_session
+            world_revoked = await invalidate_role_in_session(session, role_id)
         await session.commit()
     from ..realtime.store import publish_events
     if pending: await publish_events(*pending)
+    from ..world_orchestrator.service import finish_revocation
+    await finish_revocation(world_revoked)
     await session.refresh(role)
     return to_response(role)
 
@@ -182,6 +190,10 @@ async def delete_role(role_id: int, user: Annotated[User, Depends(require_owner)
         role.revision += 1
         from ..workflows.coordination import revoke_role_runs
         pending = await revoke_role_runs(session, role_id)
+        from ..world_orchestrator.service import invalidate_role_in_session
+        world_revoked = await invalidate_role_in_session(session, role_id)
         await session.commit()
     from ..realtime.store import publish_events
     if pending: await publish_events(*pending)
+    from ..world_orchestrator.service import finish_revocation
+    await finish_revocation(world_revoked)

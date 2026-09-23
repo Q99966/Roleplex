@@ -1,8 +1,9 @@
-import { lazy, Suspense } from 'react'
-import type { Message } from '../api/client'
+import { lazy, Suspense, useState } from 'react'
+import { getAuthEpoch, request, type Message } from '../api/client'
 import { ToolCallCard } from './ToolCallCard'
 import { ExplorationGroup } from './ExplorationGroup'
 import { groupMessageParts } from './exploration'
+import { WorkflowDispatchCard } from './WorkflowDispatchCard'
 
 const MarkdownRenderer = lazy(async () => ({ default: (await import('./MarkdownRenderer')).MarkdownRenderer }))
 
@@ -11,6 +12,8 @@ const MarkdownRenderer = lazy(async () => ({ default: (await import('./MarkdownR
  * @param isOwner 是否允许主动加载私有详情。
  */
 export function MessageParts({ message, isOwner }: { message: Message; isOwner: boolean }) {
+  if (message.communication?.kind === 'workflow_dispatch') return <WorkflowDispatchCard message={message} isOwner={isOwner} />
+  if (message.communication?.kind === 'legacy_execution_input') return <LegacyInput message={message} isOwner={isOwner} />
   if (message.sender_type === 'user') return <>{message.parts_json.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('')}</>
   const legacy = !message.timeline_version && message.parts_json.some((part) => part.type === 'tool_call')
   return <>
@@ -33,4 +36,17 @@ export function MessageParts({ message, isOwner }: { message: Message; isOwner: 
       return <p key={index} className="mt-2 text-xs text-slate-500">[当前版本暂不支持渲染的内容：{part.type}]</p>
     })}
   </>
+}
+
+function LegacyInput({ message, isOwner }: { message: Message; isOwner: boolean }) {
+  const [text, setText] = useState<string | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  async function read() {
+    const epoch = getAuthEpoch(); setBusy(true); setError('')
+    try { const value = await request<{ text: string }>(`/api/conversations/${message.conversation_id}/messages/${message.id}/input`, { cache: 'no-store' }); if (epoch === getAuthEpoch()) setText(value.text) }
+    catch { if (epoch === getAuthEpoch()) setError('历史输入暂不可读取。') }
+    finally { if (epoch === getAuthEpoch()) setBusy(false) }
+  }
+  return <div className="space-y-2 text-xs text-slate-500"><p>历史工作流执行输入 · 原文保留，来源已单独标识。</p>
+    {isOwner && <details onToggle={event => { if (event.currentTarget.open && text === null && !busy) void read() }}><summary className="cursor-pointer">查看完整历史输入</summary>
+      {busy && <p>正在读取…</p>}{error && <p role="alert">{error}</p>}{text !== null && <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{text}</pre>}</details>}</div>
 }

@@ -10,8 +10,8 @@ from langchain_core.messages import BaseMessage
 if TYPE_CHECKING:
     from ..agent.capabilities import ExecutionCapabilities
 
-# v9 增加每次派发的硬预算与执行私有压缩凭据，共享摘要及精确上游仍独立。
-CONTEXT_SCHEMA_VERSION = 9
+# v10 区分授权人与通信主体，节点由独立输入引用构建，公开广播不冒充用户要求。
+CONTEXT_SCHEMA_VERSION = 10
 
 
 @dataclass(frozen=True)

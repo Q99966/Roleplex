@@ -2,7 +2,7 @@
 
 本文档是 Roleplex 协议文档体系的稳定入口，维护协议范围、通用约定、当前实现状态和领域索引。项目规模增长后，具体 REST、WebSocket、消息、资源和内部协议应拆分到 `docs/protocol/` 对应领域目录，不应继续全部堆叠在本文件中。
 
-复核日期：2026-09-22。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
+复核日期：2026-09-23。具体协议按领域维护；本文只保留总则、状态和入口。历史计划见[阶段索引](plan/README.md)，不作为现行接口约束。
 
 > API 已实现表示存在对应服务端处理与验证；完整产品能力还需对应客户端行为。仅有 schema、数据表或风险验证的内容单独标为原型/预留。
 
@@ -37,10 +37,13 @@ docs/protocol/
 | 平台/世界/会话提示词与来源预览 | 已实现，仅 Owner 配置和查看 | [public/rest/prompt-settings.md](protocol/public/rest/prompt-settings.md) |
 | REST 会话工作流 | 已实现独立规划、图读写/编辑、并行循环、运行修订与节点控制 | [public/rest/workflows.md](protocol/public/rest/workflows.md) |
 | REST 会话管理与回收站 | 已实现（单聊与串行群聊） | [public/rest/conversations.md](protocol/public/rest/conversations.md) |
+| 世界类型注册、初始化与执行扩展 | 已实现 | [public/rest/world-types.md](protocol/public/rest/world-types.md) |
+| 固定世界管理者、任务与岗位记忆 | 已实现 | [public/rest/world-orchestrator.md](protocol/public/rest/world-orchestrator.md) |
 | REST 世界存档与切换 | 已实现 | [public/rest/worlds.md](protocol/public/rest/worlds.md) |
 | REST 当前 World 工作区 | 已实现（Owner 单聊及群聊文件工具；含批量修改与多片段编辑） | [public/rest/workspaces.md](protocol/public/rest/workspaces.md) |
 | 工作区搜索与范围读取 | 内部/已实现 | [internal/workspace-search-read.md](protocol/internal/workspace-search-read.md) |
 | 工作区结构化命令 | 内部/已实现 | [internal/workspace-commands.md](protocol/internal/workspace-commands.md) |
+| 协作消息来源、收件人、广播与执行输入 | 已实现 | [public/rest/workflow-communication.md](protocol/public/rest/workflow-communication.md) |
 | 消息发送、历史与停止生成 | 已实现（含历史窗口与多行输入） | [public/messaging/messages.md](protocol/public/messaging/messages.md) |
 | 工具执行顺序与 Owner 详情 | 已实现（含 diff、批次结果和拒绝诊断） | [public/messaging/tool-details.md](protocol/public/messaging/tool-details.md) |
 | 旧系统执行摘要 | 废弃，仅旧记录兼容；停止原因见消息协议 | [public/messaging/execution-summary.md](protocol/public/messaging/execution-summary.md) |

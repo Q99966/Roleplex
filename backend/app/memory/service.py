@@ -33,6 +33,8 @@ async def document(session, scope, kind, identity, revision):
         message = await session.get(Message, int(identity))
         if row is None or message is None:
             raise HTTPException(404, 'MEMORY_SOURCE_NOT_FOUND')
+        if row.reason == 'execution_input':
+            raise HTTPException(409, 'MEMORY_SOURCE_CHANGED')
         await require_source(session, scope, message.conversation_id)
         if await session.scalar(select(Message.id).where(Message.id == message.id,
             visible_messages(scope, Message.conversation_id, Message.id, Message.chain_id))) is None:
@@ -187,6 +189,16 @@ async def revalidate_execution(session, execution_id, conversation_id, role_id, 
             if identity in checked:
                 continue
             checked.add(identity)
+            if row.source_kind == 'world_child':
+                from ..world_orchestrator import service as coordinator, tasks
+                grant = await coordinator.authorized(session, execution_id)
+                await tasks.validate_child_source(session, grant.owner_id, row.source_id)
+                continue
+            if row.source_kind == 'world_note':
+                from ..world_orchestrator import service as coordinator, memory as world_memory
+                grant = await coordinator.authorized(session, execution_id)
+                await world_memory.validate_reference(session, grant.owner_id, row.source_id, row.source_revision)
+                continue
             scope = await scope_for(session, conversation_id=conversation_id, role_id=role_id, user_id=user_id,
                 execution_id=execution_id, tool_name='memory_search' if row.action == 'search' else 'memory_read', material=material)
             await document(session, scope, row.source_kind, row.source_id, row.source_revision)

@@ -45,6 +45,9 @@ async def authorized(session,execution_id,tool=None,*,check_generation=True):
     execution=await session.scalar(select(AgentExecution).where(AgentExecution.execution_id==execution_id))
     if not execution or execution.role_id!=grant.role_id or execution.chain_id!=grant.chain_id or execution.conversation_id!=grant.conversation_id:
         service.reject('WORKFLOW_COORDINATION_REVOKED',403)
+    from ..world_orchestrator.tasks import child_allowed
+    if not await child_allowed(session, execution.chain_id):
+        service.reject('WORKFLOW_COORDINATION_REVOKED',403)
     if check_generation:
         generation=await session.get(Generation,execution.generation_id)
         if execution.status not in ('queued','running') or not generation or generation.status not in ('queued','running') or generation.stop_requested_at is not None:
@@ -74,7 +77,7 @@ async def changed(session,grant):
         {'coordination_id':grant.id,'status':grant.status,'revision':grant.revision},revision=grant.revision)
 
 
-async def start(cid,uid,payload,*,feedback_revisions=None):
+async def start(cid,uid,payload,*,feedback_revisions=None,world_child_id=None):
     """规划与反馈处置复用原任务预算，在创建授权的同一事务认领反馈。
 
     Args:
@@ -113,7 +116,7 @@ async def start(cid,uid,payload,*,feedback_revisions=None):
         previous=await session.get(CoordinationSession,payload.continue_session_id) if payload.continue_session_id else None
         if payload.continue_session_id and (not previous or previous.conversation_id!=cid or previous.owner_id!=uid): service.reject('WORKFLOW_GRAPH_SCOPE',403)
         did=run.definition_id if run else payload.definition_id or (previous.definition_id if previous else uuid4().hex)
-        if not previous and not run and payload.definition_id:
+        if not previous and not run and payload.definition_id and not world_child_id:
             candidate=await session.scalar(select(CoordinationSession).where(CoordinationSession.conversation_id==cid,
                 CoordinationSession.definition_id==did,CoordinationSession.run_id.is_(None),
                 CoordinationSession.role_id==role.id,CoordinationSession.appointment_revision==conv.orchestrator_revision)
@@ -160,6 +163,21 @@ async def start(cid,uid,payload,*,feedback_revisions=None):
         message=Message(conversation_id=cid,sender_type='user',sender_id=uid,
             parts_json=[{'type':'text','text':payload.goal}],mentions_json=[role.id],status='done',revision=0,
             chain_id=chain_id,meta_json={'coordination_session_id':grant.id,'coordination_mode':grant.mode},created_at=service.now())
+        from ..communication.service import actor, envelope, stamp, save_input
+        sender = await actor(session, 'user', uid)
+        if feedback_revisions is not None:
+            sender = await actor(session, 'system')
+            message.sender_type, message.sender_id = 'system', None
+        if world_child_id:
+            from ..models import WorldTaskChild, WorldCoordinationGrant
+            world_child = await session.get(WorldTaskChild, world_child_id)
+            world_grant = await session.get(WorldCoordinationGrant, world_child.parent_execution_id) if world_child else None
+            if not world_grant: service.reject('WORLD_TASK_TARGET_FORBIDDEN', 403)
+            sender = await actor(session, 'world_manager', world_grant.role_id)
+            message.sender_type, message.sender_id = 'orchestrator', world_grant.role_id
+        stamp(message, envelope('delegation' if world_child_id else 'coordination_request', sender,
+            [await actor(session, 'role', role.id, duty='group_coordinator')], owner_id=uid,
+            source={'coordination_id': grant.id, 'world_child_id': world_child_id}, report_to=[sender]))
         session.add(message);await session.flush()
         grant.trigger_message_id=message.id
         if not await session.get(WorkflowBudget,chain_id):
@@ -178,10 +196,15 @@ async def start(cid,uid,payload,*,feedback_revisions=None):
         execution=AgentExecution(execution_id=uuid4().hex,conversation_id=cid,generation_id=generation.id,
             parent_execution_id=parent,chain_id=chain_id,role_id=role.id,execution_kind='group_role',attempt=1,status='queued',created_at=service.now())
         session.add(execution);await session.flush();grant.execution_id=execution.execution_id
+        if world_child_id:
+            from ..world_orchestrator.tasks import attach_child
+            await attach_child(session, world_child_id, grant, execution)
         session.add(ExecutionAllocation(execution_id=execution.execution_id,attempt_id=None,coordination_session_id=grant.id,
             control_tools_json=list(MODE_TOOLS[grant.mode]),tools_json=[],workspace_binding_id=conv.workspace_binding_id,
             resource_root=None,authority_json={'owner_id':uid,'role_id':role.id,'appointment_revision':grant.appointment_revision,
                 'target_kind':kind,'target_id':tid,'target_existed':row is not None},revision=1,created_at=service.now()))
+        await save_input(session, execution, message, uid, payload.goal,
+            {'coordination_session_id': grant.id, 'communication': message.meta_json['communication']})
         job=QueueJob(conversation_id=cid,generation_id=generation.id,status='queued',payload_json={
             'current_message_id':message.id,'triggered_by_user_id':uid,'allow_dangerous':True,
             'request_id':current_request_id(),'parallel_workflow':True},attempts=0,cancel_requested=False,created_at=service.now())

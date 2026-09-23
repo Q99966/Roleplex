@@ -104,7 +104,7 @@ M 多行输入约定：纯空白文本仍拒绝，但非空正文的首尾空格
 
 ### 幂等
 
-`client_message_id` 是限定在“当前会话 + 当前发送者”范围内的幂等键（数据库唯一约束）。重复提交同一键时返回已有消息，`duplicate: true` 且 `generation_id: null`，不会创建第二条消息或第二次生成。省略该键时不提供幂等保证。
+`client_message_id` 是限定在“当前会话 + 当前发送者”范围内的幂等键（数据库唯一约束）。重复提交同一键时返回已有消息及原 generation 身份，`duplicate: true`，不会创建第二条消息或第二次生成；客户端不把已经结束的旧 generation 重新标为运行。省略该键时不提供幂等保证。
 
 ## 停止生成
 
@@ -166,7 +166,7 @@ Guest 只能获得不暴露 Owner 私有配置的通用提示。
 
 ## 降级与未实现
 
-固定图上的群协调分配与并行循环已通过[工作流入口](../rest/workflows.md)实现，普通发送与 @ 不自动进入该模式；模型图管理通过独立协调接口实现；附件、Artifact part 和重新生成尚未实现。`reply_to_id` 会持久化但当前不影响回复对象；
+固定图上的群协调分配与并行循环已通过[工作流入口](../rest/workflows.md)实现，普通发送与 @ 不自动进入该模式；模型图管理通过独立协调接口实现；附件、Artifact part 和重新生成尚未实现。`reply_to_id` 在当前会话内验证并用于回复展示，引用本身不触发作者再次执行；
 客户端遇到未知 part 类型必须降级为占位展示，不得白屏。
 
 
@@ -188,3 +188,11 @@ Context schema 5不改变上述消息wire：最近本角色回复中断时可在
 群协调执行见[工作流](../rest/workflows.md)。普通 stop 命中工作流 chain 时要求 Owner，先封闭该运行派发与回边，再停止全部相关 generation；不会只停止最后一个分支。普通聊天和其他 chain 保持原有控制范围。
 
 `/plan@协调者` 是输入框的明确规划命令，使用稳定角色 ID 和选定目标调用独立工作流 coordination 接口。普通 `POST messages` 不因正文中出现命令文本自动授予管理工具；群聊普通 mentions 顺序保持不变。协调请求产生既有 user/role 消息与 generation/execution，具体作用域见[工作流协议](../rest/workflows.md)。
+
+## 世界协调用途
+
+`purpose=world_coord` 的发送仍用本接口，新增可选 world_task_mode、world_task_id、expected_task_revision、expected_appointment_revision；普通会话不能据此取得世界权限。岗位会话的 client_message_id 重发返回该次请求的确切 generation_ids，续办沿用原任务链和额度。字段、任命校验与结束/停止边界见[世界协调协议](../rest/world-orchestrator.md)。
+
+## 通信来源与内部输入
+
+消息可带 communication，由真实授权入口和执行记录生成，客户端不能自填作者、系统用途或任务来源。世界委派、群协调者、系统派发与角色结果分别署名并显示接收/报告对象。节点完整输入移入 execution_inputs，群里保留一条同批广播；Actor 字段、读取接口及旧记录兼容见[协作通信](../rest/workflow-communication.md)。

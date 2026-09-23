@@ -54,3 +54,7 @@ World 配置的字段、默认值、数值范围、revision 冲突与迁移以[�
 早期默认 15 图步和第八次文本误判的取证见[T4.1 记录](../../testing/agent-budget-t41.md)，修复结果见[T4.2 记录](../../testing/agent-budget-t42.md)。这些是当时拓扑的观测，不是现行产品额度。
 
 统一任务时间/审批计时、Token/费用限制及自动续跑旧任务尚未实现。阶段结果与后续安排见[计划索引](../../plan/README.md)，历史阶段顺序不构成新增限制的前置要求。
+
+## 世界根预算
+
+WorkflowBudget 可通过 root_chain_id 指向世界任务根链，普通群仍各有独立 chain。consume 在短事务内先 CAS 扣根，再扣本地额度及 execution 序号；本地失败回滚根扣减。世界续办、反馈回合、重规划及自动压缩沿用该额度，不能重新 freeze。幂等序号防止重复扣减；用量仍只记录原 ModelCallUsage。见[世界协调](../public/rest/world-orchestrator.md)。

@@ -161,4 +161,27 @@ async def local_draft_scope(conversation_id:int,owner:Owner,response:Response):
         identity=json.dumps(['workflow-local-draft-v1',settings.world_name,owner.id,owner.created_at.isoformat(),
             conversation.id,conversation.created_at.isoformat()],separators=(',',':')).encode()
         scope=hmac.new(settings.resolved_jwt_secret().encode(),identity,hashlib.sha256).hexdigest()
-    return {'scope':scope}
+        return {'scope':scope}
+
+
+@router.get('/runs/{run_id}/attempts/{attempt_id}/input')
+async def attempt_input(conversation_id: int, run_id: Id, attempt_id: Id, owner: Owner, response: Response):
+    """Owner 按准确尝试回读执行专用输入；它不会变成公共群消息或触发重放。"""
+    from ..db import SessionLocal
+    from ..models import WorkflowAttempt, ExecutionInput, Message
+    from ..context.projection import parts_text
+    response.headers['Cache-Control'] = 'no-store'
+    async with SessionLocal() as session:
+        await service.get_run(session, conversation_id, owner.id, run_id)
+        attempt = await session.get(WorkflowAttempt, attempt_id)
+        if not attempt or attempt.run_id != run_id: service.reject('WORKFLOW_ATTEMPT_NOT_FOUND', 404)
+        stored = await session.get(ExecutionInput, attempt.execution_id) if attempt.execution_id else None
+        if stored:
+            if stored.conversation_id != conversation_id or stored.owner_id != owner.id:
+                service.reject('WORKFLOW_ATTEMPT_NOT_FOUND', 404)
+            return {'attempt_id': attempt_id, 'execution_id': stored.execution_id, 'text': stored.text,
+                'source': stored.source_json, 'legacy': False}
+        original = await session.get(Message, attempt.input_message_id) if attempt.input_message_id else None
+        return {'attempt_id': attempt_id, 'execution_id': attempt.execution_id,
+            'text': parts_text(original.parts_json) if original and original.conversation_id == conversation_id else None,
+            'source': None, 'legacy': True}

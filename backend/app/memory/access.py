@@ -17,6 +17,8 @@ class MemoryScope:
     material: dict | None = None
     chain_id: str | None = None
     execution_kind: str | None = None
+    world_coordination: bool = False
+    world_group_ids: tuple[int, ...] = ()
 
 
 async def scope_for(session, *, conversation_id, role_id, user_id, execution_id=None, tool_name=None, material=None):
@@ -47,8 +49,20 @@ async def scope_for(session, *, conversation_id, role_id, user_id, execution_id=
             raise HTTPException(404, 'MEMORY_NOT_AVAILABLE')
     elif not user.is_owner or conversation.created_by != user_id:
         raise HTTPException(404, 'MEMORY_NOT_AVAILABLE')
+    world_group_ids = ()
+    if conversation.purpose == 'world_coord' and execution:
+        from ..world_orchestrator.service import authorized
+        try:
+            grant = await authorized(session, execution_id)
+            if grant.task_id:
+                from ..world_orchestrator.tasks import authorized as task_authorized
+                _, task = await task_authorized(session, execution_id)
+                world_group_ids = tuple(task.scope_json['group_ids'])
+        except ContextBuildError:
+            raise HTTPException(404, 'MEMORY_NOT_AVAILABLE') from None
     return MemoryScope(conversation_id, role_id, user_id, conversation.created_by, execution_id, material,
-        execution.chain_id if execution else None, execution.execution_kind if execution else None)
+        execution.chain_id if execution else None, execution.execution_kind if execution else None,
+        conversation.purpose == 'world_coord', world_group_ids)
 
 
 def visible_messages(scope, cid, message_id, chain_id):
@@ -75,7 +89,13 @@ def readable_conversations(scope: MemoryScope, *, related=True):
         ConversationMember.member_type == 'role', ConversationMember.member_id == scope.role_id).correlate(Conversation))
     user_member = exists(select(ConversationMember.id).where(ConversationMember.conversation_id == Conversation.id,
         ConversationMember.member_type == 'user', ConversationMember.member_id == scope.user_id).correlate(Conversation))
+    if scope.world_coordination:
+        # 世界执行的岗位授权只覆盖冻结的目标群；普通人格关系不能导入其他私人会话。
+        return select(Conversation.id).where(Conversation.created_by == scope.owner_id, Conversation.deleted_at.is_(None), user_member,
+            or_(Conversation.id == scope.conversation_id, and_(Conversation.id.in_(scope.world_group_ids),
+                Conversation.type == 'group', Conversation.purpose == 'chat')) if related else Conversation.id == scope.conversation_id)
     return select(Conversation.id).where(Conversation.created_by == scope.owner_id, Conversation.deleted_at.is_(None),
+        Conversation.purpose == 'chat',
         associated, user_member, ~missing, True if related else Conversation.id == scope.conversation_id)
 
 

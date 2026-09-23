@@ -137,6 +137,7 @@ test('单条超过 64 KiB 时保持完整气泡，仍能向前翻页', async ({ 
 
 test('真实窗口快照作废已缓存旧页和迟到翻页响应', async ({ page }) => {
   let forceSnapshot = false
+  let snapshotIds: number[] | undefined
   let injectGap: (() => void) | undefined
   await page.routeWebSocket('**/api/ws', (ws) => {
     const server = ws.connectToServer()
@@ -147,6 +148,7 @@ test('真实窗口快照作废已缓存旧页和迟到翻页响应', async ({ pa
     })
     server.onMessage((raw) => {
       const frame = JSON.parse(String(raw))
+      if (forceSnapshot && frame.type === 'snapshot') snapshotIds = frame.payload.messages.map((message: { id: number }) => message.id)
       ws.send(raw)
       if (frame.type === 'sync_complete') injectGap = () => ws.send(JSON.stringify({ ...frame, type: 'message_delta',
         event_seq: frame.through_event_seq + 2, payload: { message_id: 1, text: '应被缺口恢复丢弃' } }))
@@ -156,7 +158,6 @@ test('真实窗口快照作废已缓存旧页和迟到翻页响应', async ({ pa
   const id = await seedHistory(page, '窗口快照验收')
   await page.getByText('窗口快照验收', { exact: true }).click()
   await expect.poll(() => Boolean(injectGap)).toBe(true)
-  const initial = await page.getByTestId('chat-message').count()
   let release!: () => void
   const held = new Promise<void>((resolve) => { release = resolve })
   let captured = false
@@ -170,9 +171,12 @@ test('真实窗口快照作废已缓存旧页和迟到翻页响应', async ({ pa
   await expect.poll(() => captured).toBe(true)
   forceSnapshot = true
   injectGap!()
+  await expect.poll(() => snapshotIds?.length ?? 0).toBeGreaterThan(0)
   await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toBeEnabled()
   release()
-  await expect(page.getByTestId('chat-message')).toHaveCount(initial)
+  // WS 完整信封与 REST 的字节预算开销不同；采用真实快照身份，而不是假定消息数量相等。
+  await expect.poll(() => page.evaluate(async () => (await import('/src/store/chat.ts')).useChatStore.getState().messages.map(message => message.id))).toEqual(snapshotIds)
+  await expect(page.getByTestId('chat-message')).toHaveCount(snapshotIds!.length)
   expect(await page.evaluate(async () => (await import('/src/store/chat.ts')).useChatStore.getState().loadingOlder)).toBe(false)
 })
 
@@ -212,4 +216,29 @@ test('未加载区域的增量不拼半条消息，翻页重读消除旧 revisio
   await expect(page.getByText('完整新版历史', { exact: true })).toBeAttached()
   expect(attempts).toBe(2)
   await expect(page.getByText('新版增量', { exact: true })).toHaveCount(0)
+})
+
+test('来源修正事件重新读取当前窗口并保留人工草稿', async ({ page }) => {
+  let notify: (() => void) | undefined
+  await page.routeWebSocket('**/api/ws', ws => {
+    const server = ws.connectToServer()
+    server.onMessage(raw => {
+      const frame = JSON.parse(String(raw)); ws.send(raw)
+      if (frame.type === 'sync_complete') notify = () => ws.send(JSON.stringify({ ...frame,
+        type: 'communication_updated', event_seq: frame.through_event_seq + 1, payload: { reload_history: true } }))
+    })
+  })
+  await ensureOwnerSession(page)
+  const cid = await seedHistory(page, '来源更新窗口')
+  await page.getByRole('button', { name: '打开会话：来源更新窗口', exact: true }).click()
+  await expect.poll(() => Boolean(notify)).toBe(true)
+  await page.getByLabel('消息输入框', { exact: true }).fill('来源更新时保留这份草稿')
+  let reads = 0
+  page.on('request', request => { if (request.method() === 'GET' && request.url().includes(`/conversations/${cid}/messages?`)) reads++ })
+  notify!()
+  await expect.poll(() => reads).toBeGreaterThan(0)
+  await expect(page.getByLabel('消息输入框', { exact: true })).toHaveValue('来源更新时保留这份草稿')
+  await expect.poll(() => page.evaluate(async () => (await import('/src/store/chat.ts')).useChatStore.getState().subscription)).toBe('ready')
+  const state = await page.evaluate(async () => { const s = (await import('/src/store/chat.ts')).useChatStore.getState(); return { ids: s.messages.map(m => m.id), active: s.activeGenerationIds } })
+  expect(new Set(state.ids).size).toBe(state.ids.length); expect(state.active).toEqual([])
 })

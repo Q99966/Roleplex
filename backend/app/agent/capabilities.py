@@ -14,11 +14,15 @@ from ..models import AgentExecution, Conversation, Role
 from .tools import classify_tool
 
 
-async def role_tool_policy(session, *, conversation: Conversation, role: Role, triggered_by_user_id: int | None) -> dict:
+async def role_tool_policy(session, *, conversation: Conversation, role: Role, triggered_by_user_id: int | None, execution_id: str | None = None) -> dict:
     """解析角色可用的原生能力，不依赖某一次 allocation；新类别在这里接入自身资源规则。"""
     from ..workspaces.tools import workspace_tool_policy
     from ..memory.tools import specs
     base = await workspace_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=triggered_by_user_id)
+    from ..world_types.tools import specs as type_specs
+    extra = await type_specs(session, conversation, role, triggered_by_user_id, execution_id)
+    if extra:
+        base = {**base, 'exposed_tools': [*base['exposed_tools'], *extra]}
     memory = specs(role.builtin_tools_json or [])
     if not memory:
         return base
@@ -58,18 +62,33 @@ class ExecutionCapabilities:
 async def resolve_capabilities(session, *, conversation: Conversation, role: Role,
                                triggered_by_user_id: int | None, execution_id: str | None = None) -> ExecutionCapabilities:
     """结合角色资源与本次任务授权；未实现的 Skills/MCP 配置不产生虚假工具。"""
-    base = await role_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=triggered_by_user_id)
+    base = await role_tool_policy(session, conversation=conversation, role=role, triggered_by_user_id=triggered_by_user_id, execution_id=execution_id)
     if execution_id:
         execution = await session.scalar(select(AgentExecution).where(AgentExecution.execution_id == execution_id))
         if execution is None or execution.conversation_id != conversation.id or execution.role_id != role.id:
             raise ContextBuildError('AGENT_CAPABILITIES_CHANGED')
     from ..workflows.allocations import policy
     resolved = await policy(session, execution_id, base)
+    from ..world_orchestrator.tools import names as world_names, specs as world_specs
+    granted_world_tools = await world_names(session, execution_id)
+    if execution_id is None and conversation.purpose == 'world_coord':
+        from ..world_orchestrator.service import validate_member
+        from ..world_orchestrator.tools import READ_ONLY
+        await validate_member(session, conversation.id, role.id, triggered_by_user_id)
+        granted_world_tools = READ_ONLY  # 预览对话模式；执行授权只能由真实请求创建。
+    if granted_world_tools:
+        resolved = {**resolved, 'exposed_tools': [*resolved['exposed_tools'], *world_specs(granted_world_tools)]}
     # 来源取自实际解析分支，不能按模型或外部服务提供的名称前缀猜测权限类别。
     source_names = {tool['name'] for tool in base['exposed_tools']}
     from ..memory.tools import NAMES
     sources = {tool['name']: ('memory' if tool['name'] in NAMES else 'workspace') if tool['name'] in source_names else 'workflow'
         for tool in resolved['exposed_tools']}
+    for name in granted_world_tools:
+        sources[name] = 'world'
+    from ..world_types.tools import specs as type_specs
+    type_names = {item['name'] for item in await type_specs(session, conversation, role, triggered_by_user_id, execution_id)}
+    for name in type_names & set(sources):
+        sources[name] = 'world_type'
     return ExecutionCapabilities(conversation.id, role.id, triggered_by_user_id, execution_id, deepcopy(resolved), sources, triggered_by_user_id == role.created_by)
 
 
@@ -87,6 +106,12 @@ async def create_execution_tools(session, capabilities: ExecutionCapabilities, *
     from ..workspaces.tools import create_workspace_tools
     from ..workflows.coordination import create_control_tools
     tools = []
+    if 'world' in capabilities.sources.values():
+        from ..world_orchestrator.tools import create
+        tools.extend(await create(session, capabilities.execution_id))
+    if 'world_type' in capabilities.sources.values():
+        from ..world_types.tools import create
+        tools.extend(await create(capabilities, allow_dangerous))
     if 'workspace' in capabilities.sources.values():
         tools.extend(await create_workspace_tools(session, execution_id=capabilities.execution_id,
             conversation_id=conversation.id, role=role, triggered_by_user_id=capabilities.triggered_by_user_id,

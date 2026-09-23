@@ -544,7 +544,7 @@ async def run_agent(
                         private_output=private_output,
                     )
     except ContextBuildError as exc:
-        code = str(exc) if str(exc) in {'CONVERSATION_NOT_FOUND', 'ROLE_NOT_AVAILABLE', 'CONTEXT_SOURCE_CHANGED', 'CONTEXT_BUDGET_EXCEEDED', 'AGENT_TOOL_RESULT_MISSING'} else 'AGENT_RUNTIME_ERROR'
+        code = str(exc) if str(exc) in {'CONVERSATION_NOT_FOUND', 'ROLE_NOT_AVAILABLE', 'CONTEXT_SOURCE_CHANGED', 'CONTEXT_BUDGET_EXCEEDED', 'AGENT_TOOL_RESULT_MISSING', 'WORLD_TYPE_NOT_READY', 'WORLD_TYPE_CONTEXT_INVALID', 'WORLD_ORCHESTRATOR_REVOKED'} else 'AGENT_RUNTIME_ERROR'
         yield ProviderError(code=code, message=code, stop_reason='protocol_error' if code == 'AGENT_TOOL_RESULT_MISSING' else 'context_rejected')
         return
     except _DecisionBudgetReached:

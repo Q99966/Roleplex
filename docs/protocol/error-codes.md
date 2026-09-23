@@ -486,3 +486,63 @@ WORKFLOW_NODE_INVALID/WORKFLOW_PATH_INVALID/WORKFLOW_INPUT_INVALID 为图 schema
 | `WORKFLOW_FEEDBACK_LOOP_BOUNDARY` | 422 | 当前反馈阻塞循环交接，只能在保留循环边界的未派发区域修正 |
 
 模型工具返回固定错误与允许的定位信息，不回显意见原文；Owner API 的来源越界复用 WORKFLOW_ATTEMPT_NOT_FOUND，旧 v1 不支持反馈调度，返回 WORKFLOW_VERSION_REQUIRED。
+
+### 世界类型（P1）
+
+| 错误码 | 入口/状态 | 语义 |
+|---|---|---|
+| WORLD_TYPE_UNAVAILABLE | 创建 422、切换 409、启动拒绝 | 类型或版本未安装，不回退 general |
+| WORLD_TYPE_REVISION_CONFLICT | REST 409 | 配置/初始化版本已变化，保留草稿并核对 |
+| WORLD_TYPE_CONFIG_INVALID | REST 422 | 配置不满足类型 schema，不返回原配置或校验输入 |
+| WORLD_TYPE_INITIALIZATION_FAILED | 初始化状态 failed | 业务资源事务回滚，已保存配置保留，可明确重试 |
+| WORLD_TYPE_STORAGE_UNAVAILABLE | REST 503 | 配置/状态存储不可用，不暴露 SQL 参数 |
+| WORLD_TYPE_OVERVIEW_UNAVAILABLE | REST 503 | 类型概览读取失败或超出允许结构/体积 |
+| WORLD_TYPE_NOT_READY | 执行/预览拒绝 | 类型资料所需初始化尚未完成 |
+| WORLD_TYPE_CONTEXT_INVALID | 执行/预览拒绝 | 类型材料或验证器失败，原异常和私密正文不进入错误输出 |
+
+### 世界任命、任务及岗位记忆
+
+| 错误码 | HTTP / 位置 | 语义 |
+|---|---|---|
+| WORLD_ORCHESTRATOR_REVISION_CONFLICT | REST 409 | 当前任命已变化，重新读取 |
+| WORLD_ORCHESTRATOR_ROLE_UNAVAILABLE | REST 422 | 角色/模型/提及不符合当前任命资格 |
+| WORLD_ORCHESTRATOR_UNAVAILABLE | 发送 409 | 没有可执行的当前任命 |
+| WORLD_ORCHESTRATOR_REVOKED | 执行/工具拒绝 | 角色、用途、grant、任命版本、停止或 World 关闭使授权失效 |
+| WORLD_ORCHESTRATOR_STORAGE_UNAVAILABLE | REST 503 | 存储失败，不暴露 SQL 参数 |
+| CONVERSATION_MANAGED | REST 409 | 岗位会话由世界任命服务管理，不接受普通会话变更 |
+| WORLD_TASK_NOT_FOUND | REST 404 | 任务/子任务不存在或不属于当前 Owner |
+| WORLD_TASK_EXECUTION_REQUIRED | REST 422 / 工具 403 | 当前入口或回合没有世界任务执行授权 |
+| WORLD_TASK_TARGET_FORBIDDEN | 403 / 工具拒绝 | 群或目标不在实际任务与资源授权内 |
+| WORLD_TASK_REVISION_CONFLICT | 409 | 任务/子任务控制版本过期 |
+| WORLD_TASK_STATE_CONFLICT | 409 | 终态、停止中或任命版本不允许本次操作 |
+| WORLD_TASK_COORDINATOR_BUSY | 409 | 当前任务仍有协调回合，补充要求须等其空闲 |
+| WORLD_TASK_REQUEST_CONFLICT | 409 | 委派键被用于不同参数或已失效的认领 |
+| WORLD_TASK_CHILDREN_UNFINISHED | 工具拒绝 409 | 没有成功子事实、仍有未成功子任务或阻塞反馈 |
+| WORLD_TASK_BUDGET_EXCEEDED | 409 / 任务失败 | 根额度已用尽，续办/反馈不得刷新额度 |
+| WORLD_TASK_DISPATCH_FAILED | 子任务失败 | 派发失败且未提交协调关联，不自动重放 |
+| WORLD_TASK_DISPATCH_INTERRUPTED | 子任务中断 | 父执行已结束，原认领没有协调关联 |
+| WORLD_TASK_EXECUTION_FAILED | 任务失败 | 根执行失败，收口派生执行 |
+| WORLD_TASK_RECONCILE_FAILED | 安全诊断日志 | 状态协调暂时失败，后续轮询重新核对持久事实 |
+| WORLD_MEMORY_NOT_FOUND | 404 | 世界条目不存在或越权 |
+| WORLD_MEMORY_CHANGED | 409 / 工具拒绝 | 条目/来源版本已变化、停用或原来源不可读 |
+| WORLD_MEMORY_REQUEST_CONFLICT | 409 | 同保存键被用于不同内容 |
+| WORLD_TYPE_ACTIVITY_INVALID | 工具拒绝 422 | 类型准备返回了非法活动计划 |
+| WORLD_TYPE_TOOL_NOT_AVAILABLE | 工具拒绝 | 类型工具、分配、执行或资源授权不再有效 |
+| WORLD_TYPE_TOOL_RESULT_UNKNOWN | 工具失败 | 类型调用异常，副作用结果未知；不能盲目重放 |
+| WORLD_OPERATION_RESULT_UNKNOWN | 工具失败 | 世界操作异常，需读取同一任务/请求身份核对 |
+
+世界来源撤权后下一次模型调用复用 CONTEXT_SOURCE_CHANGED；进程恢复复用 EXECUTION_INTERRUPTED。正常停止不伪装成成功，也不删除原消息与已提交事实。
+
+### 固定管理者与协作通信
+
+| 错误码 | HTTP / 位置 | 语义 |
+|---|---|---|
+| WORLD_ORCHESTRATOR_MANAGED_IDENTITY | REST 409 | 旧换绑写入口不可替换固定身份，改用 config/import-role/enabled |
+| ROLE_MANAGED_IDENTITY | REST 409 | 普通角色修改/删除入口不能变更系统管理身份 |
+| MESSAGE_NOT_FOUND | REST 404 | 回复目标不存在或不在当前会话 |
+| WORKFLOW_DISPATCH_NOT_FOUND | REST 404 | 消息没有对应广播批次或不属于当前会话 |
+| EXECUTION_INPUT_NOT_FOUND | REST 404 | 不是可按该入口回读的历史执行输入 |
+| WORLD_MANAGER_DOWNGRADE_REQUIRES_EXPORT | 迁移拒绝 | 有固定岗位身份，旧版无法无损解释 |
+| EXECUTION_INPUT_DOWNGRADE_REQUIRES_EXPORT | 迁移拒绝 | 有新执行输入，不能丢弃记录后回退 |
+
+输入的角色、Owner、消息锚点或原分配不符时使用 CONTEXT_CURRENT_MESSAGE_INVALID / CONTEXT_SOURCE_CHANGED；旧内部输入的 Memory 引用使用 MEMORY_SOURCE_CHANGED。原权限拒绝、幂等和额度错误继续沿用各领域注册码。

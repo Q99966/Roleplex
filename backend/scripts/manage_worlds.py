@@ -29,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     create = commands.add_parser("create", help="创建空世界")
     create.add_argument("name")
+    create.add_argument('--world-type', default='general', help='已安装的世界类型 ID')
+    create.add_argument('--type-version', type=int, default=None, help='省略时创建该类型最新版本')
 
     backup = commands.add_parser("backup", help="一致性备份世界")
     backup.add_argument("name")
@@ -56,10 +58,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "list":
             for world in manager.list_worlds():
                 marker = "*" if settings.world_managed and world.name == settings.world_name else " "
-                print(f"{marker} {world.name}\t{world.created_at}")
+                print(f"{marker} {world.name}\t{world.world_type}@{world.type_version}\t{world.created_at}" +
+                    (f'\t{world.unavailable_reason}' if world.unavailable_reason else ''))
             return 0
         if args.command == "create":
-            world = manager.create(args.name)
+            world = manager.create(args.name, world_type=args.world_type, type_version=args.type_version)
             print(f"已创建世界：{world.name}（{world.path}）")
             return 0
         if args.command == "backup":

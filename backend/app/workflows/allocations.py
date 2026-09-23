@@ -14,6 +14,11 @@ async def tools_for(session, execution_id):
 async def allowed(session, execution_id, tool_name=None, *, check_generation=True):
     """每次调用核对当前激活与任命；旧分配快照不能越过撤权、停止或重试。"""
     allocation = await session.get(ExecutionAllocation, execution_id)
+    execution = await session.scalar(select(AgentExecution).where(AgentExecution.execution_id == execution_id)) if execution_id else None
+    if execution:
+        from ..world_orchestrator.tasks import child_allowed
+        if not await child_allowed(session, execution.chain_id):
+            return False
     if allocation is None:
         return True
     if allocation.coordination_session_id:

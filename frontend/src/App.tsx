@@ -206,7 +206,7 @@ export function App() {
       {showRecycleBin && modalEpoch.current === authEpoch && <RecycleBinModal onClose={() => setShowRecycleBin(false)} />}
       
       {/* 桌面宠物悬浮层 */}
-      <WebPet />
+      <WebPet onEditRole={role => { ensureModalScope(); setRoleToEdit(role); setShowRoleModal(true) }} />
 
       {switchingWorld && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 px-6" role="status" aria-live="polite">

@@ -30,7 +30,7 @@ type AppState = {
   logout: () => void
   loadWorkspace: () => Promise<void>
   loadWorlds: () => Promise<void>
-  createWorld: (name: string) => Promise<WorldSummary>
+  createWorld: (name: string, worldType?: string, typeVersion?: number) => Promise<WorldSummary>
   switchWorld: (name: string) => Promise<void>
   loadWorkspaceBindings: () => Promise<void>
   createWorkspaceBinding: (body: Parameters<typeof api.createWorkspace>[0]) => Promise<void>
@@ -174,9 +174,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   /** 创建成功直接合并列表；刷新失败不能把已完成的创建误报为失败。 */
-  createWorld: async (name) => {
+  createWorld: async (name, worldType, typeVersion) => {
     const epoch = getAuthEpoch()
-    const world = await api.createWorld(name)
+    const world = await api.createWorld(name, worldType, typeVersion)
     if (epoch === getAuthEpoch() && !get().switchingWorld) {
       set((state) => ({ worlds: [...state.worlds.filter((item) => item.name !== world.name), world]
         .sort((a, b) => a.name.localeCompare(b.name)) }))
@@ -263,7 +263,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const user = get().user
       const [roles, conversations, modelConfigs, workspaceData] = await Promise.all([
-        api.roles(),
+        api.roles(true),
         api.conversations(),
         user?.is_owner 
           ? api.modelConfigs().catch(() => []) 
@@ -277,7 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 服务端会连墓碑一起返回：查找表保留全部角色用于历史消息展示，
       // 列表只保留存活角色，避免墓碑出现在侧边栏和成员选择器里。
       set({
-        roles: roles.filter((role) => !role.deleted_at),
+        roles: roles.filter((role) => !role.deleted_at && !role.managed_kind),
         roleDirectory: Object.fromEntries(roles.map((role) => [role.id, role])),
         conversations,
         modelConfigs,
@@ -320,7 +320,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().loadWorkspace()
   },
   updateRole: async (id, body) => {
-    await api.updateRole(id, body)
+    if (get().roleDirectory[id]?.managed_kind === 'world_manager') {
+      const { worldOrchestrator } = await import('../api/worldOrchestrator')
+      await worldOrchestrator.configure(body)
+    } else await api.updateRole(id, body)
     await get().loadWorkspace()
   },
   deleteRole: async (id) => {

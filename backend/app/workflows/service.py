@@ -237,6 +237,8 @@ async def start(cid, uid, payload: Start):
                 parts_json=[{'type': 'text', 'text': f'启动工作流：{definition.name}\n{payload.input_text}'}],
                 mentions_json=[], status='done', revision=0, chain_id=run.chain_id,
                 meta_json={'workflow_run_id': run.id}, created_at=now())
+            from ..communication.service import actor, envelope, stamp
+            stamp(message, envelope('workflow_goal', await actor(session, 'user', uid), owner_id=uid, source={'run_id': run.id}))
             session.add(message); await session.flush()
             run.trigger_message_id = message.id
             from ..services.agent_budget import freeze
@@ -443,17 +445,18 @@ async def advance(rid):
                 else:
                     task = '\n'.join(part for part in [run.input_text, node['task'],
                         ('预期产出：' + node['expected_output']) if node['expected_output'] else '', a.instruction] if part)
-                    message = Message(conversation_id=run.conversation_id, sender_type='user', sender_id=run.owner_id,
-                        parts_json=[{'type': 'text', 'text': task}], mentions_json=[node['role_id']],
-                        status='done', revision=0, chain_id=run.chain_id, meta_json={'workflow_run_id': run.id, 'workflow_attempt_id': a.id}, created_at=now())
-                    session.add(message); await session.flush()
+                    from ..communication.dispatch import legacy_notice
+                    from ..communication.service import save_input
+                    batch, message = await legacy_notice(session, run, a, node)
                     g = Generation(conversation_id=run.conversation_id, stream_epoch=current_epoch(), status='queued', run_id=run.chain_id)
                     session.add(g); await session.flush()
                     conv = await session.get(Conversation, run.conversation_id)
                     e = AgentExecution(execution_id=uuid4().hex, conversation_id=run.conversation_id, generation_id=g.id,
                         chain_id=run.chain_id, role_id=node['role_id'], execution_kind='single' if conv.type == 'single' else 'group_role',
                         attempt=a.number, status='queued', created_at=now())
-                    session.add(e)
+                    session.add(e); await session.flush()
+                    await save_input(session, e, message, run.owner_id, task,
+                        {'workflow_run_id': run.id, 'workflow_attempt_id': a.id, 'communication': message.meta_json['communication']}, batch_id=batch.id)
                     job = QueueJob(conversation_id=run.conversation_id, generation_id=g.id, status='queued',
                         payload_json={'current_message_id': message.id, 'triggered_by_user_id': run.owner_id,
                             'allow_dangerous': True, 'request_id': run.snapshot.get('request_id')}, attempts=0, cancel_requested=False, created_at=now())

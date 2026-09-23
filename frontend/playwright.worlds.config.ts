@@ -39,7 +39,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `python scripts/run_world_server.py --world alpha --ensure-world beta --worlds-dir ${WORLD_ROOT} --host 127.0.0.1 --port ${API_PORT}`,
+      command: `python tests/world_types_e2e_server.py --world alpha --ensure-world beta --worlds-dir ${WORLD_ROOT} --host 127.0.0.1 --port ${API_PORT}`,
       cwd: '../backend',
       env: {
         CORS_ORIGINS: WEB_ORIGIN,
@@ -56,7 +56,7 @@ export default defineConfig({
       command: `npm run dev -- --host 127.0.0.1 --port ${WEB_PORT}`,
       cwd: '.',
       // 世界切换测试也必须覆盖同源代理，避免直接 API 地址掩盖代理配置错误。
-      env: { VITE_PROXY_TARGET: API_ORIGIN },
+      env: { VITE_PROXY_TARGET: API_ORIGIN, VITE_WORLD_TYPE_FIXTURE: 'true' },
       url: WEB_ORIGIN,
       reuseExistingServer: false,
       timeout: 60_000,

@@ -1,6 +1,6 @@
 # Roleplex 文档导航
 
-复核日期：2026-09-22。本入口帮助区分当前说明、接口契约、设计和历史记录。
+复核日期：2026-09-23。本入口帮助区分当前说明、接口契约、设计和历史记录。
 
 | 要了解的内容 | 权威入口 |
 |---|---|
@@ -18,6 +18,8 @@
 | 图管理、工具授权与运行重规划的实施范围及验收 | [实施范围](plan/orchestrator-graph-control-v1.md)、[本次验收](testing/orchestrator-graph-control.md) |
 | 节点反馈、图可读性与操作面板 | [分批记录](plan/workflow-feedback-usability-v1.md)、[反馈验收](testing/workflow-feedback.md)、[可读性验收](testing/workflow-readability.md)、[操作面板验收](testing/workflow-workbench.md) |
 | 会话上下文、提示词、检索及 Skills/MCP 总体计划（A–D 已实现，E–F 待实施） | [总体计划与实施顺序](plan/conversation-context-memory-capabilities-v1.md)、[既有上下文阶段](plan/context-cache-orchestration-v1.md) |
+| 世界类型、桌宠与世界协调（已接入） | [实现记录](plan/world-orchestrator-foundation-v1.md)、[另一 worktree 开工交接](plan/world-type-worktree-handoff-v1.md)、[验收](testing/world-orchestrator-foundation.md) |
+| 固定世界管理者、消息署名、收件人与任务广播（已修复） | [修复记录](plan/world-coordination-message-provenance-v1.md)、[协作通信协议](protocol/public/rest/workflow-communication.md)、[本次验收](testing/workflow-communication.md) |
 | 旧里程碑的结果、未实施方向与历史原文 | [计划索引](plan/README.md)、[归档说明](archive/README.md) |
 
 ## 阅读与维护

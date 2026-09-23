@@ -71,14 +71,17 @@ def _context_log_fields(context: ContextBuildResult) -> dict[str, object]:
 
 def message_payload(message: Message) -> dict:
     """把消息 ORM 记录转换为公开事件和 REST 响应共用的结构。"""
+    from ..communication.service import public_parts, sender_identity
+    sender_type, sender_id = sender_identity(message)
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
-        "sender_type": message.sender_type,
-        "sender_id": message.sender_id,
+        "sender_type": sender_type,
+        "sender_id": sender_id,
         "reply_to_id": message.reply_to_id,
         "mentions": message.mentions_json,
-        "parts_json": message.parts_json,
+        "parts_json": public_parts(message),
+        'communication': (message.meta_json or {}).get('communication'),
         "status": message.status,
         "revision": message.revision,
         "chain_id": message.chain_id,
@@ -585,6 +588,9 @@ async def run_scheduled_generation(
                 chain_id=generation.run_id,
                 created_at=datetime.now(timezone.utc),
             )
+            from ..communication.service import reply_envelope, stamp
+            stamp(assistant, await reply_envelope(session, execution_id, current_message_id, role, triggered_by_user_id))
+            assistant.reply_to_id = current_message_id
             session.add(assistant)
             await session.flush()
             generation.assistant_message_id = assistant.id
@@ -810,7 +816,7 @@ async def run_scheduled_generation(
                     if usage_cancelled:raise asyncio.CancelledError
                 elif isinstance(event, ProviderCallStarted):
                     adopted = runtime_context.receipts.pop(event.call_index, {})
-                    if adopted.get('tools_compression_id') or adopted.get('upstream_compression_id'):
+                    if adopted.get('tools_compression_id') or adopted.get('upstream_compression_id') or adopted.get('world_task_id'):
                         from dataclasses import replace
                         event = replace(event, input_estimate={**(event.input_estimate or {}), 'runtime_context': adopted})
                         if event.call_index == 1:
@@ -899,7 +905,7 @@ async def run_scheduled_generation(
         return
     except ContextBuildError as exc:
         reported = str(exc)
-        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED", "AGENT_CAPABILITIES_CHANGED", "CONTEXT_SOURCE_CHANGED"}
+        expected_codes = {"CONVERSATION_NOT_FOUND", "ROLE_NOT_AVAILABLE", "TEXT_PART_REQUIRED", "AGENT_CAPABILITIES_CHANGED", "CONTEXT_SOURCE_CHANGED", 'WORLD_TYPE_NOT_READY', 'WORLD_TYPE_CONTEXT_INVALID', 'WORLD_ORCHESTRATOR_REVOKED'}
         error_code = reported if reported in expected_codes else "REQUEST_FAILED"
         terminal = await _finalize(generation_id, "failed", "", error_code=error_code, stop_reason="context_rejected")
         log_method = logger.warning if error_code in expected_codes else logger.exception

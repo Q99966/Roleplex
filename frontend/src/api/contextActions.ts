@@ -9,7 +9,8 @@ export type MemorySource = { kind: 'message' | 'summary'; source_id: string; sou
 export type MemoryHit = MemorySource & { snippet: string; snippet_offset: number; matched_terms: string[]; score: number; match_kind: string }
 export type SearchResult = { results: MemoryHit[]; next_cursor: string | null; notice: string; scope: string }
 export type MemoryRead = MemorySource & { text: string; offset: number; total_characters: number; truncated: boolean; next_offset: number | null; neighbors: (MemorySource & { text: string; truncated: boolean })[]; notice: string }
-export type MemoryAccess = { id: string; execution_id: string; tool_call_id: string; action: string; created_at: string; available: boolean; source?: MemorySource }
+export type MemoryAccess = { id: string; execution_id: string; tool_call_id: string; action: string; created_at: string; available: boolean; source?: MemorySource;
+  world_source?: { kind: 'world_note' | 'world_child'; source_id: string; source_revision: number; title: string } }
 
 export const contextActions = {
   list: (cid: number, signal?: AbortSignal) => request<Compressions>(`/api/conversations/${cid}/context/compressions`, { signal }),

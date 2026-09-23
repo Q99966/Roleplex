@@ -132,3 +132,7 @@ DELETE /api/roles/{role_id}
 创建/更新角色兼容新增可选 `active`；省略保持原行为（创建默认为 true，更新不改变）。停用或删除被任命的群协调者会封闭其旧协调运行，重新启用不自动恢复。任命属于会话关系，不改变角色全局身份或工具配置。
 
 角色创建或更新的数据库约束冲突返回 409 ROLE_WRITE_CONFLICT（例如未删除角色同名），不把数据库异常或角色 Prompt 回显为 500 日志。
+
+## 专用世界管理身份
+
+RoleResponse 兼容增加 managed_kind。普通列表默认排除专用角色，`GET /api/roles?include_managed=true` 仍按当前用户归属返回目录。普通修改/删除拒绝 managed_kind=world_manager，普通会话成员选择也不能加入该角色；模型、人设、启停通过[世界管理者接口](world-orchestrator.md)配置。原普通角色导入为独立配置，原角色历史不变。

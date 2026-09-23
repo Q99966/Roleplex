@@ -78,6 +78,11 @@ async def register(payload: RegisterRequest, session: Annotated[AsyncSession, De
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail="REGISTRATION_CONFLICT") from exc
+    if user.is_owner:
+        from ..world_orchestrator.service import initialize as initialize_manager
+        await initialize_manager()
+        from ..world_types.service import initialize
+        await initialize()
     return TokenResponse(access_token=create_access_token(user), user=UserResponse.model_validate(user))
 
 

@@ -202,6 +202,19 @@ function useController(conversation: Conversation) {
     window.addEventListener('roleplex:workflow', notify)
     return () => { alive.current = false; clearInterval(interval); window.removeEventListener('roleplex:workflow', notify) }
   }, [key])
+  const openedByLink = useRef<string | null>(null)
+  useEffect(() => {
+    if (!localReady) return
+    const jump = () => {
+      const [path, query = ''] = window.location.hash.split('?')
+      const id = new URLSearchParams(query).get('workflow_run')
+      if (path !== `#/workspace/conversation/${conversation.id}` || !id || openedByLink.current === id || !data.runs.some(row => row.id === id)) return
+      openedByLink.current = id
+      void selectRun(id)
+    }
+    jump(); window.addEventListener('hashchange', jump)
+    return () => window.removeEventListener('hashchange', jump)
+  }, [localReady, conversation.id, data.runs])
   // 服务端图更新可自动接纳，人工脏草稿则保留原版本，交给冲突面板显式处理。
   useEffect(() => {
     if (draft.dirty || draft.runTarget || !remoteDefinition) return

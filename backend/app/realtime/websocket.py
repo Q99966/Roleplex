@@ -110,6 +110,8 @@ async def _is_member(conversation_id: int, user_id: int) -> bool:
                 ConversationMember.member_type == "user",
                 ConversationMember.member_id == user_id,
                 Conversation.deleted_at.is_(None),
+                (Conversation.purpose == 'chat') | ((Conversation.created_by == user_id) &
+                    select(User.id).where(User.id == user_id, User.is_owner.is_(True)).exists()),
             )
         )
         return member is not None

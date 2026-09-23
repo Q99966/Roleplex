@@ -3,8 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import { getAuthEpoch, type Conversation, type Role } from '../../api/client'
 import { conversationContext, type ContextPage, type ContextPreview } from '../../api/context'
 import { useAppStore } from '../../store/app'
-import { useChatStore } from '../../store/chat'
-import { useContextDraft } from '../../store/contextDraft'
+import { useConversationChat, useConversationDraft } from '../../store/conversationChat'
 import { ConversationPromptSettings } from '../prompts/PromptSettings'
 import { CompressionPanel } from './CompressionPanel'
 import { MemoryPanel } from './MemoryPanel'
@@ -14,7 +13,7 @@ const button = 'rounded-lg border border-slate-700 px-3 py-2 text-xs disabled:op
 const card = 'rounded-xl border border-slate-800 bg-panel p-3'
 const number = (value: number | null | undefined) => value == null ? '未知' : value.toLocaleString()
 const reasons: Record<string, string> = { generating: '生成中，尚未纳入', failed: '失败片段保留在原消息', interrupted: '中断片段保留在原消息', empty: '没有可用正文', tool_pending: '工具尚未收口' }
-const parts: Record<string, string> = { system: '规则、角色与技能', tools: '可用工具定义', current: '本次消息', history: '已选会话历史', interruption: '中断执行事实', summary: '已采用历史摘要' }
+const parts: Record<string, string> = { system: '规则、角色与技能', tools: '可用工具定义', current: '本次消息', history: '已选会话历史', interruption: '中断执行事实', summary: '已采用历史摘要', world_type: '世界类型资料' }
 type ContextTab = 'usage' | 'material' | 'prompts' | 'compression' | 'memory'
 const viewPreferences = new Map<string, { tab: ContextTab; roleId: number }>()
 
@@ -30,7 +29,7 @@ export function ConversationContextPanel({ conversation, onEditRole }: { convers
 
 function ContextPanel({ conversation, scope, onEditRole }: { conversation: Conversation; scope: string; onEditRole: (role: Role) => void }) {
   const [tab, setTab] = useState<ContextTab>(() => viewPreferences.get(scope)?.tab ?? 'usage')
-  const roles = useAppStore(state => state.roles).filter(role => conversation.role_ids.includes(role.id) && role.active && !role.deleted_at)
+  const roles = Object.values(useAppStore(state => state.roleDirectory)).filter(role => conversation.role_ids.includes(role.id) && role.active && !role.deleted_at)
   const [roleId, setRoleId] = useState(() => viewPreferences.get(scope)?.roleId ?? conversation.role_ids[0] ?? 0)
   useEffect(() => { viewPreferences.set(scope, { tab, roleId }) }, [scope, tab, roleId])
   const selected = roles.find(role => role.id === roleId) ?? roles[0]
@@ -54,14 +53,14 @@ function ContextPanel({ conversation, scope, onEditRole }: { conversation: Conve
 }
 
 function useMessageBoundary(conversationId: number) {
-  return useChatStore(state => state.conversationId === conversationId
+  return useConversationChat(state => state.conversationId === conversationId
     ? state.messages.slice(-8).map(message => `${message.id}:${message.status === 'generating' ? 'generating' : message.revision}:${message.status}`).join(',') : '')
 }
 
 function Usage({ conversationId, role }: { conversationId: number; role: Role }) {
-  const active = useChatStore(state => state.conversationId === conversationId && state.activeGenerationIds.length > 0)
+  const active = useConversationChat(state => state.conversationId === conversationId && state.activeGenerationIds.length > 0)
   const boundary = useMessageBoundary(conversationId)
-  const draft = useContextDraft(state => state.scope === `${getAuthEpoch()}:${conversationId}` ? state.text : '')
+  const draft = useConversationDraft(conversationId)
   const [value, setValue] = useState<ContextPreview | null>(null), [error, setError] = useState('')
   const [content, setContent] = useState(false), [refresh, setRefresh] = useState(0)
   const [busy, setBusy] = useState(false)

@@ -23,16 +23,6 @@ export function PetEffects() {
               ✨ {eff.text || '+饱食'}
             </span>
           )}
-          {eff.type === 'sparkle' && (
-            <span className="text-indigo-300 text-sm animate-spin-slow">
-              ✨
-            </span>
-          )}
-          {eff.type === 'levelUp' && (
-            <span className="text-amber-300 text-sm font-extrabold bg-indigo-950/90 px-3 py-1 rounded-full border border-amber-400 shadow-lg shadow-amber-500/20">
-              {eff.text || '🎉 Level Up!'}
-            </span>
-          )}
         </div>
       ))}
     </div>

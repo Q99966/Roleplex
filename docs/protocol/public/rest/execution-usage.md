@@ -29,3 +29,7 @@ metrics 兼容新增 cache_miss_tokens 和 input_cache_hit_ratio，同样使用 
 未命中为各有效配对的（输入−命中）之和；命中率为这些配对的命中总量÷输入总量，取值0..1，不平均各调用比例。
 缺失或无效配对计入 missing_calls；存在缺失、旧执行、旧回复或记录缺口时 total=null，known 可返回有效配对部分，前端明确标为已记录部分。
 输入分母为0时命中率的 total/known 均为null；已知无调用时未命中量为0。不能通过不完整的原始累计值直接相减或相除。
+
+## 世界任务汇总
+
+世界任务 view.usage 复用本服务，从根链及去重子链的原始 ModelCallUsage 聚合；world_coord 作为 execution_kind，自动维护仍是 context_compact。重规划共享原子链，不重复累计。厂商缺失值继续为未知，根 used_decisions 是授权计数，不能与子累计相加当作用量。见[世界协调](world-orchestrator.md)。

@@ -2,7 +2,7 @@
 
 | 元数据 | 值 |
 |---|---|
-| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；共享材料和完整输入占用见[上下文协议](conversation-context.md)，主动压缩见[维护协议](context-compression.md)，自动策略待 D |
+| 状态 | 已实现：平台/世界/会话配置、来源预览与实际采用版本；共享材料和完整输入占用见[上下文协议](conversation-context.md)，主动压缩见[维护协议](context-compression.md)，自动策略已接入 |
 | 协议版本 | 1；ContextBuilder 序列化版本 6 |
 | 复核日期 | 2026-09-22 |
 | 事实来源 | `routers/prompt_settings.py`、`context/prompts.py`、`agent/capabilities.py`、`services/chat.py`、`services/execution_usage.py` |
@@ -79,3 +79,7 @@ Context schema 6 兼容新增平台/世界指纹和配置版本诊断。实际�
 前端在当前登录期间按 World、Owner 和会话保留面板草稿，切换设置分类/详情模块不清空输入。认证/World 切换后不恢复上一身份的私有弹窗；未保存的提示词草稿不写入浏览器持久存储，刷新/退出登录后需以服务端已提交版本为准。该草稿机制与工作流 IndexedDB 恢复分开。
 
 本批不新增 WS 消息类型。配置通过自己的读/写响应及显式刷新核对；保存不会广播私有正文，消息与运行事件保持原有契约。
+
+## 通信规则与采用身份
+
+平台默认模板 v2 提醒明确发言用途/对象、共同要求一次说明、通过工具派发/反馈，并保留实际身份；Owner 的平台覆盖不被升级重写。Context schema 10 另加由宿主生成的本次 speaker/duty/input_from/reply_to/mode，通信资料进入实际预算和 communication 来源指纹。显示名称不授予权限，正文 @ 不触发新的链。详情见[协作通信](workflow-communication.md)。

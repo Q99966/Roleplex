@@ -17,6 +17,7 @@ export function WorkflowAttemptDetails({ attempt, onClose }: { attempt: Workflow
   const [error, setError] = useState('')
   const [checked, setChecked] = useState(false)
   const [instruction, setInstruction] = useState('')
+  const [input, setInput] = useState<string | null | undefined>(undefined)
   const [downstream, setDownstream] = useState(false)
   useEffect(() => {
     let live = true
@@ -40,6 +41,11 @@ export function WorkflowAttemptDetails({ attempt, onClose }: { attempt: Workflow
       {message && <button type="button" className={`${button} my-2`} onClick={() => { w.setOpen(false); window.setTimeout(() => document.querySelector(`[data-reading-anchor="m-${message.id}"]`)?.scrollIntoView({ block: 'center' }), 0) }}>返回对话查看原消息</button>}
       {w.error && <p role="alert" className="text-xs text-red-500">{w.error}</p>}
       {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+      <details className="my-3 text-xs" onToggle={event => {
+        if (!event.currentTarget.open || input !== undefined || !w.run) return
+        const epoch = getAuthEpoch()
+        void workflows.input(w.conversation.id, w.run.id, attempt.id).then(value => { if (epoch === getAuthEpoch()) setInput(value.text) }).catch(() => setError('执行输入暂时不可读取。'))
+      }}><summary>本次完整执行输入</summary><pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-canvas p-3">{input === undefined ? '正在读取…' : input ?? '该节点没有模型执行输入。'}</pre></details>
       {facts && <details open className="my-3 text-xs"><summary>服务器核对事实</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-slate-950 p-3">{facts}</pre></details>}
       {!w.historyGraph && w.run?.runtime_version === 2 && !attempt.node_id.startsWith('__') && <FeedbackReportForm attempt={attempt} />}
       {terminal && (attempt.current || attempt.selected_in_activation) && <div className="space-y-3 border-t border-slate-700 pt-3 text-xs">
