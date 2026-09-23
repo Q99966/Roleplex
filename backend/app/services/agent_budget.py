@@ -32,12 +32,13 @@ async def limit_for(session, chain_id: str, conversation_id: int) -> int | None:
     return budget.decision_limit
 
 
-async def consume(execution_id: str, index: int) -> bool:
+async def consume(execution_id: str, index: int, *, reserve: int = 0) -> bool:
     """请求模型前原子计数；不限模式跳过限额比较但保留取消和幂等检查。
 
     Args:
         execution_id：既有单所有者执行标识，不对外提供任意扣减入口。
         index：该 execution 内从 1 开始的决策序号；只用于数据库重试幂等。
+        reserve：自动维护为原任务至少留一次后续决策；仍在原链原子计数，不增加额度。
     """
     from ..db import SessionLocal, with_locked_retry
     async def operation():
@@ -56,7 +57,7 @@ async def consume(execution_id: str, index: int) -> bool:
             result = await session.execute(update(WorkflowBudget).where(
                 WorkflowBudget.chain_id == execution.chain_id,
                 WorkflowBudget.conversation_id == execution.conversation_id,
-                or_(WorkflowBudget.decision_limit.is_(None), WorkflowBudget.used_decisions < WorkflowBudget.decision_limit),
+                or_(WorkflowBudget.decision_limit.is_(None), WorkflowBudget.used_decisions < WorkflowBudget.decision_limit - reserve),
             ).values(used_decisions=WorkflowBudget.used_decisions + 1))
             if result.rowcount != 1:
                 return False

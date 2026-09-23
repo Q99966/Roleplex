@@ -165,6 +165,9 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 
 | 错误码 | 状态 | 传输 | HTTP | 终态 | 重试 | 含义 |
 |---|---|---|---:|---|---|---|
+| `CONTEXT_POLICY_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 自动策略版本冲突，保留草稿并核对当前配置 |
+| `CONTEXT_THRESHOLD_EXCEEDS_WINDOW` | 已实现 | REST | 422 | rejected | conditional | 会话阈值高于全部有效角色的最小窗口 |
+| `CONTEXT_POLICY_CHANGED` | 已实现 | 任务结果 | — | rejected | conditional | 自动策略、成员窗口或模型生效范围已变化，旧维护结果不采用 |
 | `CONTEXT_COMPRESSION_REQUEST_CONFLICT` | 已实现 | REST | 409 | rejected | conditional | 同一请求键对应不同参数，先核对原任务 |
 | `CONTEXT_COMPRESSION_BUSY` | 已实现 | REST | 409 | rejected | conditional | 本会话已有在途维护请求 |
 | `CONTEXT_COMPRESSION_MODEL_UNAVAILABLE` | 已实现 | REST | 404/422 | rejected | conditional | 所选角色/成员或模型不可用，不另选模型 |
@@ -294,7 +297,7 @@ WS_SYNC_TIMEOUT 表示未按期收到当前订阅同步完成确认；WS_SYNC_FA
 | `PROVIDER_RESPONSE_INCOMPLETE` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 响应明确截断或内容过滤；不派发其中工具，不自动重试 |
 | `PROVIDER_TIMEOUT` | 已实现 | Agent/WS/数据库/日志 | — | timeout | yes | 模型厂商调用超时，可按预算有限重试 |
 | `PROVIDER_ERROR` | 已实现（兜底） | Agent/WS/数据库/日志 | — | failed | conditional | 无法映射到已知厂商类型的失败；需先检查错误类型再决定重试 |
-| `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 可裁剪历史全部移除后，必要规则、当前可见工具、当前消息与输出预留仍超过角色有效窗口；不调用 Provider |
+| `CONTEXT_BUDGET_EXCEEDED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 必要输入或完整工具轮增长经可用压缩后仍超过角色窗口；拒绝本次 Provider 调用，保留此前已发生的工具/模型事实 |
 | `AGENT_CAPABILITIES_CHANGED` | 已实现 | WS/数据库/日志 | — | rejected | conditional | 工具身份/权限或规范化定义与构建快照不一致，尚未调用模型；核对配置后重试 |
 | `EXECUTION_INTERRUPTED` | 已实现（内部） | 数据库/日志 | — | cancelled | conditional | 服务重启前 execution 未到终态；不自动重放 Provider，用户可重新发起任务 |
 | `TOOL_EXECUTION_FAILED` | 已实现 | Agent/WS/数据库/日志 | — | failed | conditional | 工具主动报告执行失败，结果可能未知，核对后再调整，不自动重放 |

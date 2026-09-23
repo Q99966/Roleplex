@@ -95,7 +95,7 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest, *, 
     Args:
         session：数据库会话；调用方不得在构建期间并行修改同一会话。
         request：角色、会话和当前消息的稳定边界。
-        enforce_budget：执行必须为 True；Owner 预览可展示不可派发的完整预算原因。
+        enforce_budget：预览/自动维护可先取必要输入；派发层仍须对每次实际调用做硬检查。
 
     Raises:
         ContextBuildError：资源或消息边界不满足内部契约。
@@ -277,11 +277,15 @@ async def build_context(session: AsyncSession, request: ContextBuildRequest, *, 
     if summary_message is not None:
         history = (summary_message, *history)
     if workflow_attempt is not None and len(history) != len(projected):
-        # 显式要求的上游结果不能静默裁掉；让 Owner 缩小节点输入后创建新尝试。
+        # 显式上游不裁掉。自动维护在执行私有范围内压缩正文，结构化激活数据始终完整。
         required = token_estimate(fixed_tokens + sum(item.estimated_tokens for item in projected))
-        raise ContextBudgetExceeded(estimated_tokens=required.estimated_tokens,
-            safety_margin_tokens=required.safety_margin_tokens, input_budget_tokens=input_budget,
-            estimator_kind=required.estimator_kind)
+        if enforce_budget:
+            raise ContextBudgetExceeded(estimated_tokens=required.estimated_tokens,
+                safety_margin_tokens=required.safety_margin_tokens, input_budget_tokens=input_budget,
+                estimator_kind=required.estimator_kind)
+        history = tuple(item.projected for item in projected)
+        sources = [{'message_id': item.source.id, 'revision': item.source.revision, 'status': item.source.status} for item in projected]
+        history_tokens, truncated, blocked = history_total, 0, True
     if recovery_message is not None:
         history = (*history, recovery_message)
     total_estimate = token_estimate(fixed_tokens + history_tokens)

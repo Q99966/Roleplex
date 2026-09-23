@@ -609,3 +609,17 @@ v1 启动只接受唯一完整串行路径；v2 语义见下节。按拓扑冻�
 压缩模型快照只保留实际 Provider 支持的采样参数、模型名/窗口及配置不可逆指纹，不复制 Key；模板、会话要求和一次性指令属于受 Owner 保护的业务数据，不进日志。发布和任务结果同事务，长模型调用不持写事务。降级会删除无聊天消息的维护预算，普通消息链、原消息和 0025 的稳定投影保留。
 
 Context schema 8 的普通材料兼容增加 summary_id/summary_omitted_reason，采用摘要时把只读历史段放在原文尾部之前；工作流精确上游单独处理。压缩 execution 的采用快照以 `material.scope=context_compaction` 及 compression_id/source revision 引用维护来源，不伪装成普通角色提示词快照。详情以[压缩](../public/rest/context-compression.md)与[Memory](../public/rest/memory.md)为准。
+
+### 自动策略与执行私有维护（0027）
+
+| 对象 | 字段与一致性 |
+|---|---|
+| `instance_settings`、`conversations` | context_policy_json 可空 JSON；context_policy_revision 非空 Integer，默认 0。会话 null 继承世界、世界 null 使用软件默认；CAS 更新，不改消息/上下文 revision |
+| `context_compressions.trigger/scope` | 非空 String16，默认 manual/conversation；自动任务为 automatic，执行私有材料为 execution，旧任务保持既有语义 |
+| `context_compressions.runtime_json` | 可空 JSON，只保存父执行、策略 stamp、来源边界/hash/版本、服务器效果事实、输入单元数量及结果数字；不保存私有模型输入/输出或工具正文 |
+| 自动维护关联 | 复用 agent_executions.parent_execution_id、chain_id、generation_id；自动子执行不新建 WorkflowBudget/QueueJob，生命周期由原 runner 拥有。手动维护仍使用独立额度和队列 |
+| 共享与私有来源 | conversation 继续冻结 context_compression_sources 并发布不可变 ContextSummary；execution 不占 active_conversation_id、不创建共享摘要，临时正文只存在于运行内存 |
+
+Context schema 9 的首次采用凭据保持不可覆盖；逐次调用的 input_estimate_json 可兼容增加 runtime_context，包含工具/上游维护 ID、来源 hash/数量、策略 stamp、窗口/输出预留和目标是否达到，不复制摘要。私有输出的 sources 只引用该维护输入单元，不冒充全局消息 ID。
+
+升级默认关闭自动策略，旧消息、手动任务及摘要版本不变；降级仅删除新增配置/描述列，不重放子任务。须先正常停止进程再升级/降级，运行中的模型调用不能靠数据库迁移继续。

@@ -76,6 +76,8 @@ Context schema 7 的来源材料快照和逐次请求估算写入业务表，不
 
 schema 8 的压缩维护仍用原 request/chain/execution/generation；调用偏移让分段的 provider_call_index 连续。诊断只记录状态、耗时、固定错误码、安全异常类型、模型/脱敏基址及厂商报告的 usage，不记录压缩要求、模型摘要或检索原文/词语。Memory 工具审计参数摘要默认空对象，来源事实在受权限保护的 memory_references 中。context_updated WS 事件只有版本与任务状态，正文通过 Owner 接口读取。
 
+schema 9 自动维护保留 parent_execution_id 并沿用根 chain，子模型事件只进入自己的 usage，不计入父模型调用次数。私有维护的正文仅在执行内存；持久凭据为维护 ID、来源 hash/版本/数量及预算数字。每次实际请求的 input_estimate_json 可含 runtime_context，不覆盖首次采用的 context_snapshot，也不把本地估算回填为 Provider Token。配置读取/预览不会产生调用记录。
+
 ## 测试报告
 
 pytest summary 区分 full/partial，并记录 Git HEAD、dirty 指纹、数据库和通过/失败/跳过统计。失败文件不

@@ -5,11 +5,13 @@ import { conversationContext, type ContextSummary } from '../../api/context'
 import { contextActions, contextError, type Compressions, type CompressionInput } from '../../api/contextActions'
 import { useAppStore } from '../../store/app'
 import { SummaryBody } from './SummaryBody'
+import { ContextPolicySettings } from './ContextPolicySettings'
 
 const field = 'mt-2 block w-full rounded-xl border border-slate-700 bg-panel p-2.5 text-xs outline-none focus:border-indigo-400'
 const button = 'rounded-lg border border-slate-700 px-3 py-2 text-xs disabled:opacity-40 focus-visible:outline focus-visible:outline-indigo-400'
 const states: Record<string, string> = { queued: '排队中', running: '正在压缩', stopping: '正在停止', completed: '已采用摘要', unchanged: '保持原版本', cancelled: '已取消', interrupted: '执行中断', stale: '来源已变化', failed: '未完成' }
 const running = (status: string) => ['queued', 'running', 'stopping'].includes(status)
+const stateLabel = (job: { scope?: string; status: string }) => job.scope === 'execution' && job.status === 'completed' ? '私有摘要已生成' : states[job.status] ?? job.status
 const number = (value: number | null | undefined) => value == null ? '未知' : value.toLocaleString()
 type Draft = { instructions: string; keep_recent: number; target_tokens: number; modelRoleId: number | null }
 const drafts = new Map<string, Draft>()
@@ -126,6 +128,8 @@ export function CompressionPanel({ conversation, roles, scope }: { conversation:
       <h4 className="break-words font-medium">{conversation.title}</h4>
       <p className="leading-relaxed text-slate-500">摘要保存在本会话，供所有角色后续组装输入时共用。原消息保留。</p>
     </section>
+    <details className="rounded-xl border border-slate-800 bg-panel p-3"><summary className="cursor-pointer font-medium">自动压缩设置</summary>
+      <div className="mt-4"><ContextPolicySettings conversationId={conversationId} roles={roles} /></div></details>
     <form className="space-y-3" onSubmit={event => { event.preventDefault(); void submit() }}>
       <fieldset disabled={busy || !!inFlight} className="space-y-3">
         <label className="block">生成摘要的模型<select aria-label="生成摘要的模型" className={field} value={draft.modelRoleId ?? ''}
@@ -148,17 +152,19 @@ export function CompressionPanel({ conversation, roles, scope }: { conversation:
     </form>
     {error && <p role="alert" className="text-red-500">{error}</p>}
     <p ref={status} tabIndex={-1} role="status" className="text-slate-500 outline-none">{busy ? '正在提交…' : notice || (!value ? '正在读取任务…' : '')}</p>
-    {inFlight && <div className="rounded-xl border border-indigo-200 bg-panel p-3"><p className="font-medium">{states[inFlight.status]}</p>
+    {inFlight && <div className="rounded-xl border border-indigo-200 bg-panel p-3"><p className="font-medium">{stateLabel(inFlight)}</p>
       <p className="mt-2 text-slate-500">已记录模型调用 {inFlight.usage?.recorded_calls ?? inFlight.completed_calls} 次 · 来源 {inFlight.source_count} 条</p>
       <button type="button" className={`${button} mt-3`} disabled={busy || inFlight.cancel_requested} onClick={() => void stop(inFlight.id)}>停止压缩任务</button></div>}
     {job && <section aria-label="压缩执行记录" className="space-y-2 rounded-xl border border-slate-800 bg-panel p-3">
-      <div className="flex justify-between gap-2"><h4 className="font-medium">最近维护记录</h4><span>{states[job.status] ?? job.status}</span></div>
+      <div className="flex justify-between gap-2"><h4 className="font-medium">最近维护记录</h4><span>{stateLabel(job)}</span></div>
       <p className="break-all text-slate-500">{job.model_name} · {new Date(job.created_at).toLocaleString()}</p>
+      <p className="text-slate-500">{job.trigger === 'automatic' ? '自动触发 · 共用原任务预算' : '主动压缩'} · {job.scope === 'execution' ? '仅用于本次执行，不发布会话摘要' : '会话共享上下文'}</p>
       <p>材料估算 {number(job.input_tokens_estimate)} → {number(job.output_tokens_estimate)} Token</p>
+      {job.outcome && <p className={job.outcome.target_reached ? 'text-slate-500' : 'text-amber-700'}>保留尾部后 {number(job.outcome.material_tokens)} / 目标 {number(job.outcome.target_tokens)} Token{job.outcome.target_reached ? ' · 已达到目标' : ' · 最近消息或必要事实使材料仍高于目标'}</p>}
       <p className="text-slate-500">来源 {job.source_count} 条 · 模型调用 {job.usage?.recorded_calls ?? job.completed_calls} 次</p>
       <p className="text-slate-500">厂商累计输入 {number(job.usage?.metrics.input_tokens.total)} · 输出 {number(job.usage?.metrics.output_tokens.total)} Token</p>
       {job.error_code && <p className="leading-relaxed text-amber-700">{contextError(job.error_code)}</p>}
-      <details><summary className="cursor-pointer text-slate-500">本次范围与要求</summary><p className="mt-2">来源至消息 #{job.through_message_id} · 材料 v{job.source_revision}</p><p className="mt-2 whitespace-pre-wrap break-words">{job.instructions || '使用默认保留要求'}</p></details>
+      <details><summary className="cursor-pointer text-slate-500">本次范围与要求</summary><p className="mt-2">{job.scope === 'execution' ? '本次执行的完整工具轮或精确上游正文' : `来源至消息 #${job.through_message_id} · 材料 v${job.source_revision}`}</p><p className="mt-2 whitespace-pre-wrap break-words">{job.instructions || '使用默认保留要求'}</p></details>
     </section>}
     {value && <section aria-label="摘要版本" className="space-y-3 border-t border-slate-800 pt-3">
       <h4 className="font-medium">摘要版本</h4>
@@ -170,7 +176,7 @@ export function CompressionPanel({ conversation, roles, scope }: { conversation:
         {!version.valid && <p className="mt-2 text-slate-500">来源修订或删除后，旧摘要不能重新采用。</p>}
         <button type="button" className={`${button} mt-3`} disabled={busy || version.active || !version.valid} onClick={() => void restore(version.id)}>采用此摘要版本</button>
       </details>)}
-      {value.history.jobs.length > 1 && <details className="text-slate-500"><summary className="cursor-pointer">更早的维护记录</summary><div className="mt-2 space-y-1">{value.history.jobs.slice(1).map(job => <button type="button" key={job.id} className="block w-full rounded-lg border border-slate-800 p-2 text-left" onClick={() => setFocusJob(job.id)}>{new Date(job.created_at).toLocaleString()} · {states[job.status] ?? job.status}</button>)}</div></details>}
+      {value.history.jobs.length > 1 && <details className="text-slate-500"><summary className="cursor-pointer">更早的维护记录</summary><div className="mt-2 space-y-1">{value.history.jobs.slice(1).map(job => <button type="button" key={job.id} className="block w-full rounded-lg border border-slate-800 p-2 text-left" onClick={() => setFocusJob(job.id)}>{new Date(job.created_at).toLocaleString()} · {stateLabel(job)}</button>)}</div></details>}
     </section>}
   </section>
 }

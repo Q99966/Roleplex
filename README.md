@@ -25,7 +25,9 @@ Owner 可在“系统与环境设置 → 提示词与规则”配置当前世界
 
 Owner 可在“上下文 → 主动压缩”整理当前会话的共享上下文，独立选择生成摘要的模型配置，查看进度、停止和回退摘要版本；原消息与后来追加内容保留。角色显式启用 `memory_search/read` 后可主动搜索可共享历史并回读原文，Owner 也能在“历史检索”核对来源。见[主动压缩](docs/protocol/public/rest/context-compression.md)与[Memory 协议](docs/protocol/public/rest/memory.md)。
 
-[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A–C 已实现；自动压缩策略、Skills/MCP 完整模块继续按 D–F 实施。
+会话可在“上下文 → 主动压缩 → 自动压缩设置”继承世界策略或单独设置。阈值上限取全部有效角色的最小窗口，推荐值为上限减建议预留（默认建议 50k）；自动维护沿用原任务预算，完成后继续执行。每次模型调用都检查包含工具结果的实际输入，执行私有摘要不发布为群聊材料。世界默认位于“设置 → 提示词与规则”。
+
+[总体计划](docs/plan/conversation-context-memory-capabilities-v1.md)的 A–D 已接入；Skills/MCP 完整模块继续按 E–F 实施。
 
 会话内工作流从右侧“工作流”模块打开；画布覆盖主消息和输入区域，返回对话保留草稿与阅读位置，不停止运行。画布采用 React Flow，可编辑保存分支和环路，连线支持节点避障与循环外侧绕行；新图支持并行分支、汇合与显式条件循环，旧串行图保持兼容；编辑草稿自动保存在当前浏览器，刷新或重开会话后恢复，仍需明确“保存模板”或“提交本次运行调整”提交对应服务端版本；操作与恢复规则见[工作流协议](docs/protocol/public/rest/workflows.md)。
 

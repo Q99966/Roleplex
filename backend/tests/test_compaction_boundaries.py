@@ -25,6 +25,44 @@ async def prepare(client, headers, cid, ids, *, count=6, text=None):
 
 
 @pytest.mark.anyio
+async def test_cancel_during_terminal_publication_finishes_maintenance(command_root, isolated_command_database, monkeypatch):
+    """runner 自行取消后调度器再 cancel，终态事务必须仍完成并释放会话。"""
+    from app.agent import fake_provider
+    from app.context import compaction_runner
+    from app.db import SessionLocal
+    from app.models import AgentExecution, ContextCompression, Generation
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = compaction_runner.lock_material
+    async def paused_lock(session, cid):
+        entered.set()
+        await asyncio.wait_for(release.wait(), 10)
+        await original(session, cid)
+    class Cancelled(fake_provider.ContextCompactionModel):
+        async def _astream(self, messages, **kwargs):
+            raise asyncio.CancelledError()
+            yield
+    monkeypatch.setattr(compaction_runner, 'lock_material', paused_lock)
+    monkeypatch.setattr(fake_provider, 'ContextCompactionModel', Cancelled)
+    async with setup_group(command_root) as (client, headers, cid, ids, _):
+        _, body = await prepare(client, headers, cid, ids)
+        base = f'/api/conversations/{cid}/context/compressions'
+        created = (await client.post(base, headers=headers, json=body)).json()
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            stopped = await client.post(base + f'/{created["id"]}/cancel', headers=headers)
+            assert stopped.status_code == 200
+        finally:
+            release.set()
+        job = await wait_compaction(client, headers, cid, created['id'])
+        assert job['status'] == 'cancelled'
+        async with SessionLocal() as session:
+            row = await session.get(ContextCompression, job['id'])
+            execution = await session.scalar(select(AgentExecution).where(AgentExecution.execution_id == row.execution_id))
+            assert row.active_conversation_id is None
+            assert (await session.get(Generation, execution.generation_id)).status == 'stopped'
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize('change', ['append', 'edit', 'delete', 'cancel', 'revoke', 'restore'])
 async def test_publication_obeys_concurrent_user_intent(command_root, isolated_command_database, monkeypatch, change):
     from app.agent import fake_provider

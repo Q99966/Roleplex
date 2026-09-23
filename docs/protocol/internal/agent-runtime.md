@@ -130,6 +130,12 @@ schema 8 增加有来源的摘要单元与显式启用的 `memory_search/read`�
 
 `context_compact` 是现有 QueueJob/AgentExecution 的维护分支，无聊天消息和工具。分段调用复用同 chain 额度及 ModelCallUsage；防腐层 `provider_call_index_offset` 让日志、领域事件和业务调用索引连续，不把多段都记成第 1 次。正常聊天默认偏移 0。压缩回退、幂等、停止与恢复见[维护协议](../public/rest/context-compression.md)。
 
+schema 9 将执行分为短事务构建、必要的自动维护和每次派发检查。自动维护是触发 execution 的子任务，沿用原 chain 额度，不能排到同一串行队列后再等待。维护原子消费时为原任务保留一次决策，停止根任务传播取消并确认子任务收口。来源/策略/角色/模型/已读 Memory 在维护与继续原任务时复核。
+
+每个模型边界用实际完整消息及工具定义检查角色窗口、原输出预留和安全余量。普通会话初始压力取裁剪前历史规模；工作流精确上游不裁掉，允许在私有范围压缩长正文，但当前结构化激活数据和中断事实原样保留。闭合工具轮在原消息所有者确认终态落库后，可在执行内替换为私有摘要及服务器效果事实，图状态、原工具配对/执行记录不改，私有材料不进入 ContextSummary 或 Memory。不可处理的必要输入超限在调用前拒绝。
+
+`prepare_input` 是 Agent 防腐层的调用前适配入口，先容量检查/维护，再消费原决策额度。子维护的框架 callbacks/configurable 显式隔离，业务父子身份仍由既有执行模型传递，防止子模型事件串入根执行的流、终态或 usage。首次 context_snapshot 保持原事实，逐次采用的私有维护凭据写入该次 ModelCallUsage.input_estimate_json.runtime_context。
+
 ## 防腐层边界与实测结论
 
 框架事件到领域事件的转换全部收敛在 `app/agent/loop.py`，测试用源码扫描保证其他模块

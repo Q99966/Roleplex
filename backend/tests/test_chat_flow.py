@@ -179,7 +179,7 @@ async def test_single_chat_streams_and_persists():
     assert provider_call.base_url_source == "fake"
 
     loaded = next(record for record in records if record.getMessage() == "context.loaded")
-    assert loaded.context_schema_version == 8
+    assert loaded.context_schema_version == 9
     assert len(loaded.runtime_prefix_hash) == 64
     assert len(loaded.role_prefix_hash) == 64
     assert len(loaded.conversation_prefix_hash) == 64

@@ -10,8 +10,8 @@ from langchain_core.messages import BaseMessage
 if TYPE_CHECKING:
     from ..agent.capabilities import ExecutionCapabilities
 
-# v8 增加有来源的压缩段与主动检索能力，工作流精确上游继续独立。
-CONTEXT_SCHEMA_VERSION = 8
+# v9 增加每次派发的硬预算与执行私有压缩凭据，共享摘要及精确上游仍独立。
+CONTEXT_SCHEMA_VERSION = 9
 
 
 @dataclass(frozen=True)

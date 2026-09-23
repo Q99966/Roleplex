@@ -348,6 +348,7 @@ async def run_agent(
     before_decision: Callable[[int], Awaitable[bool]] | None = None,
     time_source: Callable[[], float] | None = None,
     provider_call_index_offset: int = 0,
+    prepare_input: Callable[[list[BaseMessage], list[dict], int], Awaitable[list[BaseMessage]]] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """执行一次 Agent 循环，按领域事件流式产出结果。
 
@@ -362,6 +363,7 @@ async def run_agent(
         before_decision：可选共享预算原子消费，参数为本执行的决策序号。
         time_source：用于确定性测试的单调时钟；正常运行使用事件循环时钟。
         provider_call_index_offset：同一维护 execution 分段调用时的既有调用数，保持日志/事件/usage 身份一致。
+        prepare_input：安全调用边界上的容量检查与私有输入适配；不改变图状态或重放工具。
 
     Yields:
         `TextDelta` / `ToolCallStarted` / `ToolCallFinished` / `ProviderCallCompleted` /
@@ -397,11 +399,14 @@ async def run_agent(
         nonlocal remaining_steps, decisions
         if decision_limit is not None and decisions >= decision_limit:
             raise _DecisionBudgetReached()
+        messages = [*([SystemMessage(content=system_prompt)] if system_prompt else []), *state['messages']]
+        if prepare_input is not None:
+            messages = await prepare_input(messages, definitions, decisions + 1)
         if before_decision is not None and not await before_decision(decisions + 1):
             raise _DecisionBudgetReached()
         decisions += 1
         remaining_steps = state.get('remaining_steps')
-        return [*([SystemMessage(content=system_prompt)] if system_prompt else []), *state['messages']]
+        return messages
 
     from .argument_errors import execution_error_text
     tools = [tool.model_copy(update={'handle_tool_error':execution_error_text}) for tool in tools]
@@ -431,7 +436,10 @@ async def run_agent(
 
     try:
         async with aclosing(agent.astream_events(
-            {"messages": messages}, version="v2", config={"recursion_limit": graph_limit}
+            # 子维护可能从外层图的调用前钩子启动。显式建立本执行的框架事件边界，
+            # 避免压缩模型事件被父图重复消费；业务父子身份仍使用既有 execution。
+            {"messages": messages}, version="v2", config={"recursion_limit": graph_limit,
+                "callbacks": [], "tags": [], "metadata": {}, "configurable": {}}
         )) as graph_events:
             async for event in graph_events:
                 kind = event["event"]
@@ -536,8 +544,8 @@ async def run_agent(
                         private_output=private_output,
                     )
     except ContextBuildError as exc:
-        code = str(exc) if str(exc) in {'CONVERSATION_NOT_FOUND', 'ROLE_NOT_AVAILABLE', 'CONTEXT_SOURCE_CHANGED'} else 'AGENT_RUNTIME_ERROR'
-        yield ProviderError(code=code, message=code, stop_reason='context_rejected')
+        code = str(exc) if str(exc) in {'CONVERSATION_NOT_FOUND', 'ROLE_NOT_AVAILABLE', 'CONTEXT_SOURCE_CHANGED', 'CONTEXT_BUDGET_EXCEEDED', 'AGENT_TOOL_RESULT_MISSING'} else 'AGENT_RUNTIME_ERROR'
+        yield ProviderError(code=code, message=code, stop_reason='protocol_error' if code == 'AGENT_TOOL_RESULT_MISSING' else 'context_rejected')
         return
     except _DecisionBudgetReached:
         if response_error or protocol_broken or pending_ids or started_at or provider_call_index:

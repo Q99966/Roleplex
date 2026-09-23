@@ -1,6 +1,6 @@
-# 主动压缩与摘要版本
+# 会话压缩策略与摘要版本
 
-状态：总体计划 C 已实现。自动阈值、自动提示词和执行内工具轮压缩留给 D。原材料与统计口径见[会话上下文](conversation-context.md)，原文查找见[Memory](memory.md)。
+状态：主动压缩、自动策略和执行内容量检查已接入。原材料与统计口径见[会话上下文](conversation-context.md)，原文查找见[Memory](memory.md)。
 
 ## 范围与存储
 
@@ -10,7 +10,7 @@ Owner 在“上下文 → 主动压缩”查看当前会话，独立选择生成
 
 维护请求创建 `Generation`（无 assistant_message_id）、`AgentExecution.execution_kind=context_compact`、独立 chain、`WorkflowBudget` 和既有 QueueJob。trigger_message_id 可空只用于此维护链。调度、停止和 usage 仍由既有设施管理，聊天快照及普通“停止生成”排除维护 generation。压缩任务在自己的面板停止，角色执行用量包含其真实模型调用并标记维护类型。
 
-每个会话最多一个 queued/running/stopping 请求，由可空唯一 active_conversation_id 约束。来源另以 context_compression_sources 保存消息 ID、revision/status/text_hash；ID 是历史凭据，原消息删除后仍保留，供旧摘要判失效。发布的 context_summaries 不可变，活动指针独立；会话材料 summary_revision 只在发布/回退时递增，防止指针来回切换后旧任务误采用。
+每个会话最多一个 queued/running/stopping 的共享材料压缩请求；执行私有压缩不占用该指针。共享请求由可空唯一 active_conversation_id 约束。来源另以 context_compression_sources 保存消息 ID、revision/status/text_hash；ID 是历史凭据，原消息删除后仍保留，供旧摘要判失效。发布的 context_summaries 不可变，活动指针独立；会话材料 summary_revision 只在发布/回退时递增，防止指针来回切换后旧任务误采用。
 
 ## 创建任务
 
@@ -66,3 +66,41 @@ versions 返回 id/active/valid、text、source_count、through_message_id 及�
 ## 错误
 
 新错误以[注册表](../../error-codes.md)为准。创建前的无权资源 404、参数/范围/窗口问题 422、版本/幂等/在途冲突 409；存储异常 503，不回显 SQL 参数。执行开始后的 source_changed、model_changed、budget_exceeded、source_too_large、merge_too_large、result_invalid、output_too_large、no_gain 等保存在任务 error_code，不能用 failed 统一猜测调用没有发生。
+
+## 自动策略（0027）
+
+Owner 通过 `GET/PUT /api/context-policy` 管理当前世界默认，`GET/PUT /api/conversations/{id}/context/policy` 管理会话覆盖。会话仍检查归属与成员，响应 `Cache-Control: no-store`。PUT 为 `{expected_revision,policy}`；`policy=null` 在会话表示恢复继承，在世界表示恢复软件默认。读取、保存策略不调用模型。
+
+| policy 字段 | 默认值与含义 |
+|---|---|
+| enabled | false，需显式启用自动维护 |
+| trigger_tokens | null，动态使用推荐值；显式值 256–10000000，会话保存时不得超过上限 |
+| reserve_tokens | 50000，仅影响推荐值，可设 0–10000000；不是硬性扣除 |
+| target_tokens | null，触发值的一半；显式值 128–10000000 且小于显式 trigger_tokens |
+| summary_tokens | 1024，摘要长度上限 128–100000，实际生成时还考虑目标和保留尾部 |
+| keep_recent | 6，保留 0–200 条最近未压缩消息；置顶消息始终保留原文 |
+| model_role_id | null 表示显式选择“跟随当前执行的角色模型”；指定时必须是可用成员配置，失效暂停而不静默换模型 |
+| instructions | 自动保留要求，最多 10000 字符；与主动压缩的一次性 instructions 独立 |
+| cooldown_seconds / min_new_tokens | 60 秒 / 1024；冷却及新增稳定材料门槛，范围分别 0–86400 / 0–1000000 |
+
+世界读返回 revision/policy。会话另返回 inherited、world_revision、effective、limits、notices、stamp。limits 包含全部有效成员的 role_id/name/window_tokens、ceiling_tokens、recommended_reserve_tokens 和 recommended_trigger_tokens。有效成员是启用、未删除、属于会话 Owner 且模型仍可用的角色；窗口沿用 `min(角色窗口, 部署窗口限制)`。
+
+公式：`ceiling = min(全部有效角色窗口)`；`recommended_trigger = ceiling - recommended_reserve`。默认建议预留 50k；若建议大于等于窗口，推荐改为窗口的一半并返回 reserve_adjusted。举例 200k、1M、100k 的上限为 100k，推荐触发 50k。推荐值可低于用户选择的阈值，实际调用始终另算固定规则、Schema、输出与安全余量。
+
+每次读取/执行重算窗口。窗口缩小后不覆盖原 policy，effective 的阈值和目标收紧，并返回 threshold_clamped/target_clamped；无有效角色或指定模型不可用时 effective.enabled=false。未设置显式触发值就跟随最新推荐值，不创建多个角色各自的长期会话上下文。
+
+前端在压缩页展开“自动压缩设置”，展示公式、各角色窗口、实际值及提示；继承、未保存草稿、版本冲突分别显示。世界默认位于设置的“提示词与规则”。设置变化供之后的调用边界采用，已发出的请求不改写。
+
+## 自动执行与私有材料
+
+自动维护创建 `trigger=automatic` 的 context_compact 子 execution，parent_execution_id 指向触发任务、chain_id 沿用原链，不创建新预算，不排到当前会话队列后等待。每次维护调用原子消费原 chain 额度，并为原任务留至少一次后续调用。Owner 取消维护可继续原任务；停止原任务会取消并等待子任务收口。创建已提交但尚未开始执行的取消间隙也会收口，重启不重放。
+
+共享材料采用 `scope=conversation`。在原任务初始构建、裁剪前判断压力，范围不越过当前用户任务或任何生成中来源。相容的竞争者复用同一已发布摘要，不把未来消息纳入旧任务；正在排队的手动维护不会阻塞原任务等待自身。来源指纹、数据库幂等键、共享材料唯一在途请求及冷却/增量共同避免重复收费。私有工具轮在实际窗口超限时可提前维护新闭合内容；相同输入失败不在同执行中重试，原链额度仍生效。失败保留原材料，下一次实际调用仍经过硬预算。
+
+每次实际 Provider 调用前计算完整消息、实际工具 Schema、原输出预留和安全余量。执行期间工具增长、工作流长上游正文需要维护时，创建 `scope=execution` 的私有维护任务；只替换完整配对的闭合工具轮或本尝试明确上游的正文。工具结果先由原消息所有者落库，再交接给私有压缩，避免图状态领先执行记录时把已提交误标为未知；交接缺失时拒绝派发。原图状态和工具执行记录不改写。迭代、attempt、结构化判断值、当前任务及中断事实保持原文；不能用全群摘要替换明确上游。旧 Memory 来源在维护调用及继续原任务前都重新鉴权。
+
+私有正文和摘要仅存于该 execution 的内存，进程结束后不恢复运行；数据库只保存来源版本/hash、计量、服务器效果事实及维护状态，不建立 ContextSummary 或 Memory 条目。每次采用私有材料的 `model_call_usage.input_estimate_json.runtime_context` 记录压缩任务 ID、来源 hash/数量和该次窗口，不覆盖首次 context_snapshot。框架子图回调隔离在 Agent 防腐层，避免维护模型被父执行重复统计。
+
+私有任务 completed 只表示有效摘要已生成；真正送入模型的采用事实以对应调用的 runtime_context 为准，不能把生成成功等同原任务已经继续。
+
+job 兼容增加 trigger（manual/automatic）、scope（conversation/execution）、outcome。共享自动成功后的 outcome 为 `{target_tokens,material_tokens,target_reached}`，按该次冻结边界的摘要及保留尾部估算，不包括后来追加消息。目标是期望值；最近消息、置顶及必要执行事实可能使结果仍高于目标，界面展示实际值。不能装入必需输入时返回 CONTEXT_BUDGET_EXCEEDED，不拆断工具对、不删掉未知副作用，也不自动再执行已产生效果的工具。

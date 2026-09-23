@@ -21,8 +21,8 @@ from ..services import agent_budget, execution_usage
 from .access import require_context_access
 from .budget import estimate_text_tokens, token_estimate
 from .compaction import changed, lock_material, model_identity, TERMINAL
-from .compaction_schema import SummaryContent
-from .domain import ContextBuildError
+from .compaction_schema import SummaryContent, private_text
+from .domain import ContextBuildError, CONTEXT_SCHEMA_VERSION
 from .summaries import plain_text, sources_valid
 
 logger = logging.getLogger('roleplex.context.compaction')
@@ -41,7 +41,10 @@ async def authorized(session, job):
     await require_context_access(session, conversation_id=job.conversation_id, role_id=job.role_id, user_id=job.owner_id)
     from ..workflows.service import owned
     await owned(session, job.conversation_id, job.owner_id)
-    if not await sources_valid(session, job):
+    if job.trigger == 'automatic':
+        from .automatic import validate_job
+        await validate_job(session, job)
+    if job.scope == 'conversation' and not await sources_valid(session, job):
         raise CompactionFailure('CONTEXT_COMPRESSION_SOURCE_CHANGED', 'stale')
     config = await session.get(ModelConfig, job.model_snapshot_json['model_config_id'])
     if config is None or config.created_by != job.owner_id or model_identity(config) != job.model_snapshot_json['config_hash']:
@@ -137,7 +140,7 @@ async def call_model(job, items, index):
             model_name=snapshot['model_name'], context_window_tokens=snapshot['context_window_tokens'], params_json=snapshot['params'])
         from ..config.logging import set_log_context
         from ..services.chat import _provider_log_fields
-        set_log_context(**await _provider_log_fields(session, role), context_schema_version=8)
+        set_log_context(**await _provider_log_fields(session, role), context_schema_version=CONTEXT_SCHEMA_VERSION)
         if settings.agent_use_fake_provider:
             from ..agent.fake_provider import ContextCompactionModel
             model = ContextCompactionModel()
@@ -151,7 +154,7 @@ async def call_model(job, items, index):
         try:
             async with SessionLocal() as session:
                 await authorized(session, await session.get(ContextCompression, job.id))
-            if not await agent_budget.consume(job.execution_id, index):
+            if not await agent_budget.consume(job.execution_id, index, reserve=1 if job.trigger == 'automatic' else 0):
                 raise CompactionFailure('CONTEXT_COMPRESSION_BUDGET_EXCEEDED')
             return True
         except CompactionFailure as exc:
@@ -167,8 +170,8 @@ async def call_model(job, items, index):
         async for event in stream:
             if isinstance(event, ProviderCallStarted):
                 estimate = event.input_estimate or {}
-                receipt = {'context_schema_version': 8, 'material': {'scope': 'context_compaction',
-                    'compression_id': job.id, 'revision': job.source_revision}, 'request': {
+                receipt = {'context_schema_version': CONTEXT_SCHEMA_VERSION, 'material': {'scope': 'context_compaction',
+                    'compression_id': job.id, 'revision': job.source_revision, 'compression_scope': job.scope}, 'request': {
                     **estimate, 'effective_context_window': job.model_snapshot_json['context_window_tokens'],
                     'output_reserved_tokens': job.target_tokens}}
                 await record_event(job, event, index, completed=False, receipt=receipt)
@@ -222,7 +225,7 @@ async def finish(job_id, status, error_code=None, *, content=None):
                     await authorized(session, row)
                     pointer = await session.scalar(select(ContextSummary.id).where(ContextSummary.active_conversation_id == row.conversation_id))
                     state = await session.get(ConversationContext, row.conversation_id)
-                    if pointer != row.base_summary_id or state.summary_revision != row.base_summary_revision:
+                    if row.scope == 'conversation' and (pointer != row.base_summary_id or state.summary_revision != row.base_summary_revision):
                         raise CompactionFailure('CONTEXT_COMPRESSION_SOURCE_CHANGED', 'stale')
                     # 执行事实来自服务器，不交给摘要模型删改或解释成整体成功。
                     facts = (await session.execute(select(Source.message_id, Entry.execution_facts_json).join(Entry,
@@ -233,18 +236,28 @@ async def finish(job_id, status, error_code=None, *, content=None):
                         for mid, fact in facts if fact]
                     if execution_facts:
                         content_to_publish = {**content_to_publish, 'execution_facts': execution_facts}
-                    text = plain_text(content_to_publish)
-                    size = estimate_text_tokens(text)
+                    text = private_text(content_to_publish, row.runtime_json.get('execution_facts', [])) if row.scope == 'execution' else plain_text(content_to_publish)
+                    size = estimate_text_tokens(text, structural_tokens=8 if row.scope == 'execution' else 0)
                     row.output_tokens_estimate = size
-                    if size > row.target_tokens + estimate_text_tokens(plain_text({})):
+                    wrapper = private_text({}, []) if row.scope == 'execution' else plain_text({})
+                    if size > row.target_tokens + estimate_text_tokens(wrapper, structural_tokens=8 if row.scope == 'execution' else 0):
                         final, code = 'unchanged', 'CONTEXT_COMPRESSION_REQUIRED_FACTS_TOO_LARGE'
                     elif size >= row.input_tokens_estimate:
                         final, code = 'unchanged', 'CONTEXT_COMPRESSION_NO_GAIN'
-                    else:
+                    elif row.scope == 'conversation':
                         await session.execute(update(ContextSummary).where(ContextSummary.active_conversation_id == row.conversation_id).values(active_conversation_id=None))
                         session.add(ContextSummary(id=row.id, conversation_id=row.conversation_id, active_conversation_id=row.conversation_id,
                             content_json=content_to_publish, text=text, text_bytes=size, created_at=now_utc()))
                         state.revision += 1; state.summary_revision += 1; state.updated_at = now_utc()
+                        if row.trigger == 'automatic':
+                            remaining = await session.scalar(select(func.sum(Entry.text_bytes + 8)).where(
+                                Entry.conversation_id == row.conversation_id, Entry.state == 'included',
+                                Entry.message_id <= row.runtime_json['boundary'],
+                                ~select(Source.message_id).where(Source.compression_id == row.id, Source.message_id == Entry.message_id).exists())) or 0
+                            total = size + int(remaining)
+                            target = row.runtime_json['target_material_tokens']
+                            row.runtime_json = {**row.runtime_json, 'outcome': {'target_tokens': target,
+                                'material_tokens': total, 'target_reached': total <= target}}
                 except CompactionFailure as exc:
                     final, code = exc.status, exc.code
                 except (HTTPException, ContextBuildError):
@@ -254,14 +267,31 @@ async def finish(job_id, status, error_code=None, *, content=None):
             generation = await session.get(Generation, execution.generation_id)
             generation.status = 'completed' if final in {'completed', 'unchanged'} else 'stopped' if final == 'cancelled' else 'failed'
             generation.error_code = code; generation.ended_at = now_utc()
+            if row.trigger == 'automatic':
+                execution.status = generation.status; execution.error_code = code; execution.ended_at = generation.ended_at
             pending = await changed(session, row.conversation_id, row)
             await session.commit()
         await events.publish_events(pending)
-    await with_locked_retry(operation)
+    # runner 可能已因停止标志自行抛出 CancelledError，随后调度器又发送 task.cancel。
+    # 终态发布由本调用拥有并等待完成，重复取消不能把任务永久留在 stopping。
+    task = asyncio.create_task(with_locked_retry(operation))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError()
 
 
-async def run(*, generation_id, conversation_id, execution_id, triggered_by_user_id, target_role_id):
-    """既有会话队列调用的维护分支；每个输入/输出单元有预算，分段后逐层归并。"""
+async def run(*, generation_id, conversation_id, execution_id, triggered_by_user_id, target_role_id, private_units=None):
+    """手动排队与自动子任务共用的有预算分段/归并执行器。
+
+    Args:
+        private_units：宿主传入的执行内单元，仅留在内存；不发布到共享摘要。
+    """
     job_id = None
     started_at = perf_counter()
     logger.info('generation.started', extra={'reason': 'context_compaction'})
@@ -280,7 +310,14 @@ async def run(*, generation_id, conversation_id, execution_id, triggered_by_user
         outputs, chunk, index = [], [], 0
         if not fits(job, []):
             raise CompactionFailure('CONTEXT_COMPRESSION_BUDGET_EXCEEDED')
-        async for unit in units(job):
+        async def input_units():
+            if private_units is not None:
+                for unit in private_units:
+                    yield unit
+            else:
+                async for unit in units(job):
+                    yield unit
+        async for unit in input_units():
             if not fits(job, [unit]):
                 raise CompactionFailure('CONTEXT_COMPRESSION_SOURCE_TOO_LARGE')
             if chunk and not fits(job, [*chunk, unit]):
@@ -309,6 +346,11 @@ async def run(*, generation_id, conversation_id, execution_id, triggered_by_user
                     index += 1; next_outputs.append(await call_model(job, chunk, index))
             outputs = next_outputs
         await finish(job.id, 'completed', content=outputs[0]['summary'])
+        if job.scope == 'execution':
+            async with SessionLocal() as session:
+                row = await session.get(ContextCompression, job.id)
+                if row.status == 'completed':
+                    return outputs[0]['summary']
     except asyncio.CancelledError:
         if job_id:
             await finish(job_id, 'interrupted', 'EXECUTION_INTERRUPTED')

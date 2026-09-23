@@ -25,7 +25,7 @@ from .config.logging import (
     process_stop_reason,
 )
 from .config.log_archive import maintain_logs
-from .routers import agent_budget, approvals, artifacts, auth, context_compaction, conversation_context, conversations, memory, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, workflows
+from .routers import agent_budget, approvals, artifacts, auth, context_compaction, context_policy, conversation_context, conversations, memory, messages, model_configs, prompt_settings, roles, runtime, workspaces, worlds, workflows
 from .runtime.manager import manager as runtime_manager
 from .runtime.registry import RuntimeRejected
 from .runtime.wrapper import watch_wrapper
@@ -232,6 +232,7 @@ app.include_router(approvals.router)
 app.include_router(runtime.router)
 app.include_router(agent_budget.router)
 app.include_router(prompt_settings.router)
+app.include_router(context_policy.router)
 app.include_router(conversation_context.router)
 app.include_router(memory.router)
 app.include_router(context_compaction.router)

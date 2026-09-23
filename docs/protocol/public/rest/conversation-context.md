@@ -1,6 +1,6 @@
 # 持久会话上下文与输入占用
 
-状态：B 已实现，C 增加[主动压缩](context-compression.md)与[Memory 检索回读](memory.md)；自动策略阈值仍按 D 实施。入口为单聊/群聊右侧“上下文”，分为“占用与输入”“会话材料”“提示词”。提示词字段见[提示词配置](prompt-settings.md)。
+状态：B 已实现，C 增加[主动压缩](context-compression.md)与[Memory 检索回读](memory.md)；D 增加自动策略与逐次调用预算检查。入口为单聊/群聊右侧“上下文”，分为“占用与输入”“会话材料”“主动压缩”“历史检索”“提示词”。提示词字段见[提示词配置](prompt-settings.md)。
 
 ## 内容、材料和调用
 

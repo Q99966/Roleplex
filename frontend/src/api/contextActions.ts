@@ -2,7 +2,7 @@ import { request, type UsageSummary } from './client'
 import type { ContextSummary } from './context'
 
 export type CompressionInput = { request_key: string; expected_revision: number; role_id: number; keep_recent: number; target_tokens: number; instructions: string }
-export type CompressionJob = { id: string; request_key: string; role_id: number | null; execution_id: string; source_revision: number; base_summary_id: string | null; through_message_id: number; keep_recent: number; target_tokens: number; instructions: string; source_count: number; input_tokens_estimate: number; output_tokens_estimate: number | null; completed_calls: number; phase: string; status: string; error_code: string | null; cancel_requested: boolean; model_name: string; created_at: string; updated_at: string; usage?: UsageSummary }
+export type CompressionJob = { outcome?: { target_tokens: number; material_tokens: number; target_reached: boolean } | null; trigger?: 'manual' | 'automatic'; scope?: 'conversation' | 'execution'; id: string; request_key: string; role_id: number | null; execution_id: string; source_revision: number; base_summary_id: string | null; through_message_id: number; keep_recent: number; target_tokens: number; instructions: string; source_count: number; input_tokens_estimate: number; output_tokens_estimate: number | null; completed_calls: number; phase: string; status: string; error_code: string | null; cancel_requested: boolean; model_name: string; created_at: string; updated_at: string; usage?: UsageSummary }
 export type SummaryVersion = { id: string; active: boolean; valid: boolean; text: string | null; source_count: number; through_message_id: number; input_tokens_estimate: number; output_tokens_estimate: number }
 export type Compressions = { jobs: CompressionJob[]; versions: SummaryVersion[] }
 export type MemorySource = { kind: 'message' | 'summary'; source_id: string; source_revision: number; conversation_id: number; conversation_title: string; created_at: string; message_id: number | null; summary_id?: string; sender_type: string; sender_id: number | null; status: string; reference: string; execution_facts?: unknown; workflow?: Record<string, string | number> }
@@ -23,6 +23,7 @@ export const contextActions = {
 }
 
 const errors: Record<string, string> = {
+  CONTEXT_POLICY_CHANGED: '自动压缩策略已变化，本次维护未采用，原任务继续检查容量。',
   CONTEXT_SOURCE_CHANGED: '会话材料版本已变化，请刷新后重新操作。',
   CONTEXT_COMPRESSION_SOURCE_CHANGED: '来源、授权或摘要版本已变化，结果没有采用。',
   CONTEXT_COMPRESSION_BUSY: '本会话已有压缩任务，先查看其进度。',

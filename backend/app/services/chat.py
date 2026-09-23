@@ -17,7 +17,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import AgentExecution, Conversation, ConversationMember, ExecutionWorkspace, Generation, Message, ModelConfig, Role, ToolCall, ToolExecutionDetail
 from ..config.logging import set_log_context
-from ..context import ContextBudgetExceeded, ContextBuildRequest, build_context
+from ..context import ContextBudgetExceeded, ContextBuildRequest
 from ..context.domain import ContextBuildError, ContextBuildResult
 from ..agent import providers
 from ..agent.domain import ToolCallsNotDispatched, MessageDone, ProviderCallCompleted, ProviderCallStarted, ProviderError, TextDelta, ToolCallFinished, ToolCallStarted
@@ -617,26 +617,14 @@ async def run_scheduled_generation(
 
         # ContextBuilder 在用户消息与角色占位消息都已落库后读取，但以 current_message_id 为严格截止点，
         # 因此不会把当前消息重复放进 history，也不会读取正在生成的空 assistant 占位。
+        from ..context.automatic import prepare
+        from ..context.runtime import RuntimeContext
+        context_request = ContextBuildRequest(role_id=role_id, conversation_id=conversation_id,
+            current_message_id=current_message_id, triggered_by_user_id=triggered_by_user_id,
+            execution_kind=execution_kind, execution_id=execution_id)
+        context = await prepare(context_request)
+        runtime_context = RuntimeContext(context_request, context)
         async with SessionLocal() as session:
-            for context_attempt in range(3):
-                try:
-                    context = await build_context(
-                        session,
-                        ContextBuildRequest(
-                            role_id=role_id,
-                            conversation_id=conversation_id,
-                            current_message_id=current_message_id,
-                            triggered_by_user_id=triggered_by_user_id,
-                            execution_kind=execution_kind,
-                            execution_id=execution_id,
-                        ),
-                    )
-                    break
-                except ContextBuildError as exc:
-                    if str(exc) != 'CONTEXT_SOURCE_CHANGED' or context_attempt == 2:
-                        raise
-                    # 来源恰好收口时重新开始短读事务，不能混合两个版本的输入。
-                    await session.rollback()
             context_fields = _context_log_fields(context)
             set_log_context(**context_fields)
             logger.info("context.loaded", extra=context_fields)
@@ -689,7 +677,7 @@ async def run_scheduled_generation(
             prompt=context.current_message,
             system_prompt=context.system_prompt,
             history=context.history,
-            decision_limit=decision_limit, before_decision=authorize_decision,
+            decision_limit=decision_limit, before_decision=authorize_decision, prepare_input=runtime_context.prepare,
         )) as agent_events:
             async for event in agent_events:
                 usage_cancelled=False
@@ -763,6 +751,7 @@ async def run_scheduled_generation(
                         except asyncio.CancelledError:
                             cancelled = True
                     recording.result()
+                    runtime_context.recorded_tool_results(len(event.calls))
                     if cancelled:
                         raise asyncio.CancelledError
                 elif isinstance(event, ToolCallFinished):
@@ -788,6 +777,7 @@ async def run_scheduled_generation(
                             raise asyncio.CancelledError
                     else:
                         await completion
+                    runtime_context.recorded_tool_results()
                 elif isinstance(event, ProviderCallCompleted):
                     provider_call_count += 1
                     if first_ttft_ms is None:
@@ -819,6 +809,12 @@ async def run_scheduled_generation(
                     )
                     if usage_cancelled:raise asyncio.CancelledError
                 elif isinstance(event, ProviderCallStarted):
+                    adopted = runtime_context.receipts.pop(event.call_index, {})
+                    if adopted.get('tools_compression_id') or adopted.get('upstream_compression_id'):
+                        from dataclasses import replace
+                        event = replace(event, input_estimate={**(event.input_estimate or {}), 'runtime_context': adopted})
+                        if event.call_index == 1:
+                            prompt_receipt = {**prompt_receipt, 'runtime_context': adopted}
                     from .execution_usage import record as record_usage
                     await record_usage(execution_id,event,provider_fields.get('provider_mode','unknown'),role.model_name,context_snapshot=prompt_receipt)
                     logger.info(
@@ -965,6 +961,8 @@ async def run_scheduled_generation(
     finally:
         write_captures.clear()
         write_capture_scope.reset(write_capture_token)
+        from ..context.automatic import close_parent
+        await close_parent(execution_id)
         await retain_execution_workspace(execution_id)
         from .execution_usage import finish as finish_usage
         await finish_usage(generation_id)

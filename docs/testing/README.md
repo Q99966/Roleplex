@@ -537,3 +537,14 @@ UI 继续通过既有消息 WS 和调用级轮询读取业务状态；没有需�
 - `npm run test:e2e:worlds -- compaction-memory-worlds.spec.ts`：实际 World 切换/重启，摘要与引用保留、跨 World 引用拒绝。
 
 普通回归使用 fake Provider；`[MEMORY_PROBE]` 从真实工具结果回读受控原文，`[COMPACT_SLOW]` 只在压缩 fake 中延迟以验证取消，不是产品权限入口。真实模型的摘要质量和语义检索效果另行验证，不由 fake 通过代替。结果与截图见[C 批验收](context-compaction-memory.md)。
+
+### 自动压缩与运行边界（总体计划 D）
+
+后端定向入口为 `test_context_policy.py`、`test_auto_compaction.py`，并回归原 context/compaction、Memory、Agent 循环、预算/用量、群协调及 `test_tool_argument_recovery.py`。验证全部有效角色的最小窗口、推荐公式、继承/CAS/权限、原链预算、并发共享、失败去重、停止和撤权、私有工具轮超限、并行循环中的精确上游。迁移检查包含 0027。
+
+前端按套件串行运行：
+
+- `npm run test:e2e:commands -- context-policy.spec.ts context-compaction-memory.spec.ts prompt-settings.spec.ts orchestration.spec.ts`：阈值界面、窗口变化、草稿冲突、世界继承、自动压缩后继续、原主动压缩和工作流。
+- `npm run test:e2e:worlds -- compaction-memory-worlds.spec.ts`：真实进程切换/重启，自动策略、摘要和引用的 World 隔离。
+
+模型均为 fake，无联网计费；不能据此宣称真实模型语义摘要质量通过。结果见[D 批验收](context-auto-compaction.md)。

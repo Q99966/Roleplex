@@ -95,7 +95,8 @@ async def test_no_next_model_call_after_role_revocation(command_root, isolated_c
     async def pause_next(*args, **kwargs):
         nonlocal checks
         checks += 1
-        if checks == 2:
+        # 调用前可有多层授权检查；暂停的是已执行一次模型/工具后的安全边界。
+        if model_calls == 1 and not entered.is_set():
             entered.set()
             await asyncio.wait_for(release.wait(), 10)
         return await original(*args, **kwargs)

@@ -34,6 +34,8 @@ class InstanceSettings(Base):
     world_prompt: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
     prompt_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
     prompt_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    context_policy_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    context_policy_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
 
 
 class User(Base):
@@ -125,6 +127,8 @@ class Conversation(Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
     prompt_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
     prompt_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    context_policy_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    context_policy_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
     orchestrator_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     orchestrator_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     orchestrator_role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id", ondelete="SET NULL"))
@@ -352,6 +356,9 @@ class ConversationContextEntry(Base):
 class ContextCompression(Base):
     """一次幂等的上下文维护请求；复用 execution/generation/chain，不伪造聊天消息。"""
     __tablename__ = 'context_compressions'
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default='manual', server_default='manual')
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default='conversation', server_default='conversation')
+    runtime_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
     owner_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=False)

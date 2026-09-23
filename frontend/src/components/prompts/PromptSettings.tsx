@@ -4,6 +4,7 @@ import { getAuthEpoch, type Conversation, type Role } from '../../api/client'
 import { promptSettings, type PromptPreview, type WorldPromptSettings, type WorldPromptValues, type ConversationPromptValues } from '../../api/prompts'
 import { useAppStore } from '../../store/app'
 import { usePromptEditor } from './usePromptEditor'
+import { ContextPolicySettings } from '../context/ContextPolicySettings'
 
 const panel = 'rounded-2xl border border-slate-800 bg-panel p-4'
 const field = 'mt-2 block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-3 text-sm text-slate-200 outline-none focus:border-indigo-400'
@@ -14,9 +15,10 @@ const sourceLabel: Record<string, string> = { runtime: '软件固定规则', def
 
 /** 世界 Owner 编辑平台覆盖与世界背景；空覆盖、默认继承和未保存输入分别表示。 */
 export function WorldPromptSettingsPanel() {
-  const { user, worldName } = useAppStore()
+  const { user, worldName, roles } = useAppStore()
   if (!user?.is_owner) return <p>提示词配置由 Owner 管理。</p>
-  return <WorldEditor key={`${getAuthEpoch()}:${worldName}:${user.id}`} scope={`${worldName}:${user.id}:world`} />
+  return <div className="space-y-5"><WorldEditor key={`${getAuthEpoch()}:${worldName}:${user.id}`} scope={`${worldName}:${user.id}:world`} />
+    <div className="border-t border-slate-800 pt-5"><ContextPolicySettings roles={roles} /></div></div>
 }
 
 function WorldEditor({ scope }: { scope: string }) {

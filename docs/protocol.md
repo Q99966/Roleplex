@@ -31,7 +31,7 @@ docs/protocol/
 |---|---|---|
 | REST 认证、密码策略与强制重置 | 已实现 | [public/rest/auth.md](protocol/public/rest/auth.md) |
 | REST 角色管理与墓碑 | 已实现 | [public/rest/roles.md](protocol/public/rest/roles.md) |
-| 主动压缩及版本回退 | 已实现，仅 Owner 创建维护请求 | [public/rest/context-compression.md](protocol/public/rest/context-compression.md) |
+| 会话压缩、自动策略及版本回退 | 已实现；Owner 配置，自动维护共用原任务预算 | [public/rest/context-compression.md](protocol/public/rest/context-compression.md) |
 | 主动历史检索与原文回读 | 已实现，共享范围与执行授权交集 | [public/rest/memory.md](protocol/public/rest/memory.md) |
 | 持久会话上下文与按角色输入占用 | 已实现，Owner 查看共享来源及调用级估算 | [public/rest/conversation-context.md](protocol/public/rest/conversation-context.md) |
 | 平台/世界/会话提示词与来源预览 | 已实现，仅 Owner 配置和查看 | [public/rest/prompt-settings.md](protocol/public/rest/prompt-settings.md) |

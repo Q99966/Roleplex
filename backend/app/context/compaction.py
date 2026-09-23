@@ -26,9 +26,10 @@ def model_identity(config):
 def job_view(job):
     from ..routers.conversation_context import utc_time
     return {key: getattr(job, key) for key in ('id', 'request_key', 'role_id', 'execution_id', 'source_revision', 'base_summary_id',
-        'through_message_id', 'keep_recent', 'target_tokens', 'instructions', 'source_count', 'input_tokens_estimate',
+        'through_message_id', 'keep_recent', 'target_tokens', 'instructions', 'source_count', 'input_tokens_estimate', 'trigger', 'scope',
         'output_tokens_estimate', 'completed_calls', 'phase', 'status', 'error_code', 'cancel_requested')} | {
-        'model_name': job.model_snapshot_json['model_name'], 'created_at': utc_time(job.created_at), 'updated_at': utc_time(job.updated_at)}
+        'model_name': job.model_snapshot_json['model_name'], 'outcome': (job.runtime_json or {}).get('outcome'),
+        'created_at': utc_time(job.created_at), 'updated_at': utc_time(job.updated_at)}
 
 
 async def lock_material(session, cid):
@@ -42,9 +43,14 @@ async def changed(session, cid, job=None):
         'compression_id': job.id if job else None, 'status': job.status if job else 'restored'})
 
 
-async def start(cid, uid, payload, request_id=None):
-    """固定来源和模型并入既有队列；相同请求键只创建一次维护额度及 execution。"""
-    request_hash = stable_hash(payload.model_dump(exclude={'request_key'}))
+async def start(cid, uid, payload, request_id=None, *, runtime=None):
+    """冻结来源与模型；手动请求排队，自动请求关联原链并交由父任务运行。
+
+    Args:
+        runtime：仅宿主可传的父执行/范围/策略凭据；自动维护不创建新预算。
+    """
+    # runtime 仅由宿主传入；REST schema 不接受 parent、scope 或预算身份。
+    request_hash = stable_hash(payload.model_dump(exclude={'request_key', 'expected_revision'} if runtime else {'request_key'}))
     async def operation():
         async with SessionLocal() as session:
             conversation = await owned(session, cid, uid)
@@ -55,6 +61,10 @@ async def start(cid, uid, payload, request_id=None):
                 if existing.request_hash != request_hash:
                     raise HTTPException(409, 'CONTEXT_COMPRESSION_REQUEST_CONFLICT')
                 return job_view(existing), None, None
+            parent = None
+            if runtime:
+                from .automatic import validate_parent
+                parent = await validate_parent(session, runtime['parent_execution_id'], cid, uid)
             await require_context_access(session, conversation_id=cid, role_id=payload.role_id, user_id=uid)
             role = await session.get(Role, payload.role_id)
             config = await session.get(ModelConfig, role.model_config_id) if role.model_config_id else None
@@ -66,17 +76,22 @@ async def start(cid, uid, payload, request_id=None):
             state = await session.get(ConversationContext, cid)
             if state.revision != payload.expected_revision:
                 raise HTTPException(409, 'CONTEXT_SOURCE_CHANGED')
-            if await session.scalar(select(ContextCompression.id).where(ContextCompression.active_conversation_id == cid)):
+            private = runtime and runtime.get('scope') == 'execution'
+            if not private and await session.scalar(select(ContextCompression.id).where(ContextCompression.active_conversation_id == cid)):
                 raise HTTPException(409, 'CONTEXT_COMPRESSION_BUSY')
             pointer = await session.scalar(select(ContextSummary.id).where(ContextSummary.active_conversation_id == cid))
             base, _ = await current_summary(session, cid)
             selected = [Entry.conversation_id == cid, Entry.state == 'included', Entry.pinned.is_(False)]
+            if runtime:
+                selected.append(Entry.message_id <= runtime['boundary'])
             earliest_pending = await session.scalar(select(func.min(Entry.message_id)).where(Entry.conversation_id == cid, Entry.state == 'pending'))
             if earliest_pending:
                 selected.append(Entry.message_id < earliest_pending)
             uncovered = ~select(Source.message_id).where(Source.compression_id == base.id, Source.message_id == Entry.message_id).exists() if base else True
             cutoff = payload.through_message_id
-            if cutoff is not None:
+            if private:
+                cutoff = runtime['boundary']
+            if cutoff is not None and not private:
                 target = await session.get(Entry, cutoff)
                 if target is None or target.conversation_id != cid or target.state != 'included':
                     raise HTTPException(422, 'CONTEXT_COMPRESSION_RANGE_INVALID')
@@ -88,49 +103,65 @@ async def start(cid, uid, payload, request_id=None):
                     cutoff = (await session.get(ContextCompression, base.id)).through_message_id
             if cutoff is None:
                 raise HTTPException(422, 'CONTEXT_NOTHING_TO_COMPRESS')
-            if earliest_pending and cutoff >= earliest_pending:
+            if not private and earliest_pending and cutoff >= earliest_pending:
                 raise HTTPException(409, 'CONTEXT_COMPRESSION_RANGE_PENDING')
-            if base and cutoff < (await session.get(ContextCompression, base.id)).through_message_id:
+            if not private and base and cutoff < (await session.get(ContextCompression, base.id)).through_message_id:
                 raise HTTPException(422, 'CONTEXT_COMPRESSION_RANGE_INVALID')
             selected.append(Entry.message_id <= cutoff)
             count, size = (await session.execute(select(func.count(), func.sum(Entry.text_bytes)).where(*selected))).one()
-            if not count:
+            if not count and not private:
                 raise HTTPException(422, 'CONTEXT_NOTHING_TO_COMPRESS')
             if base:
                 size = int(await session.scalar(select(func.sum(Entry.text_bytes)).where(*selected, uncovered)) or 0) + base.text_bytes
+            if private:
+                count, size = runtime['unit_count'], runtime['input_tokens']
+            summary_target = payload.target_tokens
+            if runtime and not private:
+                retained = await session.scalar(select(func.sum(Entry.text_bytes + 8)).where(Entry.conversation_id == cid,
+                    Entry.state == 'included', Entry.message_id <= runtime['boundary'],
+                    ~((Entry.message_id <= cutoff) & Entry.pinned.is_(False)))) or 0
+                summary_target = min(summary_target, max(128, runtime['target_material_tokens'] - int(retained)))
             chain, execution_id, job_id = uuid4().hex, uuid4().hex, uuid4().hex
+            if parent:
+                chain = parent.chain_id
             now = now_utc()
             generation = Generation(conversation_id=cid, stream_epoch=current_epoch(), status='queued', run_id=chain)
             session.add(generation); await session.flush()
             execution = AgentExecution(execution_id=execution_id, generation_id=generation.id, conversation_id=cid,
-                chain_id=chain, role_id=role.id, execution_kind='context_compact', status='queued', created_at=now)
+                chain_id=chain, role_id=role.id, execution_kind='context_compact', status='queued', created_at=now,
+                parent_execution_id=parent.execution_id if parent else None)
             session.add(execution); await session.flush()
             policy = await session.get(InstanceSettings, 1)
-            session.add(WorkflowBudget(chain_id=chain, conversation_id=cid, trigger_message_id=None,
-                decision_limit=policy.decision_limit, configuration_revision=policy.budget_revision, used_decisions=0, created_at=now))
+            if not parent:
+                session.add(WorkflowBudget(chain_id=chain, conversation_id=cid, trigger_message_id=None,
+                    decision_limit=policy.decision_limit, configuration_revision=policy.budget_revision, used_decisions=0, created_at=now))
             from ..agent.providers import capabilities_for, filter_params
             params = filter_params(role.params_json or {}, provider_type=config.provider_type, capabilities=capabilities_for(config))
             job = ContextCompression(id=job_id, conversation_id=cid, owner_id=uid, role_id=role.id, execution_id=execution_id,
-                request_key=payload.request_key, request_hash=request_hash, active_conversation_id=cid,
+                request_key=payload.request_key, request_hash=request_hash, active_conversation_id=None if private else cid,
+                trigger='automatic' if runtime else 'manual', scope='execution' if private else 'conversation', runtime_json=runtime,
                 source_revision=state.revision, base_summary_id=pointer, base_summary_revision=state.summary_revision,
                 through_message_id=cutoff, keep_recent=payload.keep_recent,
-                target_tokens=payload.target_tokens, instructions=payload.instructions, source_count=count,
+                target_tokens=summary_target, instructions=payload.instructions, source_count=count,
                 input_tokens_estimate=int(size or 0), status='queued', phase='queued', completed_calls=0, cancel_requested=False,
-                prompt_snapshot_json={'version': PROMPT_VERSION, 'rules': RULES, 'conversation_revision': conversation.prompt_revision,
+                prompt_snapshot_json={'version': PROMPT_VERSION, 'rules': RULES + ('\n本次 sources 是执行私有输入单元编号，不是会话消息 ID，不能凭它调用 Memory。' if private else ''), 'conversation_revision': conversation.prompt_revision,
                     'conversation_requirements': conversation.system_prompt},
                 model_snapshot_json={'model_config_id': config.id, 'config_hash': model_identity(config), 'model_name': role.model_name,
-                    'context_window_tokens': window, 'params': {**params, 'max_tokens': payload.target_tokens},
-                    'role_revision': role.revision, 'use_base_summary': base is not None}, created_at=now, updated_at=now)
+                    'context_window_tokens': window, 'params': {**params, 'max_tokens': summary_target},
+                    'role_revision': role.revision, 'use_base_summary': base is not None and not private}, created_at=now, updated_at=now)
             session.add(job); await session.flush()
-            await session.execute(insert(Source).from_select(['compression_id', 'message_id', 'source_revision', 'source_status', 'text_hash'],
-                select(literal(job.id), Entry.message_id, Entry.source_revision, Entry.source_status, Entry.text_hash).where(*selected)))
-            queued = QueueJob(conversation_id=cid, generation_id=generation.id, status='queued', payload_json={
-                'current_message_id': None, 'triggered_by_user_id': uid, 'allow_dangerous': False, 'request_id': request_id},
-                attempts=0, cancel_requested=False, created_at=now)
-            session.add(queued); await session.flush()
+            if not private:
+                await session.execute(insert(Source).from_select(['compression_id', 'message_id', 'source_revision', 'source_status', 'text_hash'],
+                    select(literal(job.id), Entry.message_id, Entry.source_revision, Entry.source_status, Entry.text_hash).where(*selected)))
+            queued = None
+            if not parent:
+                queued = QueueJob(conversation_id=cid, generation_id=generation.id, status='queued', payload_json={
+                    'current_message_id': None, 'triggered_by_user_id': uid, 'allow_dangerous': False, 'request_id': request_id},
+                    attempts=0, cancel_requested=False, created_at=now)
+                session.add(queued); await session.flush()
             pending = await changed(session, cid, job)
             await session.commit()
-            return job_view(job), queued.id, pending
+            return job_view(job), queued.id if queued else None, pending
     value, queue_id, pending = await with_locked_retry(operation)
     if pending:
         await events.publish_events(pending)
@@ -204,6 +235,9 @@ async def cancel(cid, uid, job_id):
             generation.stop_requested_at = now_utc()
             if job.status == 'queued':
                 job.status = 'cancelled'; job.phase = 'finished'; job.active_conversation_id = None
+                if job.trigger == 'automatic':
+                    generation.status = execution.status = 'stopped'
+                    generation.ended_at = execution.ended_at = now_utc()
             else:
                 job.status = 'stopping'
             pending = await changed(session, cid, job)
@@ -213,6 +247,8 @@ async def cancel(cid, uid, job_id):
     if pending:
         await events.publish_events(pending)
     if generation_id:
+        from .automatic import stop_inline
+        await stop_inline(generation_id)
         from ..scheduling import conversation_scheduler
         await conversation_scheduler.stop_generations(cid, [generation_id])
     return value
